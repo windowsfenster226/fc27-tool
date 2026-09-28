@@ -150,6 +150,9 @@ rep("""    .fcpt-inline .fcpt-chip.deal{""","""    .fcpt-chip.be{background:#1d2
     .tc-star:not(.on){color:#7d8aa0}.tc-star:hover{color:#f5c518}
     .wl-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:6px 8px;border-left:3px solid transparent}
     .wl-row.hit{border-left-color:#a855f7;background:rgba(168,85,247,.12)}
+    .fcpt-subtabs{display:flex;gap:4px;margin:0 0 8px;position:sticky;top:0;z-index:2;background:var(--bg);padding:2px 0}
+    .fcpt-subtabs button{flex:1;background:var(--bg3);color:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:6px 4px;font:600 12px system-ui,sans-serif;cursor:pointer}
+    .fcpt-subtabs button.on{background:#f5c518;color:#111;border-color:#f5c518}
     .wl-name b{display:block;font-size:13px}.wl-name small{font-size:11px;color:var(--ink3)}
     .wl-t{font-size:11px;color:var(--ink3);display:flex;align-items:center;gap:4px}
     .wl-t input{width:84px !important}
@@ -193,6 +196,74 @@ rep("""    .fcpt-smallbtn{""","""    .tim{display:flex;flex-direction:column;gap
     .sa-p{text-align:right}.sa-p b{font-size:13px;font-variant-numeric:tabular-nums}
     .ntfy-row{display:flex;gap:6px}.ntfy-row input{flex:1;min-width:0;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:12px system-ui,sans-serif}
     .fcpt-smallbtn{""")
+
+
+# --- Liegenbleiber-Hilfe: abgelaufene Auktionen zählen + günstigerer Vorschlag ---
+rep("""  function recordSale(p) {
+    if (!p || !p.sold || !p.soldFor) return;""","""  const EXP_KEY = 'fcpt_expired';
+  const expiredLog = GM_getValue(EXP_KEY, {});
+  // Zählt, wie oft eine Karte schon abgelaufen ist (jede Auktion hat eine eigene tradeId)
+  function noteExpired(p) {
+    if (!p || !p.expired || p.itemId == null || !p.tradeId) return expiredCount(p && p.itemId);
+    const e = expiredLog[p.itemId] || { trades: [] };
+    if (!e.trades.includes(p.tradeId)) {
+      e.trades = e.trades.concat(p.tradeId).slice(-12);
+      expiredLog[p.itemId] = e;
+      const ks = Object.keys(expiredLog);
+      if (ks.length > 2000) ks.slice(0, ks.length - 2000).forEach((k) => delete expiredLog[k]);
+      GM_setValue(EXP_KEY, expiredLog);
+    }
+    return e.trades.length;
+  }
+  const expiredCount = (id) => (id != null && expiredLog[id] ? expiredLog[id].trades.length : 0);
+  // Preisvorschlag fürs (Neu-)Einstellen: Marktpreis; nach 2+ Mal abgelaufen 3 % darunter – nie unter "ohne Verlust"
+  function listSuggest(p, market) {
+    const n = expiredCount(p.itemId);
+    let bin = roundPrice(market);
+    if (n >= 2) {
+      const v = market * 0.97;
+      const st = v < 1000 ? 50 : v < 10000 ? 100 : v < 50000 ? 250 : v < 100000 ? 500 : 1000;
+      bin = Math.max(Math.floor(v / st) * st, p.bought ? breakEven(p.bought) : 0, 200);
+    }
+    return { bin, n };
+  }
+  function expiredChip(p, market) {
+    const n = expiredCount(p.itemId);
+    if (n < 2 || p.sold) return '';
+    const sug = market ? listSuggest(p, market).bin : null;
+    return `<span class="fcpt-chip loss" title="Diese Karte ist schon ${n}× ohne Käufer abgelaufen">⏳ ${n}× abgelaufen${sug ? ` · Vorschlag <b>${fmt(sug)}</b>` : ''}</span>`;
+  }
+
+  function recordSale(p) {
+    if (!p || !p.sold || !p.soldFor) return;
+    if (p.itemId != null && expiredLog[p.itemId]) { delete expiredLog[p.itemId]; GM_setValue(EXP_KEY, expiredLog); }
+    if (p.itemId != null && typeof SELLALERT !== 'undefined') SELLALERT.sold(p.itemId);""")
+# Preis übernehmen: Vorschlag berücksichtigt Liegenbleiber
+assert s.count("    const bin = roundPrice(m);\n    const start = lowerStep(bin);")==2
+
+
+s = s.replace("""    const bin = roundPrice(m);
+    const start = lowerStep(bin);""","""    const sugg = listSuggest(p, m);
+    const bin = sugg.bin;
+    const start = lowerStep(bin);""")
+rep("""    setText(hint, `${p.name}: Start ${fmt(start)} · Sofortkauf ${fmt(bin)}` + (prof != null ? ` · Profit ${signed(prof)}` : '') +""","""    setText(hint, `${p.name}: Start ${fmt(start)} · Sofortkauf ${fmt(bin)}` + (sugg.n >= 2 ? ` · ${sugg.n}× abgelaufen → günstiger` : '') + (prof != null ? ` · Profit ${signed(prof)}` : '') +""")
+# Zählen + Chips anzeigen
+rep("""    items.forEach(recordSale);""","""    items.forEach(recordSale);
+    items.forEach(noteExpired);""")
+rep("""    recordSale(p);
+    // Fremde Angebote""","""    recordSale(p);
+    noteExpired(p);
+    // Fremde Angebote""")
+rep("""        <div class="fcpt-chips">${boughtChip}${beChip}<span""","""        <div class="fcpt-chips">${boughtChip}${beChip}${p.isPlayer ? expiredChip(p, market) : ''}${p.isPlayer && !p.sold ? `<button class="fcpt-chip fcpt-edit" data-act="target" data-iid="${p.itemId ?? ''}" title="Verkaufs-Alarm: melden, wenn der Futbin-Preis dein Ziel erreicht">${SELLALERT.has(p.itemId) ? '🎯 Ziel ' + fmt(SELLALERT.get(p.itemId).target) : '🎯 Verkaufsziel'}</button>` : ''}<span""")
+rep("""        (isMarket && p.isPlayer ? WATCH.marketChip(p, root) : '');""","""        (isMarket && p.isPlayer ? WATCH.marketChip(p, root) : '') +
+        (!isMarket && p.isPlayer ? expiredChip(p, main) : '');""")
+rep("""    if (act === 'editBought') {""","""    if (act === 'target') {
+      const b = e.target.closest('[data-act="target"]');
+      const it = items.find((x) => String(x.itemId) === b.dataset.iid);
+      if (it) { SELLALERT.toggle(it, marketPrice(it.resourceId)); render(); }
+      return;
+    }
+    if (act === 'editBought') {""")
 
 open(os.path.join(D,'..','fc27-preis-tool.user.js'),'w').write(s)
 print('built', ver)

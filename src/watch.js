@@ -149,6 +149,6 @@
       });
     }
     function mount(el) { box = el; render(); }
-    return { add, remove, has, match, marketChip, mount, render };
+    return { add, remove, has, match, marketChip, mount, render, alarm, push };
   })();
 

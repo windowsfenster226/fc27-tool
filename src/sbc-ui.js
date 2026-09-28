@@ -20,7 +20,8 @@
       const u = String(url).split('?')[0];
       if (CAP.urls.length > 40) CAP.urls.shift();
       CAP.urls.push(u.replace(/^.*\/ut\/game\/[^/]+/, ''));
-      for (const c of findChallengeObjects(data)) CAP.challenges.set(c.challengeId, c);
+      const setM = u.match(/\/sbs\/setId\/(\d+)\/challenges/);
+      for (const c of findChallengeObjects(data)) { if (setM) c.__setId = +setM[1]; CAP.challenges.set(c.challengeId, c); }
       const m = u.match(/\/sbs\/challenge\/(\d+)(\/squad)?$/);
       if (m) {
         CAP.currentId = +m[1]; CAP.currentAt = Date.now();
@@ -276,13 +277,22 @@
       const squadEnt = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
       const slots = slotList(squadEnt);
       let positions = slots.slice(0, 11).map(slotPos);
-      if (!positions.length || positions.some((p) => !p)) {
-        const f = formation && SBC.FORMATIONS[formation];
-        positions = f ? f.slice() : null;
+      if (positions.length === 11 && positions.every(Boolean) && formation) {
+        // Positions-Reihenfolge direkt von EA merken -> auch für andere Aufgaben (Gruppen-Lösung) nutzbar
+        settings.sbcFormations = settings.sbcFormations || {};
+        if (JSON.stringify(settings.sbcFormations[formation]) !== JSON.stringify(positions)) { settings.sbcFormations[formation] = positions; saveSettings(); }
       }
+      if (!positions.length || positions.some((p) => !p)) positions = formationPositions(formation);
       const liveEnum = W.SBCEligibilityKey;
       const decoded = elgReq ? SBC.decodeRequirements(elgReq, liveEnum) : null;
       return { ctx, id, name, formation, elgReq, decoded, slots, positions };
+    }
+
+    function formationPositions(formation) {
+      const learned = settings.sbcFormations && settings.sbcFormations[formation];
+      if (learned) return learned.slice();
+      const f = formation && SBC.FORMATIONS[formation];
+      return f ? f.slice() : null;
     }
 
     // ---------- 5) Einsetzen ----------
@@ -408,7 +418,8 @@
           <div class="opt"><span>Rechenzeit (Sekunden)<small>Länger = oft günstigere Lösung</small></span><input type="number" min="1" max="30" data-n="sbcTime"></div>
         </div>
         <div class="grp" data-el="lockgrp"><h4>Gesperrte Spieler</h4><div data-el="locks"></div></div>
-        <div class="btns"><button class="btn pri" data-a="solve">Verein laden &amp; lösen</button></div>
+        <div class="btns"><button class="btn pri" data-a="solve">Verein laden &amp; lösen</button><button class="btn" data-a="group" title="Alle offenen Aufgaben dieser SBC-Gruppe planen – ohne doppelte Spieler">🧩 Ganze Gruppe</button></div>
+        <div data-el="group"></div>
         <div class="st" data-el="status"></div>
         <div data-el="result"></div>
         <div class="btns"><button class="btn" data-a="reload">↻ Verein neu laden</button><button class="btn" data-a="diag">Diagnose kopieren</button></div>
@@ -497,6 +508,93 @@
       el('name').textContent = info.name + (info.formation ? ` · ${info.formation.replace(/^f/, '')}` : '');
       renderReqs(lastSol && lastSol.challengeId === info.id ? lastSol.ev.results : null);
       if (!lastSol || lastSol.challengeId !== info.id) renderResult(null);
+      renderGroup();
+    }
+
+    // ---------- Gruppenplan: alle offenen Aufgaben einer SBC-Gruppe ohne doppelte Spieler ----------
+    const PLAN_KEY = 'fcpt_sbc_plan';
+    let plan = GM_getValue(PLAN_KEY, null);   // { setId, at, items: { [challengeId]: {...} } }
+    const savePlan = () => GM_setValue(PLAN_KEY, plan);
+    const planValid = () => plan && Date.now() - plan.at < 6 * 3600000;
+    // Spieler, die im Plan für ANDERE Aufgaben reserviert sind
+    function reservedIds(exceptId) {
+      const r = new Set();
+      if (!planValid()) return r;
+      for (const [cid, it] of Object.entries(plan.items)) if (+cid !== exceptId && !it.done) (it.players || []).forEach((x) => r.add(x.id));
+      return r;
+    }
+
+    async function buildPool(c, statusFn) {
+      const locked = lockedIds();
+      let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id));
+      let protectedN = 0, activeWarn = false;
+      if (settings.sbcProtectActive) {
+        statusFn('Lese aktive Mannschaft …');
+        const act = await activeSquadIds();
+        if (!act.size) activeWarn = true;
+        const before = pool.length;
+        pool = pool.filter((p) => !act.has(p.id));
+        protectedN = before - pool.length;
+      }
+      if (!settings.sbcSpecials) pool = pool.filter((p) => !p.special);
+      if (settings.sbcMaxRating > 0) pool = pool.filter((p) => p.rating <= settings.sbcMaxRating);
+      return { pool, protectedN, activeWarn, locked };
+    }
+
+    async function runGroup() {
+      refreshInfo();
+      const cur = CAP.challenges.get(info.id);
+      const setId = cur && cur.__setId;
+      if (setId == null) { setStatus('Gruppe nicht erkannt – geh zurück zur SBC-Gruppe und öffne die Aufgabe neu.', true); return; }
+      const list = [...CAP.challenges.values()].filter((c) => c.__setId === setId && String(c.status || '').toUpperCase() !== 'COMPLETED')
+        .sort((a, b) => (a.challengeId === info.id ? -1 : b.challengeId === info.id ? 1 : a.challengeId - b.challengeId));
+      if (!list.length) { setStatus('Keine offenen Aufgaben in dieser Gruppe.', true); return; }
+      pane.querySelectorAll('[data-a="solve"],[data-a="group"]').forEach((b) => { b.disabled = true; });
+      try {
+        const c = await loadClub(setStatus, false);
+        const base = await buildPool(c, setStatus);
+        const used = new Set();
+        plan = { setId, at: Date.now(), items: {} };
+        let i = 0;
+        for (const ch of list) {
+          i++;
+          setStatus(`Löse ${i}/${list.length}: ${ch.name} …`);
+          await sleep(30);
+          const dec = SBC.decodeRequirements(ch.elgReq || [], W.SBCEligibilityKey);
+          const pos = formationPositions(ch.formation);
+          const slots = Array.from({ length: 11 }, (_, k) => ({ position: pos ? pos[k] : null }));
+          const pool = base.pool.filter((p) => !used.has(p.id));
+          const sol = SBC.solve(pool, slots, dec.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+          const ok = !sol.error && sol.feasible;
+          if (ok) sol.players.forEach((p) => p && used.add(p.id));
+          plan.items[ch.challengeId] = {
+            name: ch.name, feasible: ok, formation: ch.formation, posKnown: !!pos, unsupported: dec.unsupported.length,
+            rating: sol.ev ? sol.ev.rating : null, chem: sol.ev ? sol.ev.chem.total : null,
+            value: ok ? Math.round(sol.players.reduce((a, p) => a + (p ? p.value : 0), 0)) : 0,
+            players: ok ? sol.players.map((p, k) => p && { id: p.id, name: p.name, rating: p.rating, pos: pos ? pos[k] : null }).filter(Boolean) : [],
+          };
+        }
+        savePlan();
+        renderGroup();
+        const okN = Object.values(plan.items).filter((x) => x.feasible).length;
+        setStatus(`Gruppe geplant: ${okN} von ${list.length} Aufgaben lösbar. Öffne jede Aufgabe und klicke „Verein laden & lösen“ – der Plan wird dann automatisch verwendet.`, okN < list.length);
+      } catch (e) { setStatus('Fehler: ' + e.message, true); log('SBC Gruppe', e); } finally {
+        pane.querySelectorAll('[data-a="solve"],[data-a="group"]').forEach((b) => { b.disabled = false; });
+      }
+    }
+
+    function renderGroup() {
+      const el2 = el('group');
+      if (!el2) return;
+      if (!planValid() || !info || !CAP.challenges.get(info.id) || plan.setId !== CAP.challenges.get(info.id).__setId) { el2.innerHTML = ''; return; }
+      const items = Object.entries(plan.items);
+      const total = items.reduce((a, [, x]) => a + (x.value || 0), 0);
+      el2.innerHTML = `<div class="grp"><h4>📋 Gruppenplan</h4>
+        ${items.map(([cid, x]) => `<div class="req ${x.done ? 'ok' : x.feasible ? '' : 'bad'}"><span class="ic">${x.done ? '✓' : x.feasible ? (+cid === info.id ? '▶' : '•') : '✕'}</span>
+          <span>${esc(x.name)}${+cid === info.id ? ' <b>(offen)</b>' : ''}${x.posKnown ? '' : ' <span class="tag" title="Positionen dieser Formation noch unbekannt – Chemie ohne Positionsprüfung">Pos.?</span>'}${x.unsupported ? ' <span class="tag">!</span>' : ''}</span>
+          <span class="v">${x.feasible ? `${x.rating} · ${x.chem} Chem · ${fmt(x.value)}` : 'keine Lösung'}</span></div>`).join('')}
+        <div class="note">Gesamtwert der verplanten Karten: <b>${fmt(total)}</b> · Kein Spieler wird doppelt verwendet. Plan gilt 6 Std.</div>
+        <div class="btns"><button class="btn" data-a="planclear">Plan verwerfen</button></div></div>`;
     }
 
     async function runSolve(force) {
@@ -505,20 +603,11 @@
       pane.querySelectorAll('[data-a="solve"]').forEach((b) => { b.disabled = true; });
       try {
         const c = await loadClub(setStatus, force);
-        const locked = lockedIds();
-        let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id));
-        let protectedN = 0, activeWarn = false;
-        if (settings.sbcProtectActive) {
-          setStatus('Lese aktive Mannschaft …');
-          const act = await activeSquadIds();
-          if (!act.size) activeWarn = true;
-          const before = pool.length;
-          pool = pool.filter((p) => !act.has(p.id));
-          protectedN = before - pool.length;
-          if (act.size) await sleep(10);
-        }
-        if (!settings.sbcSpecials) pool = pool.filter((p) => !p.special);
-        if (settings.sbcMaxRating > 0) pool = pool.filter((p) => p.rating <= settings.sbcMaxRating);
+        const bp = await buildPool(c, setStatus);
+        const { protectedN, activeWarn, locked } = bp;
+        const reserved = reservedIds(info.id);
+        let pool = bp.pool.filter((p) => !reserved.has(p.id));   // für andere Gruppen-Aufgaben verplante Spieler nicht anrühren
+        const planned = planValid() && plan.items[info.id] && plan.items[info.id].feasible ? plan.items[info.id].players : null;
         const n = Math.max(info.slots.length ? Math.min(11, info.slots.length) : 11, 11);
         const slots = [];
         for (let i = 0; i < n; i++) {
@@ -527,16 +616,32 @@
           const keep = settings.sbcKeep && it && it.id && c.ents.has(it.id) ? c.players.find((p) => p.id === it.id) : null;
           slots.push({ position: info.positions ? info.positions[i] : null, fixed: keep || null, blocked: slotBlocked(s) });
         }
+        // Gruppenplan: geplante Spieler passend zu den echten EA-Positionen einsetzen
+        let usedPlan = false;
+        if (planned && !slots.some((x) => x.fixed)) {
+          const avail = planned.map((x) => c.players.find((p) => p.id === x.id) && Object.assign({}, x, { p: c.players.find((p) => p.id === x.id) })).filter(Boolean);
+          if (avail.length === planned.length) {
+            const rest = avail.slice();
+            slots.forEach((sl) => { if (sl.blocked) return; const k = rest.findIndex((x) => x.pos && x.pos === sl.position); if (k >= 0) sl.fixed = rest.splice(k, 1)[0].p; });
+            slots.forEach((sl) => { if (!sl.fixed && !sl.blocked && rest.length) sl.fixed = rest.shift().p; });
+            usedPlan = true;
+          }
+        }
         setStatus(`Suche Lösung aus ${fmt(pool.length)} Spielern …`);
         await sleep(30);
-        const sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        let sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        if (usedPlan && !sol.feasible) {   // Plan passt nicht (z. B. andere Positionen) -> normal lösen
+          usedPlan = false;
+          slots.forEach((sl) => { sl.fixed = null; });
+          sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        }
         if (sol.error) { setStatus(sol.error, true); return; }
         sol.challengeId = info.id;
         lastSol = sol;
         renderReqs(sol.ev.results);
         renderResult(sol);
         const prot = activeWarn ? ' ⚠ Aktive Mannschaft konnte nicht gelesen werden – prüfe selbst, ob Stammspieler dabei sind.' : settings.sbcProtectActive ? ` (${protectedN} Spieler der aktiven Mannschaft geschützt${locked.size ? `, ${locked.size} gesperrt` : ''})` : (locked.size ? ` (${locked.size} gesperrt)` : '');
-        setStatus(sol.feasible ? '✓ Lösung gefunden – prüfen und einsetzen.' + prot : 'Keine Lösung mit deinem Verein gefunden. Mehr Rechenzeit, Sonderkarten erlauben oder Max. Rating erhöhen.', !sol.feasible);
+        setStatus(sol.feasible ? (usedPlan ? '✓ Lösung aus dem Gruppenplan – prüfen und einsetzen.' : '✓ Lösung gefunden – prüfen und einsetzen.') + prot + (reserved.size ? ` · ${reserved.size} Spieler für andere Gruppen-Aufgaben reserviert` : '') : 'Keine Lösung mit deinem Verein gefunden. Mehr Rechenzeit, Sonderkarten erlauben oder Max. Rating erhöhen.', !sol.feasible);
       } catch (e) {
         setStatus('Fehler: ' + e.message, true);
         log('SBC', e);
@@ -552,6 +657,7 @@
         setStatus('Setze Spieler ein …');
         await apply(info, lastSol);
         setStatus('✓ Eingesetzt. Falls die Aufstellung nicht sofort erscheint: einmal zurück und die Aufgabe neu öffnen. Dann prüfen und selbst einreichen.');
+        if (planValid() && plan.items[info.id]) { plan.items[info.id].done = true; plan.items[info.id].players = lastSol.players.filter(Boolean).map((p) => ({ id: p.id, name: p.name, rating: p.rating })); savePlan(); }
         // Fenster schließen, damit „Absenden“ und EAs Bestätigung nicht verdeckt werden
         setTimeout(() => { pane.classList.remove('open'); showToast('✓ Spieler eingesetzt – prüfen und selbst „Absenden“'); }, 700);
       } catch (e) {
@@ -597,6 +703,8 @@
       const act = a.dataset.a;
       if (act === 'close') pane.classList.remove('open');
       if (act === 'solve') runSolve(false);
+      if (act === 'group') runGroup();
+      if (act === 'planclear') { plan = null; savePlan(); renderGroup(); setStatus('Gruppenplan verworfen.'); }
       if (act === 'reload') { club = null; runSolve(true); }
       if (act === 'apply') runApply();
       if (act === 'diag') diagnose();

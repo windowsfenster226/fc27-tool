@@ -304,7 +304,19 @@
     }
 
     function mount(root) {
-      root.innerHTML = '<div data-el="timing"></div>' + clubValueHtml() + '<div data-el="sell"></div><div data-el="ratings"></div><div data-el="watch"></div>' + html();
+      const SUBS = [['markt', '📈 Markt'], ['verein', '💼 Verein'], ['futter', '📊 Futter']];
+      if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
+      root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
+        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div>' + html() + '<div data-el="watch"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="verein">' + clubValueHtml() + '<div data-el="sell"></div><div data-el="sellalert"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div></div>';
+      const showSub = () => {
+        root.querySelectorAll('[data-sub]').forEach((b) => b.classList.toggle('on', b.dataset.sub === settings.tradeSub));
+        root.querySelectorAll('[data-pane]').forEach((d) => { d.style.display = d.dataset.pane === settings.tradeSub ? '' : 'none'; });
+      };
+      root.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); settings.tradeSub = b.dataset.sub; saveSettings(); showSub(); }));
+      showSub();
+      SELLALERT.mount(root.querySelector('[data-el="sellalert"]'));
       const tim = root.querySelector('[data-el="timing"]');
       const drawTiming = () => { tim.innerHTML = TIMING.html(); };
       drawTiming(); setInterval(drawTiming, 5 * 60000);

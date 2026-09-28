@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.9.0
+// @version      2.10.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -779,8 +779,44 @@ const SBC = (function () {
   const HIST_KEY = 'fcpt_history';
   let history = GM_getValue(HIST_KEY, []);
   let onHistoryChange = () => {};
+  const EXP_KEY = 'fcpt_expired';
+  const expiredLog = GM_getValue(EXP_KEY, {});
+  // Zählt, wie oft eine Karte schon abgelaufen ist (jede Auktion hat eine eigene tradeId)
+  function noteExpired(p) {
+    if (!p || !p.expired || p.itemId == null || !p.tradeId) return expiredCount(p && p.itemId);
+    const e = expiredLog[p.itemId] || { trades: [] };
+    if (!e.trades.includes(p.tradeId)) {
+      e.trades = e.trades.concat(p.tradeId).slice(-12);
+      expiredLog[p.itemId] = e;
+      const ks = Object.keys(expiredLog);
+      if (ks.length > 2000) ks.slice(0, ks.length - 2000).forEach((k) => delete expiredLog[k]);
+      GM_setValue(EXP_KEY, expiredLog);
+    }
+    return e.trades.length;
+  }
+  const expiredCount = (id) => (id != null && expiredLog[id] ? expiredLog[id].trades.length : 0);
+  // Preisvorschlag fürs (Neu-)Einstellen: Marktpreis; nach 2+ Mal abgelaufen 3 % darunter – nie unter "ohne Verlust"
+  function listSuggest(p, market) {
+    const n = expiredCount(p.itemId);
+    let bin = roundPrice(market);
+    if (n >= 2) {
+      const v = market * 0.97;
+      const st = v < 1000 ? 50 : v < 10000 ? 100 : v < 50000 ? 250 : v < 100000 ? 500 : 1000;
+      bin = Math.max(Math.floor(v / st) * st, p.bought ? breakEven(p.bought) : 0, 200);
+    }
+    return { bin, n };
+  }
+  function expiredChip(p, market) {
+    const n = expiredCount(p.itemId);
+    if (n < 2 || p.sold) return '';
+    const sug = market ? listSuggest(p, market).bin : null;
+    return `<span class="fcpt-chip loss" title="Diese Karte ist schon ${n}× ohne Käufer abgelaufen">⏳ ${n}× abgelaufen${sug ? ` · Vorschlag <b>${fmt(sug)}</b>` : ''}</span>`;
+  }
+
   function recordSale(p) {
     if (!p || !p.sold || !p.soldFor) return;
+    if (p.itemId != null && expiredLog[p.itemId]) { delete expiredLog[p.itemId]; GM_setValue(EXP_KEY, expiredLog); }
+    if (p.itemId != null && typeof SELLALERT !== 'undefined') SELLALERT.sold(p.itemId);
     if (p.itemId == null && p.tradeId == null) return;
     const k = `${p.itemId}:${p.tradeId}`;
     if (history.some((h) => h.k === k)) return;
@@ -916,6 +952,9 @@ const SBC = (function () {
     .tc-star:not(.on){color:#7d8aa0}.tc-star:hover{color:#f5c518}
     .wl-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:6px 8px;border-left:3px solid transparent}
     .wl-row.hit{border-left-color:#a855f7;background:rgba(168,85,247,.12)}
+    .fcpt-subtabs{display:flex;gap:4px;margin:0 0 8px;position:sticky;top:0;z-index:2;background:var(--bg);padding:2px 0}
+    .fcpt-subtabs button{flex:1;background:var(--bg3);color:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:6px 4px;font:600 12px system-ui,sans-serif;cursor:pointer}
+    .fcpt-subtabs button.on{background:#f5c518;color:#111;border-color:#f5c518}
     .wl-name b{display:block;font-size:13px}.wl-name small{font-size:11px;color:var(--ink3)}
     .wl-t{font-size:11px;color:var(--ink3);display:flex;align-items:center;gap:4px}
     .wl-t input{width:84px !important}
@@ -1191,7 +1230,7 @@ const SBC = (function () {
           <div><span>${midLabel}</span><b>${midVal}</b></div>
           <div><span>Markt</span><b class="fcpt-market">${p.isPlayer ? fmt(market) : '–'}</b></div>
         </div>
-        <div class="fcpt-chips">${boughtChip}${beChip}<span class="fcpt-prices" style="display:contents">${p.isPlayer ? chipsHtml(p.resourceId) : ''}</span></div>
+        <div class="fcpt-chips">${boughtChip}${beChip}${p.isPlayer ? expiredChip(p, market) : ''}${p.isPlayer && !p.sold ? `<button class="fcpt-chip fcpt-edit" data-act="target" data-iid="${p.itemId ?? ''}" title="Verkaufs-Alarm: melden, wenn der Futbin-Preis dein Ziel erreicht">${SELLALERT.has(p.itemId) ? '🎯 Ziel ' + fmt(SELLALERT.get(p.itemId).target) : '🎯 Verkaufsziel'}</button>` : ''}<span class="fcpt-prices" style="display:contents">${p.isPlayer ? chipsHtml(p.resourceId) : ''}</span></div>
         <div class="fcpt-warn">${p.isPlayer ? listingWarn(p, market) : ''}</div>
       </div>`;
   }
@@ -1348,6 +1387,7 @@ const SBC = (function () {
     }
     if (myRun !== runId) return;
     items.forEach(recordSale);
+    items.forEach(noteExpired);
     items.forEach((x) => { if (x.itemId != null) ownIds.add(x.itemId); });
     priceStore = {};
     render();
@@ -1371,6 +1411,12 @@ const SBC = (function () {
     if (act === 'close') panel.classList.remove('open');
     if (act === 'refresh') refresh();
     if (act === 'reload') { cacheClear(); refresh(); redecorateAll(); }
+    if (act === 'target') {
+      const b = e.target.closest('[data-act="target"]');
+      const it = items.find((x) => String(x.itemId) === b.dataset.iid);
+      if (it) { SELLALERT.toggle(it, marketPrice(it.resourceId)); render(); }
+      return;
+    }
     if (act === 'editBought') {
       const b = e.target.closest('[data-act="editBought"]');
       const it = items.find((x) => String(x.itemId) === b.dataset.iid);
@@ -1445,6 +1491,7 @@ const SBC = (function () {
       root.addEventListener('click', () => { lastSelected = decorated.get(root) || raw; updateListButton(); }, true);
     }
     recordSale(p);
+    noteExpired(p);
     // Fremde Angebote (Transfermarkt-Suche, Transferziele) vs. eigene Karten
     const inSearch = !!(root.closest && root.closest('.SearchResults, .ut-market-search-results-view, .ut-search-results-view'));
     // Nicht gelistete eigene Karten haben keine Auktion (tradeId 0) – die zählen nie als Markt-Angebot
@@ -1502,7 +1549,8 @@ const SBC = (function () {
       box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main">Markt: <b>${fmt(main)}</b></span>` : '') + chips + profitHtml +
         (!isMarket ? listingWarn(p, main) : '') + (isMarket && p.active ? bidChip(p) : '') +
         (!isMarket && p.isPlayer && p.bought && !p.sold ? `<span class="fcpt-chip be">Ohne Verlust ab <b>${fmt(breakEven(p.bought))}</b></span>` : '') +
-        (isMarket && p.isPlayer ? WATCH.marketChip(p, root) : '');
+        (isMarket && p.isPlayer ? WATCH.marketChip(p, root) : '') +
+        (!isMarket && p.isPlayer ? expiredChip(p, main) : '');
     };
 
     draw();
@@ -1686,10 +1734,11 @@ const SBC = (function () {
     const m = cacheGet(`futbin:${settings.platform}:${p.resourceId}`);
     if (b.disabled !== !m) b.disabled = !m;
     if (!m) { setText(hint, `${p.name}: Futbin-Preis wird noch geladen …`); return; }
-    const bin = roundPrice(m);
+    const sugg = listSuggest(p, m);
+    const bin = sugg.bin;
     const start = lowerStep(bin);
     const prof = p.bought ? afterTax(bin) - p.bought : null;
-    setText(hint, `${p.name}: Start ${fmt(start)} · Sofortkauf ${fmt(bin)}` + (prof != null ? ` · Profit ${signed(prof)}` : '') +
+    setText(hint, `${p.name}: Start ${fmt(start)} · Sofortkauf ${fmt(bin)}` + (sugg.n >= 2 ? ` · ${sugg.n}× abgelaufen → günstiger` : '') + (prof != null ? ` · Profit ${signed(prof)}` : '') +
       (p.bought && bin < breakEven(p.bought) ? ` · ⚠ unter „ohne Verlust“ (${fmt(breakEven(p.bought))})` : ''));
   }
 
@@ -1700,7 +1749,8 @@ const SBC = (function () {
     if (!host || !p) return;
     const m = cacheGet(`futbin:${settings.platform}:${p.resourceId}`);
     if (!m) return;
-    const bin = roundPrice(m);
+    const sugg = listSuggest(p, m);
+    const bin = sugg.bin;
     const start = lowerStep(bin);
     const inputs = [...host.querySelectorAll('input')].filter((i) => i.type !== 'checkbox' && i.offsetParent !== null);
     if (inputs.length < 2) { listBtn.querySelector('.fcpt-listhint').textContent = 'Preisfelder nicht gefunden – bitte „Schnellverkauf/Anbieten“ aufklappen.'; return; }
@@ -1913,7 +1963,8 @@ const SBC = (function () {
       const u = String(url).split('?')[0];
       if (CAP.urls.length > 40) CAP.urls.shift();
       CAP.urls.push(u.replace(/^.*\/ut\/game\/[^/]+/, ''));
-      for (const c of findChallengeObjects(data)) CAP.challenges.set(c.challengeId, c);
+      const setM = u.match(/\/sbs\/setId\/(\d+)\/challenges/);
+      for (const c of findChallengeObjects(data)) { if (setM) c.__setId = +setM[1]; CAP.challenges.set(c.challengeId, c); }
       const m = u.match(/\/sbs\/challenge\/(\d+)(\/squad)?$/);
       if (m) {
         CAP.currentId = +m[1]; CAP.currentAt = Date.now();
@@ -2169,13 +2220,22 @@ const SBC = (function () {
       const squadEnt = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
       const slots = slotList(squadEnt);
       let positions = slots.slice(0, 11).map(slotPos);
-      if (!positions.length || positions.some((p) => !p)) {
-        const f = formation && SBC.FORMATIONS[formation];
-        positions = f ? f.slice() : null;
+      if (positions.length === 11 && positions.every(Boolean) && formation) {
+        // Positions-Reihenfolge direkt von EA merken -> auch für andere Aufgaben (Gruppen-Lösung) nutzbar
+        settings.sbcFormations = settings.sbcFormations || {};
+        if (JSON.stringify(settings.sbcFormations[formation]) !== JSON.stringify(positions)) { settings.sbcFormations[formation] = positions; saveSettings(); }
       }
+      if (!positions.length || positions.some((p) => !p)) positions = formationPositions(formation);
       const liveEnum = W.SBCEligibilityKey;
       const decoded = elgReq ? SBC.decodeRequirements(elgReq, liveEnum) : null;
       return { ctx, id, name, formation, elgReq, decoded, slots, positions };
+    }
+
+    function formationPositions(formation) {
+      const learned = settings.sbcFormations && settings.sbcFormations[formation];
+      if (learned) return learned.slice();
+      const f = formation && SBC.FORMATIONS[formation];
+      return f ? f.slice() : null;
     }
 
     // ---------- 5) Einsetzen ----------
@@ -2301,7 +2361,8 @@ const SBC = (function () {
           <div class="opt"><span>Rechenzeit (Sekunden)<small>Länger = oft günstigere Lösung</small></span><input type="number" min="1" max="30" data-n="sbcTime"></div>
         </div>
         <div class="grp" data-el="lockgrp"><h4>Gesperrte Spieler</h4><div data-el="locks"></div></div>
-        <div class="btns"><button class="btn pri" data-a="solve">Verein laden &amp; lösen</button></div>
+        <div class="btns"><button class="btn pri" data-a="solve">Verein laden &amp; lösen</button><button class="btn" data-a="group" title="Alle offenen Aufgaben dieser SBC-Gruppe planen – ohne doppelte Spieler">🧩 Ganze Gruppe</button></div>
+        <div data-el="group"></div>
         <div class="st" data-el="status"></div>
         <div data-el="result"></div>
         <div class="btns"><button class="btn" data-a="reload">↻ Verein neu laden</button><button class="btn" data-a="diag">Diagnose kopieren</button></div>
@@ -2390,6 +2451,93 @@ const SBC = (function () {
       el('name').textContent = info.name + (info.formation ? ` · ${info.formation.replace(/^f/, '')}` : '');
       renderReqs(lastSol && lastSol.challengeId === info.id ? lastSol.ev.results : null);
       if (!lastSol || lastSol.challengeId !== info.id) renderResult(null);
+      renderGroup();
+    }
+
+    // ---------- Gruppenplan: alle offenen Aufgaben einer SBC-Gruppe ohne doppelte Spieler ----------
+    const PLAN_KEY = 'fcpt_sbc_plan';
+    let plan = GM_getValue(PLAN_KEY, null);   // { setId, at, items: { [challengeId]: {...} } }
+    const savePlan = () => GM_setValue(PLAN_KEY, plan);
+    const planValid = () => plan && Date.now() - plan.at < 6 * 3600000;
+    // Spieler, die im Plan für ANDERE Aufgaben reserviert sind
+    function reservedIds(exceptId) {
+      const r = new Set();
+      if (!planValid()) return r;
+      for (const [cid, it] of Object.entries(plan.items)) if (+cid !== exceptId && !it.done) (it.players || []).forEach((x) => r.add(x.id));
+      return r;
+    }
+
+    async function buildPool(c, statusFn) {
+      const locked = lockedIds();
+      let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id));
+      let protectedN = 0, activeWarn = false;
+      if (settings.sbcProtectActive) {
+        statusFn('Lese aktive Mannschaft …');
+        const act = await activeSquadIds();
+        if (!act.size) activeWarn = true;
+        const before = pool.length;
+        pool = pool.filter((p) => !act.has(p.id));
+        protectedN = before - pool.length;
+      }
+      if (!settings.sbcSpecials) pool = pool.filter((p) => !p.special);
+      if (settings.sbcMaxRating > 0) pool = pool.filter((p) => p.rating <= settings.sbcMaxRating);
+      return { pool, protectedN, activeWarn, locked };
+    }
+
+    async function runGroup() {
+      refreshInfo();
+      const cur = CAP.challenges.get(info.id);
+      const setId = cur && cur.__setId;
+      if (setId == null) { setStatus('Gruppe nicht erkannt – geh zurück zur SBC-Gruppe und öffne die Aufgabe neu.', true); return; }
+      const list = [...CAP.challenges.values()].filter((c) => c.__setId === setId && String(c.status || '').toUpperCase() !== 'COMPLETED')
+        .sort((a, b) => (a.challengeId === info.id ? -1 : b.challengeId === info.id ? 1 : a.challengeId - b.challengeId));
+      if (!list.length) { setStatus('Keine offenen Aufgaben in dieser Gruppe.', true); return; }
+      pane.querySelectorAll('[data-a="solve"],[data-a="group"]').forEach((b) => { b.disabled = true; });
+      try {
+        const c = await loadClub(setStatus, false);
+        const base = await buildPool(c, setStatus);
+        const used = new Set();
+        plan = { setId, at: Date.now(), items: {} };
+        let i = 0;
+        for (const ch of list) {
+          i++;
+          setStatus(`Löse ${i}/${list.length}: ${ch.name} …`);
+          await sleep(30);
+          const dec = SBC.decodeRequirements(ch.elgReq || [], W.SBCEligibilityKey);
+          const pos = formationPositions(ch.formation);
+          const slots = Array.from({ length: 11 }, (_, k) => ({ position: pos ? pos[k] : null }));
+          const pool = base.pool.filter((p) => !used.has(p.id));
+          const sol = SBC.solve(pool, slots, dec.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+          const ok = !sol.error && sol.feasible;
+          if (ok) sol.players.forEach((p) => p && used.add(p.id));
+          plan.items[ch.challengeId] = {
+            name: ch.name, feasible: ok, formation: ch.formation, posKnown: !!pos, unsupported: dec.unsupported.length,
+            rating: sol.ev ? sol.ev.rating : null, chem: sol.ev ? sol.ev.chem.total : null,
+            value: ok ? Math.round(sol.players.reduce((a, p) => a + (p ? p.value : 0), 0)) : 0,
+            players: ok ? sol.players.map((p, k) => p && { id: p.id, name: p.name, rating: p.rating, pos: pos ? pos[k] : null }).filter(Boolean) : [],
+          };
+        }
+        savePlan();
+        renderGroup();
+        const okN = Object.values(plan.items).filter((x) => x.feasible).length;
+        setStatus(`Gruppe geplant: ${okN} von ${list.length} Aufgaben lösbar. Öffne jede Aufgabe und klicke „Verein laden & lösen“ – der Plan wird dann automatisch verwendet.`, okN < list.length);
+      } catch (e) { setStatus('Fehler: ' + e.message, true); log('SBC Gruppe', e); } finally {
+        pane.querySelectorAll('[data-a="solve"],[data-a="group"]').forEach((b) => { b.disabled = false; });
+      }
+    }
+
+    function renderGroup() {
+      const el2 = el('group');
+      if (!el2) return;
+      if (!planValid() || !info || !CAP.challenges.get(info.id) || plan.setId !== CAP.challenges.get(info.id).__setId) { el2.innerHTML = ''; return; }
+      const items = Object.entries(plan.items);
+      const total = items.reduce((a, [, x]) => a + (x.value || 0), 0);
+      el2.innerHTML = `<div class="grp"><h4>📋 Gruppenplan</h4>
+        ${items.map(([cid, x]) => `<div class="req ${x.done ? 'ok' : x.feasible ? '' : 'bad'}"><span class="ic">${x.done ? '✓' : x.feasible ? (+cid === info.id ? '▶' : '•') : '✕'}</span>
+          <span>${esc(x.name)}${+cid === info.id ? ' <b>(offen)</b>' : ''}${x.posKnown ? '' : ' <span class="tag" title="Positionen dieser Formation noch unbekannt – Chemie ohne Positionsprüfung">Pos.?</span>'}${x.unsupported ? ' <span class="tag">!</span>' : ''}</span>
+          <span class="v">${x.feasible ? `${x.rating} · ${x.chem} Chem · ${fmt(x.value)}` : 'keine Lösung'}</span></div>`).join('')}
+        <div class="note">Gesamtwert der verplanten Karten: <b>${fmt(total)}</b> · Kein Spieler wird doppelt verwendet. Plan gilt 6 Std.</div>
+        <div class="btns"><button class="btn" data-a="planclear">Plan verwerfen</button></div></div>`;
     }
 
     async function runSolve(force) {
@@ -2398,20 +2546,11 @@ const SBC = (function () {
       pane.querySelectorAll('[data-a="solve"]').forEach((b) => { b.disabled = true; });
       try {
         const c = await loadClub(setStatus, force);
-        const locked = lockedIds();
-        let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id));
-        let protectedN = 0, activeWarn = false;
-        if (settings.sbcProtectActive) {
-          setStatus('Lese aktive Mannschaft …');
-          const act = await activeSquadIds();
-          if (!act.size) activeWarn = true;
-          const before = pool.length;
-          pool = pool.filter((p) => !act.has(p.id));
-          protectedN = before - pool.length;
-          if (act.size) await sleep(10);
-        }
-        if (!settings.sbcSpecials) pool = pool.filter((p) => !p.special);
-        if (settings.sbcMaxRating > 0) pool = pool.filter((p) => p.rating <= settings.sbcMaxRating);
+        const bp = await buildPool(c, setStatus);
+        const { protectedN, activeWarn, locked } = bp;
+        const reserved = reservedIds(info.id);
+        let pool = bp.pool.filter((p) => !reserved.has(p.id));   // für andere Gruppen-Aufgaben verplante Spieler nicht anrühren
+        const planned = planValid() && plan.items[info.id] && plan.items[info.id].feasible ? plan.items[info.id].players : null;
         const n = Math.max(info.slots.length ? Math.min(11, info.slots.length) : 11, 11);
         const slots = [];
         for (let i = 0; i < n; i++) {
@@ -2420,16 +2559,32 @@ const SBC = (function () {
           const keep = settings.sbcKeep && it && it.id && c.ents.has(it.id) ? c.players.find((p) => p.id === it.id) : null;
           slots.push({ position: info.positions ? info.positions[i] : null, fixed: keep || null, blocked: slotBlocked(s) });
         }
+        // Gruppenplan: geplante Spieler passend zu den echten EA-Positionen einsetzen
+        let usedPlan = false;
+        if (planned && !slots.some((x) => x.fixed)) {
+          const avail = planned.map((x) => c.players.find((p) => p.id === x.id) && Object.assign({}, x, { p: c.players.find((p) => p.id === x.id) })).filter(Boolean);
+          if (avail.length === planned.length) {
+            const rest = avail.slice();
+            slots.forEach((sl) => { if (sl.blocked) return; const k = rest.findIndex((x) => x.pos && x.pos === sl.position); if (k >= 0) sl.fixed = rest.splice(k, 1)[0].p; });
+            slots.forEach((sl) => { if (!sl.fixed && !sl.blocked && rest.length) sl.fixed = rest.shift().p; });
+            usedPlan = true;
+          }
+        }
         setStatus(`Suche Lösung aus ${fmt(pool.length)} Spielern …`);
         await sleep(30);
-        const sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        let sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        if (usedPlan && !sol.feasible) {   // Plan passt nicht (z. B. andere Positionen) -> normal lösen
+          usedPlan = false;
+          slots.forEach((sl) => { sl.fixed = null; });
+          sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        }
         if (sol.error) { setStatus(sol.error, true); return; }
         sol.challengeId = info.id;
         lastSol = sol;
         renderReqs(sol.ev.results);
         renderResult(sol);
         const prot = activeWarn ? ' ⚠ Aktive Mannschaft konnte nicht gelesen werden – prüfe selbst, ob Stammspieler dabei sind.' : settings.sbcProtectActive ? ` (${protectedN} Spieler der aktiven Mannschaft geschützt${locked.size ? `, ${locked.size} gesperrt` : ''})` : (locked.size ? ` (${locked.size} gesperrt)` : '');
-        setStatus(sol.feasible ? '✓ Lösung gefunden – prüfen und einsetzen.' + prot : 'Keine Lösung mit deinem Verein gefunden. Mehr Rechenzeit, Sonderkarten erlauben oder Max. Rating erhöhen.', !sol.feasible);
+        setStatus(sol.feasible ? (usedPlan ? '✓ Lösung aus dem Gruppenplan – prüfen und einsetzen.' : '✓ Lösung gefunden – prüfen und einsetzen.') + prot + (reserved.size ? ` · ${reserved.size} Spieler für andere Gruppen-Aufgaben reserviert` : '') : 'Keine Lösung mit deinem Verein gefunden. Mehr Rechenzeit, Sonderkarten erlauben oder Max. Rating erhöhen.', !sol.feasible);
       } catch (e) {
         setStatus('Fehler: ' + e.message, true);
         log('SBC', e);
@@ -2445,6 +2600,7 @@ const SBC = (function () {
         setStatus('Setze Spieler ein …');
         await apply(info, lastSol);
         setStatus('✓ Eingesetzt. Falls die Aufstellung nicht sofort erscheint: einmal zurück und die Aufgabe neu öffnen. Dann prüfen und selbst einreichen.');
+        if (planValid() && plan.items[info.id]) { plan.items[info.id].done = true; plan.items[info.id].players = lastSol.players.filter(Boolean).map((p) => ({ id: p.id, name: p.name, rating: p.rating })); savePlan(); }
         // Fenster schließen, damit „Absenden“ und EAs Bestätigung nicht verdeckt werden
         setTimeout(() => { pane.classList.remove('open'); showToast('✓ Spieler eingesetzt – prüfen und selbst „Absenden“'); }, 700);
       } catch (e) {
@@ -2490,6 +2646,8 @@ const SBC = (function () {
       const act = a.dataset.a;
       if (act === 'close') pane.classList.remove('open');
       if (act === 'solve') runSolve(false);
+      if (act === 'group') runGroup();
+      if (act === 'planclear') { plan = null; savePlan(); renderGroup(); setStatus('Gruppenplan verworfen.'); }
       if (act === 'reload') { club = null; runSolve(true); }
       if (act === 'apply') runApply();
       if (act === 'diag') diagnose();
@@ -2825,7 +2983,19 @@ const SBC = (function () {
     }
 
     function mount(root) {
-      root.innerHTML = '<div data-el="timing"></div>' + clubValueHtml() + '<div data-el="sell"></div><div data-el="ratings"></div><div data-el="watch"></div>' + html();
+      const SUBS = [['markt', '📈 Markt'], ['verein', '💼 Verein'], ['futter', '📊 Futter']];
+      if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
+      root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
+        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div>' + html() + '<div data-el="watch"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="verein">' + clubValueHtml() + '<div data-el="sell"></div><div data-el="sellalert"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div></div>';
+      const showSub = () => {
+        root.querySelectorAll('[data-sub]').forEach((b) => b.classList.toggle('on', b.dataset.sub === settings.tradeSub));
+        root.querySelectorAll('[data-pane]').forEach((d) => { d.style.display = d.dataset.pane === settings.tradeSub ? '' : 'none'; });
+      };
+      root.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); settings.tradeSub = b.dataset.sub; saveSettings(); showSub(); }));
+      showSub();
+      SELLALERT.mount(root.querySelector('[data-el="sellalert"]'));
       const tim = root.querySelector('[data-el="timing"]');
       const drawTiming = () => { tim.innerHTML = TIMING.html(); };
       drawTiming(); setInterval(drawTiming, 5 * 60000);
@@ -2998,7 +3168,7 @@ const SBC = (function () {
       });
     }
     function mount(el) { box = el; render(); }
-    return { add, remove, has, match, marketChip, mount, render };
+    return { add, remove, has, match, marketChip, mount, render, alarm, push };
   })();
 
 
@@ -3169,6 +3339,68 @@ const SBC = (function () {
     return { mount };
   })();
 
+
+  // ---------- Verkaufs-Alarm ----------
+  // Für eigene Karten ein Verkaufsziel setzen. Meldung (Ton, Toast, Handy-Push),
+  // sobald der Futbin-Preis das Ziel erreicht. Stellt nichts selbst ein.
+  const SELLALERT = (() => {
+    if (!Array.isArray(settings.sellTargets)) settings.sellTargets = [];
+    let box = null;
+    const find = (iid) => settings.sellTargets.find((t) => String(t.itemId) === String(iid));
+    const has = (iid) => iid != null && !!find(iid);
+    const get = (iid) => find(iid) || null;
+    function toggle(p, market) {
+      if (p.itemId == null) return;
+      if (has(p.itemId)) { remove(p.itemId); showToast(`🎯 Verkaufsziel für ${p.name} entfernt`); return; }
+      const base = Math.max(market ? market * 1.05 : 0, p.bought ? breakEven(p.bought) * 1.05 : 0);
+      if (!base) { showToast('Noch kein Preis bekannt – erst Preise laden', true); return; }
+      const target = roundPrice(base);
+      settings.sellTargets.push({ itemId: p.itemId, resourceId: p.resourceId, name: p.name, fullName: p.fullName, rating: p.rating,
+        bought: p.bought || 0, target, last: market || null, lastAt: market ? Date.now() : 0 });
+      saveSettings(); render();
+      showToast(`🎯 Verkaufsziel ${fmt(target)} für ${p.name} – Alarm, sobald Futbin das erreicht (Ziel im Trading-Reiter › Verein änderbar)`);
+    }
+    function remove(iid) { settings.sellTargets = settings.sellTargets.filter((t) => String(t.itemId) !== String(iid)); saveSettings(); render(); }
+    function sold(iid) { if (has(iid)) remove(iid); }
+
+    setInterval(async () => {
+      if (!settings.sellTargets.length || document.visibilityState !== 'visible' || futbinBlocked()) return;
+      const due = settings.sellTargets.filter((t) => Date.now() - (t.lastAt || 0) > 10 * 60000).sort((a, b) => (a.lastAt || 0) - (b.lastAt || 0))[0];
+      if (!due) return;
+      due.lastAt = Date.now();
+      try {
+        const v = await getPrice('futbin', { resourceId: due.resourceId, name: due.name, fullName: due.fullName, rating: due.rating, isPlayer: true });
+        if (v) {
+          due.last = v; saveSettings(); render();
+          if (v >= due.target) WATCH.alarm(`s${due.itemId}`, `${due.name} steht bei ${fmt(v)} (Futbin) – dein Verkaufsziel ${fmt(due.target)} ist erreicht. Jetzt einstellen!`, 60 * 60000);
+        } else saveSettings();
+      } catch (e) { log('SellAlert', e); saveSettings(); }
+    }, 60000);
+
+    function render() {
+      if (!box) return;
+      const L = settings.sellTargets;
+      box.innerHTML = `
+        <div class="fcpt-sgroup"><h4>🎯 Verkaufs-Alarm</h4>
+          ${L.length ? L.map((t) => {
+            const hit = t.last != null && t.last >= t.target;
+            const prof = t.bought ? afterTax(t.target) - t.bought : null;
+            return `<div class="wl-row ${hit ? 'hit' : ''}">
+              <div class="wl-name"><b>${esc(t.rating ?? '')} ${esc(t.name)}</b><small>Futbin: ${t.last != null ? fmt(t.last) : '–'}${t.lastAt ? ' · ' + agoText(t.lastAt) : ''}${prof != null ? ` · Profit am Ziel ${signed(prof)}` : ''}</small></div>
+              <label class="wl-t">Ziel ≥<input type="number" step="50" min="0" data-st="${esc(t.itemId)}" value="${t.target}"></label>
+              <button class="wl-x" data-sx="${esc(t.itemId)}" title="Entfernen">✕</button></div>`;
+          }).join('') : '<div class="note" style="font-size:12px;color:#7d8aa0">Noch leer. In der Transferliste (Panel) bei einer eigenen Karte auf „🎯 Verkaufsziel“ tippen.</div>'}
+          <div class="note" style="font-size:11px;color:#7d8aa0">Prüft jede Karte alle 10 Min. bei Futbin, solange die Web App offen ist. Alarm per Ton, Meldung und – falls eingerichtet – Push aufs Handy (ntfy, siehe Markt › Watchlist).</div>
+        </div>`;
+      box.querySelectorAll('[data-st]').forEach((i) => i.addEventListener('change', () => {
+        const t = find(i.dataset.st);
+        if (t) { t.target = Math.max(0, parseInt(i.value, 10) || 0); saveSettings(); render(); }
+      }));
+      box.querySelectorAll('[data-sx]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); remove(b.dataset.sx); }));
+    }
+    function mount(el) { box = el; render(); }
+    return { has, get, toggle, remove, sold, mount };
+  })();
 
   function installHook() {
     const V = W.UTItemTableCellView;

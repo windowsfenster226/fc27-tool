@@ -165,3 +165,65 @@
     return { mount };
   })();
 
+
+  // ---------- Verkaufs-Alarm ----------
+  // Für eigene Karten ein Verkaufsziel setzen. Meldung (Ton, Toast, Handy-Push),
+  // sobald der Futbin-Preis das Ziel erreicht. Stellt nichts selbst ein.
+  const SELLALERT = (() => {
+    if (!Array.isArray(settings.sellTargets)) settings.sellTargets = [];
+    let box = null;
+    const find = (iid) => settings.sellTargets.find((t) => String(t.itemId) === String(iid));
+    const has = (iid) => iid != null && !!find(iid);
+    const get = (iid) => find(iid) || null;
+    function toggle(p, market) {
+      if (p.itemId == null) return;
+      if (has(p.itemId)) { remove(p.itemId); showToast(`🎯 Verkaufsziel für ${p.name} entfernt`); return; }
+      const base = Math.max(market ? market * 1.05 : 0, p.bought ? breakEven(p.bought) * 1.05 : 0);
+      if (!base) { showToast('Noch kein Preis bekannt – erst Preise laden', true); return; }
+      const target = roundPrice(base);
+      settings.sellTargets.push({ itemId: p.itemId, resourceId: p.resourceId, name: p.name, fullName: p.fullName, rating: p.rating,
+        bought: p.bought || 0, target, last: market || null, lastAt: market ? Date.now() : 0 });
+      saveSettings(); render();
+      showToast(`🎯 Verkaufsziel ${fmt(target)} für ${p.name} – Alarm, sobald Futbin das erreicht (Ziel im Trading-Reiter › Verein änderbar)`);
+    }
+    function remove(iid) { settings.sellTargets = settings.sellTargets.filter((t) => String(t.itemId) !== String(iid)); saveSettings(); render(); }
+    function sold(iid) { if (has(iid)) remove(iid); }
+
+    setInterval(async () => {
+      if (!settings.sellTargets.length || document.visibilityState !== 'visible' || futbinBlocked()) return;
+      const due = settings.sellTargets.filter((t) => Date.now() - (t.lastAt || 0) > 10 * 60000).sort((a, b) => (a.lastAt || 0) - (b.lastAt || 0))[0];
+      if (!due) return;
+      due.lastAt = Date.now();
+      try {
+        const v = await getPrice('futbin', { resourceId: due.resourceId, name: due.name, fullName: due.fullName, rating: due.rating, isPlayer: true });
+        if (v) {
+          due.last = v; saveSettings(); render();
+          if (v >= due.target) WATCH.alarm(`s${due.itemId}`, `${due.name} steht bei ${fmt(v)} (Futbin) – dein Verkaufsziel ${fmt(due.target)} ist erreicht. Jetzt einstellen!`, 60 * 60000);
+        } else saveSettings();
+      } catch (e) { log('SellAlert', e); saveSettings(); }
+    }, 60000);
+
+    function render() {
+      if (!box) return;
+      const L = settings.sellTargets;
+      box.innerHTML = `
+        <div class="fcpt-sgroup"><h4>🎯 Verkaufs-Alarm</h4>
+          ${L.length ? L.map((t) => {
+            const hit = t.last != null && t.last >= t.target;
+            const prof = t.bought ? afterTax(t.target) - t.bought : null;
+            return `<div class="wl-row ${hit ? 'hit' : ''}">
+              <div class="wl-name"><b>${esc(t.rating ?? '')} ${esc(t.name)}</b><small>Futbin: ${t.last != null ? fmt(t.last) : '–'}${t.lastAt ? ' · ' + agoText(t.lastAt) : ''}${prof != null ? ` · Profit am Ziel ${signed(prof)}` : ''}</small></div>
+              <label class="wl-t">Ziel ≥<input type="number" step="50" min="0" data-st="${esc(t.itemId)}" value="${t.target}"></label>
+              <button class="wl-x" data-sx="${esc(t.itemId)}" title="Entfernen">✕</button></div>`;
+          }).join('') : '<div class="note" style="font-size:12px;color:#7d8aa0">Noch leer. In der Transferliste (Panel) bei einer eigenen Karte auf „🎯 Verkaufsziel“ tippen.</div>'}
+          <div class="note" style="font-size:11px;color:#7d8aa0">Prüft jede Karte alle 10 Min. bei Futbin, solange die Web App offen ist. Alarm per Ton, Meldung und – falls eingerichtet – Push aufs Handy (ntfy, siehe Markt › Watchlist).</div>
+        </div>`;
+      box.querySelectorAll('[data-st]').forEach((i) => i.addEventListener('change', () => {
+        const t = find(i.dataset.st);
+        if (t) { t.target = Math.max(0, parseInt(i.value, 10) || 0); saveSettings(); render(); }
+      }));
+      box.querySelectorAll('[data-sx]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); remove(b.dataset.sx); }));
+    }
+    function mount(el) { box = el; render(); }
+    return { has, get, toggle, remove, sold, mount };
+  })();
