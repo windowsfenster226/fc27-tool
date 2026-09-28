@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.7.3
+// @version      2.7.4
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -404,16 +404,27 @@ const SBC = (function () {
       return cand[rnd(cand.length)];
     }
 
-    let best = null;
+    let best = null, bestAny = null;
     let iters = 0, restarts = 0;
-    while (now() - t0 < timeMs) {
+    // Ohne gültige Lösung bis zum Zeitlimit: automatisch bis zum 2,5-fachen weitersuchen
+    const limit = () => (best ? timeMs : timeMs * 2.5);
+    while (now() - t0 < limit()) {
       restarts++;
-      let cur = initial();
+      // Neustart: abwechselnd frisch oder vom bisher besten Stand (leicht verändert) aus
+      let cur;
+      if (bestAny && restarts % 2 === 0) {
+        cur = bestAny.players.slice();
+        for (let k = 0; k < 3; k++) {
+          const i = open[rnd(open.length)];
+          const p = cand[rnd(cand.length)];
+          if (!cur.some((q) => q && q.assetId === p.assetId)) cur[i] = p;
+        }
+      } else cur = initial();
       let cs = score(cur); cs.ev.__arr = cur;
       let temp = 1;
       const restartBudget = Math.max(400, timeMs / 6);
       const rt0 = now();
-      while (now() - rt0 < restartBudget && now() - t0 < timeMs) {
+      while (now() - rt0 < restartBudget && now() - t0 < limit()) {
         iters++;
         const next = cur.slice();
         const mv = Math.random();
@@ -428,7 +439,12 @@ const SBC = (function () {
         }
         const ns = score(next); ns.ev.__arr = next;
         const d = ns.s - cs.s;
-        if (d <= 0 || Math.random() < Math.exp(-d / (temp * 500))) { cur = next; cs = ns; }
+        const dp = ns.ev.penalty - cs.ev.penalty;
+        // Kosten-Verschlechterung gelegentlich erlauben; kleine Regel-Verschlechterung selten erlauben,
+        // damit die Suche aus Sackgassen herausfindet (v. a. bei Chemie)
+        const accept = d <= 0 || (dp <= 0 && Math.random() < Math.exp(-d / (temp * 500))) || (dp > 0 && dp <= 2 && Math.random() < 0.03 * temp);
+        if (accept) { cur = next; cs = ns; }
+        if (!bestAny || cs.ev.penalty < bestAny.pen || (cs.ev.penalty === bestAny.pen && cs.cost < bestAny.cost)) bestAny = { players: cur.slice(), pen: cs.ev.penalty, cost: cs.cost };
         temp *= 0.9995;
         if (cs.ev.feasible && (!best || cs.cost < best.cost)) best = { players: cur.slice(), cost: cs.cost, ev: cs.ev };
       }
@@ -2698,7 +2714,14 @@ const SBC = (function () {
           const val = fb || raw.marketAverage || null;
           rows.push({ name: p.name, rating: p.rating, where: 'Verein', value: val || p.value, src: fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung' });
         }
-        // Transferliste (nicht verkaufte, handelbare Karten) – falls geladen
+        // Transferliste (nicht verkaufte Karten) – wird bei Bedarf automatisch geladen
+        if (!items || !items.length) {
+          try {
+            st.textContent = 'Lade Transferliste …';
+            items = (await loadTransferList()).map((raw) => { const x = mapItem(raw); if (x) x.__raw = raw; return x; }).filter(Boolean);
+          } catch (e) { log('Vereinswert: Transferliste', e); }
+        }
+        let tlCount = 0;
         for (const it of items || []) {
           if (!it.isPlayer || it.sold || seen.has(it.itemId)) continue;
           seen.add(it.itemId);
@@ -2707,6 +2730,7 @@ const SBC = (function () {
           const val = fb || raw.marketAverage;
           if (!val) continue;
           rows.push({ name: it.name, rating: it.rating, where: 'Transferliste', value: val, src: fb ? 'Futbin' : 'EA' });
+          tlCount++;
         }
         const total = rows.reduce((a, r) => a + (r.value || 0), 0);
         const net = rows.reduce((a, r) => a + afterTax(r.value || 0), 0);
@@ -2726,7 +2750,7 @@ const SBC = (function () {
           </div>
           <div class="cv-bands">${bands.map((b) => `<div class="cv-band"><span>${b.l}</span><div class="cv-bar"><i style="width:${Math.max(2, Math.round(b.v / maxBand * 100))}%"></i></div><b>${fmt(Math.round(b.v))}</b><small>${b.n}×</small></div>`).join('')}</div>
           <div class="fcpt-mini"><div class="h">Wertvollste handelbare Karten</div>${top.map((r) => `<div class="r"><span>${esc(r.rating)} ${esc(r.name)}${r.where === 'Transferliste' ? ' <span class="fcpt-muted">(TL)</span>' : ''}</span><b>${fmt(Math.round(r.value))} <small class="fcpt-muted">${r.src}</small></b></div>`).join('')}</div>
-          <div class="fcpt-stand">Preisquellen: ${bySrc('Futbin')}× Futbin · ${bySrc('EA')}× EA-Durchschnitt · ${bySrc('Schätzung')}× geschätzt${coins != null ? ` · Münzen: ${fmt(coins)}` : ''}</div>`;
+          <div class="fcpt-stand">Davon ${tlCount} Karten aus der Transferliste · Preisquellen: ${bySrc('Futbin')}× Futbin · ${bySrc('EA')}× EA-Durchschnitt · ${bySrc('Schätzung')}× geschätzt${coins != null ? ` · Münzen: ${fmt(coins)}` : ''}</div>`;
         st.textContent = `Stand: ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} · Verein wird 10 Min. zwischengespeichert.`;
       } catch (e) {
         st.textContent = 'Fehler: ' + e.message;

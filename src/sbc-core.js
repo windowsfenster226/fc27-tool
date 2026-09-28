@@ -377,16 +377,27 @@ const SBC = (function () {
       return cand[rnd(cand.length)];
     }
 
-    let best = null;
+    let best = null, bestAny = null;
     let iters = 0, restarts = 0;
-    while (now() - t0 < timeMs) {
+    // Ohne gültige Lösung bis zum Zeitlimit: automatisch bis zum 2,5-fachen weitersuchen
+    const limit = () => (best ? timeMs : timeMs * 2.5);
+    while (now() - t0 < limit()) {
       restarts++;
-      let cur = initial();
+      // Neustart: abwechselnd frisch oder vom bisher besten Stand (leicht verändert) aus
+      let cur;
+      if (bestAny && restarts % 2 === 0) {
+        cur = bestAny.players.slice();
+        for (let k = 0; k < 3; k++) {
+          const i = open[rnd(open.length)];
+          const p = cand[rnd(cand.length)];
+          if (!cur.some((q) => q && q.assetId === p.assetId)) cur[i] = p;
+        }
+      } else cur = initial();
       let cs = score(cur); cs.ev.__arr = cur;
       let temp = 1;
       const restartBudget = Math.max(400, timeMs / 6);
       const rt0 = now();
-      while (now() - rt0 < restartBudget && now() - t0 < timeMs) {
+      while (now() - rt0 < restartBudget && now() - t0 < limit()) {
         iters++;
         const next = cur.slice();
         const mv = Math.random();
@@ -401,7 +412,12 @@ const SBC = (function () {
         }
         const ns = score(next); ns.ev.__arr = next;
         const d = ns.s - cs.s;
-        if (d <= 0 || Math.random() < Math.exp(-d / (temp * 500))) { cur = next; cs = ns; }
+        const dp = ns.ev.penalty - cs.ev.penalty;
+        // Kosten-Verschlechterung gelegentlich erlauben; kleine Regel-Verschlechterung selten erlauben,
+        // damit die Suche aus Sackgassen herausfindet (v. a. bei Chemie)
+        const accept = d <= 0 || (dp <= 0 && Math.random() < Math.exp(-d / (temp * 500))) || (dp > 0 && dp <= 2 && Math.random() < 0.03 * temp);
+        if (accept) { cur = next; cs = ns; }
+        if (!bestAny || cs.ev.penalty < bestAny.pen || (cs.ev.penalty === bestAny.pen && cs.cost < bestAny.cost)) bestAny = { players: cur.slice(), pen: cs.ev.penalty, cost: cs.cost };
         temp *= 0.9995;
         if (cs.ev.feasible && (!best || cs.cost < best.cost)) best = { players: cur.slice(), cost: cs.cost, ev: cs.ev };
       }

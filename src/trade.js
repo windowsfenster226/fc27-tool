@@ -243,7 +243,14 @@
           const val = fb || raw.marketAverage || null;
           rows.push({ name: p.name, rating: p.rating, where: 'Verein', value: val || p.value, src: fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung' });
         }
-        // Transferliste (nicht verkaufte, handelbare Karten) – falls geladen
+        // Transferliste (nicht verkaufte Karten) – wird bei Bedarf automatisch geladen
+        if (!items || !items.length) {
+          try {
+            st.textContent = 'Lade Transferliste …';
+            items = (await loadTransferList()).map((raw) => { const x = mapItem(raw); if (x) x.__raw = raw; return x; }).filter(Boolean);
+          } catch (e) { log('Vereinswert: Transferliste', e); }
+        }
+        let tlCount = 0;
         for (const it of items || []) {
           if (!it.isPlayer || it.sold || seen.has(it.itemId)) continue;
           seen.add(it.itemId);
@@ -252,6 +259,7 @@
           const val = fb || raw.marketAverage;
           if (!val) continue;
           rows.push({ name: it.name, rating: it.rating, where: 'Transferliste', value: val, src: fb ? 'Futbin' : 'EA' });
+          tlCount++;
         }
         const total = rows.reduce((a, r) => a + (r.value || 0), 0);
         const net = rows.reduce((a, r) => a + afterTax(r.value || 0), 0);
@@ -271,7 +279,7 @@
           </div>
           <div class="cv-bands">${bands.map((b) => `<div class="cv-band"><span>${b.l}</span><div class="cv-bar"><i style="width:${Math.max(2, Math.round(b.v / maxBand * 100))}%"></i></div><b>${fmt(Math.round(b.v))}</b><small>${b.n}×</small></div>`).join('')}</div>
           <div class="fcpt-mini"><div class="h">Wertvollste handelbare Karten</div>${top.map((r) => `<div class="r"><span>${esc(r.rating)} ${esc(r.name)}${r.where === 'Transferliste' ? ' <span class="fcpt-muted">(TL)</span>' : ''}</span><b>${fmt(Math.round(r.value))} <small class="fcpt-muted">${r.src}</small></b></div>`).join('')}</div>
-          <div class="fcpt-stand">Preisquellen: ${bySrc('Futbin')}× Futbin · ${bySrc('EA')}× EA-Durchschnitt · ${bySrc('Schätzung')}× geschätzt${coins != null ? ` · Münzen: ${fmt(coins)}` : ''}</div>`;
+          <div class="fcpt-stand">Davon ${tlCount} Karten aus der Transferliste · Preisquellen: ${bySrc('Futbin')}× Futbin · ${bySrc('EA')}× EA-Durchschnitt · ${bySrc('Schätzung')}× geschätzt${coins != null ? ` · Münzen: ${fmt(coins)}` : ''}</div>`;
         st.textContent = `Stand: ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} · Verein wird 10 Min. zwischengespeichert.`;
       } catch (e) {
         st.textContent = 'Fehler: ' + e.message;
