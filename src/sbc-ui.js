@@ -206,7 +206,7 @@
       const dup = !!(extra && extra.dup) || !!raw.__unassigned || (typeof ent.isDuplicate === 'function' && (() => { try { return ent.isDuplicate(); } catch (e) { return false; } })());
       const mult = untradeable ? (dup ? 0.1 : settings.sbcPreferUntradeable ? 0.6 : 1) : 1;
       return {
-        id: ent.id, assetId: g(raw.assetId, ent.assetId, def != null ? def % 16777216 : ent.id),
+        id: ent.id, def, resId, fullName: [sd.firstName, sd.lastName].filter(Boolean).join(' '), assetId: g(raw.assetId, ent.assetId, def != null ? def % 16777216 : ent.id),
         name: sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${def}`,
         rating, rarity, nationId: g(raw.nation, ent.nationId, ent.nation), leagueId: g(raw.leagueId, ent.leagueId),
         clubId: g(raw.teamid, ent.teamId, ent.teamid), positions, untradeable, loans, owners: g(raw.owners, ent.owners, 1),
@@ -216,14 +216,14 @@
       };
     }
 
-    async function pagedSearch(fnName, service, label, setStatus, extra) {
+    async function pagedSearch(fnName, service, label, setStatus, extra, maxPages = 50) {
       const VM = W.UTBucketedItemSearchViewModel;
       const crit = VM ? new VM().searchCriteria : null;
       if (!crit) throw new Error('EA-Suchobjekt nicht gefunden (UTBucketedItemSearchViewModel)');
       try { if (W.SearchType && W.SearchType.PLAYER) crit.type = W.SearchType.PLAYER; } catch (e) { /* */ }
       crit.count = 91;
       const ents = [];
-      for (let page = 0, offset = 0; page < 50; page++, offset += 91) {
+      for (let page = 0, offset = 0; page < maxPages; page++, offset += 91) {
         crit.offset = offset;
         setStatus(`${label}: Seite ${page + 1} … (${ents.length} Karten)`);
         const ev = await observeOnce(service[fnName](crit));
@@ -265,6 +265,104 @@
       return club;
     }
 
+    // ---------- 3b) Konzept-Spieler (Karten, die du NICHT besitzt) ----------
+    // Werden nur eingeplant, wenn „Konzept-Spieler nutzen“ an ist. EA lässt sie in die SBC einsetzen,
+    // einreichen geht erst, wenn du sie gekauft hast.
+    if (settings.sbcConcepts === undefined) settings.sbcConcepts = false;
+    let concept = null; // { at, players, ents }
+    const nrm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z ]/g, ' ').trim();
+
+    async function loadConcepts(setStatus) {
+      if (concept && Date.now() - concept.at < 3 * 3600000) return concept;
+      const S = W.services;
+      if (!S || !S.Item || typeof S.Item.searchConceptItems !== 'function') throw new Error('EA-Konzeptsuche nicht gefunden – bitte „Diagnose kopieren“ schicken');
+      const owned = new Set((club ? club.players : []).map((p) => p.def).filter((x) => x != null));
+      const all = await pagedSearch('searchConceptItems', S.Item, 'Konzept-Spieler laden (einmal pro Sitzung, ca. 1–2 Min.)', setStatus, null, 320);
+      const ents = new Map(), players = [];
+      for (const [ent] of all) {
+        if (!ent) continue;
+        try { if (typeof ent.isTimeLimited === 'function' && ent.isTimeLimited()) continue; } catch (e) { /* */ }
+        const p = toPlayer(ent);
+        if (!p || p.special || p.rating == null) continue;          // nur normale Gold/Silber/Bronze-Karten – Sonderkarten-Preise sind nicht schätzbar
+        if (p.def != null && owned.has(p.def)) continue;             // hast du schon
+        const key = 'c' + (p.def != null ? p.def : ent.id);
+        if (ents.has(key)) continue;
+        Object.assign(p, { id: key, concept: true, untradeable: false, dup: false, loans: 0 });
+        ents.set(key, ent);
+        players.push(p);
+      }
+      concept = { at: Date.now(), players, ents };
+      return concept;
+    }
+
+    // Kaufpreis schätzen: Futbin-Preis (falls schon geprüft) > günstigste Karte des Ratings (Futbin) > Schätzung
+    const conceptFail = new Set();
+    // Aus geprüften Preisen lernen: Verhältnis echter Preis / Schätzung je Rating (Median)
+    const ratios = {};
+    const median = (a) => { const b = a.slice().sort((x, y) => x - y); return b[Math.floor(b.length / 2)]; };
+    function factorFor(r) {
+      const own = ratios[r];
+      if (own && own.length) return median(own);
+      const all = Object.values(ratios).flat();
+      return all.length >= 2 ? median(all) : 1;
+    }
+    function priceConcept(p) {
+      const fb = cacheGet(`futbin:${settings.platform}:${p.resId}`);
+      let v, src;
+      if (fb) {
+        v = fb; src = 'Futbin';
+        if (p.estBase && !p.ratioDone) { (ratios[p.rating] = ratios[p.rating] || []).push(Math.max(0.3, Math.min(5, fb / p.estBase))); p.ratioDone = true; }
+      } else {
+        const rp = typeof RATINGS !== 'undefined' ? RATINGS.get() : null;
+        const floor = rp && rp.prices[p.rating];
+        if (floor) {
+          const last = nrm(p.name).split(' ').pop();
+          const listed = (rp.names[p.rating] || []).some((n) => nrm(n).split(' ').includes(last));
+          v = listed ? floor : Math.round(floor * 1.35); src = listed ? 'Futbin (günstigste)' : 'geschätzt';
+        } else { v = Math.round(estValue(p.rating, p.rarity) * 1.2); src = 'geschätzt'; }
+        p.estBase = v;
+        v = Math.round(v * factorFor(p.rating));
+        if (conceptFail.has(p.id)) v *= 3;   // bei Futbin nicht gefunden -> eher meiden
+      }
+      p.value = v; p.priceSrc = src; p.verified = !!fb;
+      p.cost = Math.round(v * 1.05) + 50 + p.rating * 0.01;   // bei gleichem Preis lieber eigene Karten
+    }
+
+    // Auswahl verkleinern (Solver bleibt schnell): pro Rating je Liga/Nation/Verein nur die günstigsten
+    function conceptPool(constraints, excludeIds) {
+      if (!concept) return [];
+      const tr = constraints.find((c) => c.kind === 'TEAM_RATING_1_TO_100' && !c.unsupported);
+      const maxR = Math.min(settings.sbcMaxRating > 0 ? settings.sbcMaxRating : 99, tr ? tr.value + 5 : 99);
+      const L = concept.players.filter((p) => p.rating <= maxR && !excludeIds.has(p.id));
+      L.forEach(priceConcept);
+      L.sort((a, b) => a.cost - b.cost);
+      const cnt = {}, keep = [];
+      const bump = (k, max) => { cnt[k] = (cnt[k] || 0) + 1; return cnt[k] <= max; };
+      for (const p of L) {
+        const a = bump(`l${p.rating}:${p.leagueId}`, 4), b = bump(`n${p.rating}:${p.nationId}`, 3), c = bump(`c${p.rating}:${p.clubId}`, 2), d = bump(`p${p.rating}:${p.positions[0]}`, 3);
+        if (a || b || c || d || p.verified) keep.push(p);
+      }
+      return keep;
+    }
+
+    // Für gewählte Konzept-Spieler echte Futbin-Preise holen (max. 11 Abrufe)
+    async function verifyConcepts(players, setStatus) {
+      let n = 0;
+      for (const p of players) {
+        if (!p || !p.concept || p.verified || conceptFail.has(p.id)) continue;
+        if (typeof futbinBlocked === 'function' && futbinBlocked()) return { n, blocked: true };
+        setStatus(`Prüfe Futbin-Preis: ${p.name} (${p.rating}) …`);
+        try {
+          const v = await getPrice('futbin', { resourceId: p.resId, name: p.name, fullName: p.fullName, rating: p.rating, isPlayer: true });
+          if (!v) conceptFail.add(p.id);
+        } catch (e) { conceptFail.add(p.id); if (typeof futbinBlocked === 'function' && futbinBlocked()) return { n, blocked: true }; }
+        priceConcept(p); n++;
+      }
+      return { n, blocked: false };
+    }
+    const findPlayer = (id) => (club && club.players.find((p) => p.id === id)) || (concept && concept.players.find((p) => p.id === id)) || null;
+    const entOf = (id) => (club && club.ents.get(id)) || (concept && concept.ents.get(id)) || null;
+
     // ---------- 4) Challenge lesen ----------
     function readChallenge() {
       const ctx = findSbcContext();
@@ -303,7 +401,7 @@
       const slots = slotList(squad);
       const arr = slots.map((s, i) => {
         const p = sol.players[i];
-        if (p && club && club.ents.get(p.id)) return club.ents.get(p.id);
+        if (p && entOf(p.id)) return entOf(p.id);
         return slotItem(s);
       });
       let done = false;
@@ -379,7 +477,7 @@
       #fcpt-sbc .btn[disabled]{opacity:.5;cursor:default}
       #fcpt-sbc .st{font-size:12px;color:var(--ink2);min-height:16px}
       #fcpt-sbc .st.err{color:#fca5a5}
-      #fcpt-sbc .sum{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+      #fcpt-sbc .sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:6px}
       #fcpt-sbc .sum>div{background:var(--bg3);border-radius:10px;padding:7px 9px}
       #fcpt-sbc .sum .l{font-size:11px;color:var(--ink3)}#fcpt-sbc .sum .v{font-size:17px;font-weight:800}
       #fcpt-sbc table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -387,6 +485,9 @@
       #fcpt-sbc td{padding:6px 4px;border-bottom:1px solid #1a2436}
       #fcpt-sbc td.n{text-align:right;font-variant-numeric:tabular-nums}
       #fcpt-sbc .tag{font-size:10px;font-weight:700;border-radius:4px;padding:1px 4px;margin-left:4px;background:#1f2b3d;color:#a7b3c6}
+      #fcpt-sbc .tag.buy{background:rgba(59,130,246,.18);color:#93c5fd}
+      #fcpt-sbc .buybox{background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.35);border-radius:10px;padding:8px 10px;margin:8px 0}
+      #fcpt-sbc .buyrow{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:2px 0;border-bottom:1px dashed rgba(255,255,255,.08)}
       #fcpt-sbc .tag.nh{background:rgba(34,197,94,.15);color:#86efac}#fcpt-sbc .tag.dup{background:rgba(245,197,24,.15);color:#fde68a}
       #fcpt-sbc .ch{display:inline-block;min-width:18px;text-align:center;border-radius:4px;font-weight:700}
       #fcpt-sbc .ch0{background:#3a1515;color:#fca5a5}#fcpt-sbc .ch3{background:rgba(34,197,94,.18);color:#86efac}
@@ -410,6 +511,7 @@
       <div class="bd">
         <div class="grp"><h4>Anforderungen</h4><div data-el="reqs"><div class="note">Öffne eine SBC-Aufgabe.</div></div></div>
         <div class="grp"><h4>Optionen</h4>
+          <div class="opt"><span>🛒 Konzept-Spieler nutzen<small>Günstigste Variante: fehlende Karten als Konzept einsetzen – du kaufst sie danach selbst</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcConcepts"></div>
           <div class="opt"><span>Sonderkarten erlauben<small>TOTW, Promos usw. – aus = nur normale Karten</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcSpecials"></div>
           <div class="opt"><span>Nicht handelbare bevorzugen<small>Doppelte/Lager-Karten werden immer zuerst genommen</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcPreferUntradeable"></div>
           <div class="opt"><span>Aktive Mannschaft schützen<small>Spieler aus deiner aktiven Mannschaft werden nie verwendet</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcProtectActive"></div>
@@ -483,20 +585,26 @@
         if (!p) return `<tr><td>${pos}</td><td colspan="4" class="note">leer</td></tr>`;
         const ch = ev.chem.per[i];
         const isLocked = lockedIds().has(p.id);
-        return `<tr class="${isLocked ? 'locked' : ''}"><td>${esc(pos)}</td><td><button class="lk" data-a="lock" data-i="${i}" title="Diesen Spieler nie für SBCs verwenden">🔒</button> ${esc(p.name)}${p.untradeable ? '<span class="tag nh">NH</span>' : ''}${p.dup ? '<span class="tag dup">Dup</span>' : ''}</td>
-          <td class="n">${p.rating}</td><td class="n"><span class="ch ch${ch}">${ch}</span></td><td class="n" title="${esc(p.priceSrc)}">${fmt(Math.round(p.value))}</td></tr>`;
+        return `<tr class="${isLocked ? 'locked' : ''}"><td>${esc(pos)}</td><td><button class="lk" data-a="lock" data-i="${i}" title="Diesen Spieler nie für SBCs verwenden">🔒</button> ${esc(p.name)}${p.untradeable ? '<span class="tag nh">NH</span>' : ''}${p.dup ? '<span class="tag dup">Dup</span>' : ''}${p.concept ? '<span class="tag buy" title="Nicht in deinem Verein – musst du kaufen">🛒 kaufen</span>' : ''}</td>
+          <td class="n">${p.rating}</td><td class="n"><span class="ch ch${ch}">${ch}</span></td><td class="n" title="${esc(p.priceSrc)}">${fmt(Math.round(p.value))}${p.concept && !p.verified ? '<small>≈</small>' : ''}</td></tr>`;
       }).join('');
-      const value = sol.players.reduce((a, p) => a + (p ? p.value : 0), 0);
+      const value = sol.players.reduce((a, p) => a + (p && !p.concept ? p.value : 0), 0);
+      const buyL = sol.players.filter((p) => p && p.concept);
+      const buy = buyL.reduce((a, p) => a + p.value, 0);
+      const buyHtml = buyL.length ? `<div class="buybox"><b>🛒 Zu kaufen: ${buyL.length} Spieler ≈ ${fmt(Math.round(buy))} Münzen</b>
+          ${buyL.map((p) => `<div class="buyrow"><span>${esc(p.rating)} ${esc(p.name)}</span><span>${p.verified ? 'Futbin' : 'geschätzt'} <b>${fmt(Math.round(p.value))}</b></span></div>`).join('')}
+          <div class="note">Werden als Konzept eingesetzt. Einreichen geht erst, wenn du sie gekauft hast (Transfermarkt → Spieler suchen, dann in die SBC tauschen).${buyL.some((p) => !p.verified) ? ' „geschätzt“ = Preis nicht geprüft, echter Preis kann abweichen.' : ''}</div></div>` : '';
       const anyLocked = sol.players.some((p) => p && lockedIds().has(p.id));
       el('result').innerHTML = `
         <div class="grp"><h4>${sol.feasible ? 'Lösung' : 'Keine vollständige Lösung gefunden'}</h4>
           <div class="sum">
             <div><div class="l">Teambewertung</div><div class="v">${ev.rating}</div></div>
             <div><div class="l">Chemie</div><div class="v">${ev.chem.total}</div></div>
-            <div><div class="l">Wert der Karten</div><div class="v">${fmt(Math.round(value))}</div></div>
+            <div><div class="l">${buyL.length ? 'Eigene Karten' : 'Wert der Karten'}</div><div class="v">${fmt(Math.round(value))}</div></div>
+            ${buyL.length ? `<div><div class="l">Kaufen</div><div class="v">${fmt(Math.round(buy))}</div></div>` : ''}
           </div>
           <div class="note">${okCount} von ${total} Anforderungen erfüllt · ${fmt(sol.iters || 0)} Kombinationen geprüft</div>
-          ${buyCostHtml(value)}
+          ${buyHtml}${buyCostHtml(value + buy)}
           <table><thead><tr><th>Pos</th><th>Spieler</th><th style="text-align:right">OVR</th><th style="text-align:right">Chem</th><th style="text-align:right">Wert</th></tr></thead><tbody>${rows}</tbody></table>
           ${anyLocked ? '<div class="note" style="color:#fcd34d">🔒 Gesperrte Spieler in der Lösung – bitte „Nochmal lösen“.</div>' : ''}
           <div class="btns"><button class="btn go" data-a="apply" ${sol.feasible && !anyLocked ? '' : 'disabled'}>✓ In SBC einsetzen</button><button class="btn" data-a="solve">Nochmal lösen</button></div>
@@ -524,7 +632,7 @@
       return r;
     }
 
-    async function buildPool(c, statusFn) {
+    async function buildPool(c, statusFn, constraints) {
       const locked = lockedIds();
       let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id));
       let protectedN = 0, activeWarn = false;
@@ -538,7 +646,38 @@
       }
       if (!settings.sbcSpecials) pool = pool.filter((p) => !p.special);
       if (settings.sbcMaxRating > 0) pool = pool.filter((p) => p.rating <= settings.sbcMaxRating);
-      return { pool, protectedN, activeWarn, locked };
+      let conceptN = 0;
+      if (settings.sbcConcepts && constraints) {
+        if (typeof RATINGS !== 'undefined' && !RATINGS.get()) { statusFn('Lade Rating-Preise von Futbin …'); try { await RATINGS.load(); } catch (e) { log('Ratings', e); } }
+        await loadConcepts(statusFn);
+        const cp = conceptPool(constraints, locked);
+        conceptN = cp.length;
+        pool = pool.concat(cp);
+      }
+      return { pool, protectedN, activeWarn, locked, conceptN };
+    }
+
+    // Lösen; gewählte Konzept-Spieler bei Futbin nachprüfen und ggf. mit echten Preisen neu rechnen
+    const conceptSum = (sol) => sol.players.reduce((a, p) => a + (p && p.concept ? p.value : 0), 0);
+    async function solveSmart(pool, slots, constraints, setStatus) {
+      const t = Math.min(30, Math.max(1, settings.sbcTime)) * 1000;
+      let sol = SBC.solve(pool, slots, constraints, { timeMs: t });
+      let blocked = false, rounds = 0;
+      const open = (x) => x.players.some((p) => p && p.concept && !p.verified && !conceptFail.has(p.id));
+      while (!sol.error && sol.feasible && open(sol) && rounds < 6) {
+        rounds++;
+        const before = conceptSum(sol);
+        const r = await verifyConcepts(sol.players, setStatus);
+        if (r.blocked) { blocked = true; break; }
+        if (conceptSum(sol) <= before * 1.1 && !sol.players.some((p) => p && conceptFail.has(p.id))) break;   // Schätzung passte
+        pool.forEach((p) => { if (p.concept && !p.verified) priceConcept(p); });
+        setStatus(`Echte Preise weichen ab – rechne neu (${rounds}) …`);
+        await sleep(30);
+        sol = SBC.solve(pool, slots, constraints, { timeMs: t });
+      }
+      sol.unverified = sol.players.filter((p) => p && p.concept && !p.verified).length;
+      sol.futbinBlocked = blocked;
+      return sol;
     }
 
     async function runGroup() {
@@ -552,7 +691,11 @@
       pane.querySelectorAll('[data-a="solve"],[data-a="group"]').forEach((b) => { b.disabled = true; });
       try {
         const c = await loadClub(setStatus, false);
-        const base = await buildPool(c, setStatus);
+        const base = await buildPool(c, setStatus, null);
+        if (settings.sbcConcepts) {
+          if (typeof RATINGS !== 'undefined' && !RATINGS.get()) { try { await RATINGS.load(); } catch (e) { log('Ratings', e); } }
+          await loadConcepts(setStatus);
+        }
         const used = new Set();
         plan = { setId, at: Date.now(), items: {} };
         let i = 0;
@@ -563,15 +706,17 @@
           const dec = SBC.decodeRequirements(ch.elgReq || [], W.SBCEligibilityKey);
           const pos = formationPositions(ch.formation);
           const slots = Array.from({ length: 11 }, (_, k) => ({ position: pos ? pos[k] : null }));
-          const pool = base.pool.filter((p) => !used.has(p.id));
-          const sol = SBC.solve(pool, slots, dec.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+          let pool = base.pool.filter((p) => !used.has(p.id));
+          if (settings.sbcConcepts) pool = pool.concat(conceptPool(dec.constraints, new Set([...base.locked, ...used])));
+          const sol = await solveSmart(pool, slots, dec.constraints, setStatus);
           const ok = !sol.error && sol.feasible;
           if (ok) sol.players.forEach((p) => p && used.add(p.id));
           plan.items[ch.challengeId] = {
             name: ch.name, feasible: ok, formation: ch.formation, posKnown: !!pos, unsupported: dec.unsupported.length,
             rating: sol.ev ? sol.ev.rating : null, chem: sol.ev ? sol.ev.chem.total : null,
-            value: ok ? Math.round(sol.players.reduce((a, p) => a + (p ? p.value : 0), 0)) : 0,
-            players: ok ? sol.players.map((p, k) => p && { id: p.id, name: p.name, rating: p.rating, pos: pos ? pos[k] : null }).filter(Boolean) : [],
+            value: ok ? Math.round(sol.players.reduce((a, p) => a + (p && !p.concept ? p.value : 0), 0)) : 0,
+            buy: ok ? Math.round(conceptSum(sol)) : 0, buyN: ok ? sol.players.filter((p) => p && p.concept).length : 0,
+            players: ok ? sol.players.map((p, k) => p && { id: p.id, name: p.name, rating: p.rating, pos: pos ? pos[k] : null, concept: !!p.concept }).filter(Boolean) : [],
           };
         }
         savePlan();
@@ -589,11 +734,12 @@
       if (!planValid() || !info || !CAP.challenges.get(info.id) || plan.setId !== CAP.challenges.get(info.id).__setId) { el2.innerHTML = ''; return; }
       const items = Object.entries(plan.items);
       const total = items.reduce((a, [, x]) => a + (x.value || 0), 0);
+      const buyT = items.reduce((a, [, x]) => a + (x.done ? 0 : x.buy || 0), 0);
       el2.innerHTML = `<div class="grp"><h4>📋 Gruppenplan</h4>
         ${items.map(([cid, x]) => `<div class="req ${x.done ? 'ok' : x.feasible ? '' : 'bad'}"><span class="ic">${x.done ? '✓' : x.feasible ? (+cid === info.id ? '▶' : '•') : '✕'}</span>
           <span>${esc(x.name)}${+cid === info.id ? ' <b>(offen)</b>' : ''}${x.posKnown ? '' : ' <span class="tag" title="Positionen dieser Formation noch unbekannt – Chemie ohne Positionsprüfung">Pos.?</span>'}${x.unsupported ? ' <span class="tag">!</span>' : ''}</span>
-          <span class="v">${x.feasible ? `${x.rating} · ${x.chem} Chem · ${fmt(x.value)}` : 'keine Lösung'}</span></div>`).join('')}
-        <div class="note">Gesamtwert der verplanten Karten: <b>${fmt(total)}</b> · Kein Spieler wird doppelt verwendet. Plan gilt 6 Std.</div>
+          <span class="v">${x.feasible ? `${x.rating} · ${x.chem} Chem · ${fmt(x.value)}${x.buyN ? ` · 🛒 ${x.buyN}× ≈ ${fmt(x.buy)}` : ''}` : 'keine Lösung'}</span></div>`).join('')}
+        <div class="note">Gesamtwert der verplanten Vereinskarten: <b>${fmt(total)}</b>${buyT ? ` · zu kaufen ≈ <b>${fmt(buyT)}</b> Münzen` : ''} · Kein Spieler wird doppelt verwendet. Plan gilt 6 Std.</div>
         <div class="btns"><button class="btn" data-a="planclear">Plan verwerfen</button></div></div>`;
     }
 
@@ -603,7 +749,7 @@
       pane.querySelectorAll('[data-a="solve"]').forEach((b) => { b.disabled = true; });
       try {
         const c = await loadClub(setStatus, force);
-        const bp = await buildPool(c, setStatus);
+        const bp = await buildPool(c, setStatus, info.decoded.constraints);
         const { protectedN, activeWarn, locked } = bp;
         const reserved = reservedIds(info.id);
         let pool = bp.pool.filter((p) => !reserved.has(p.id));   // für andere Gruppen-Aufgaben verplante Spieler nicht anrühren
@@ -619,7 +765,7 @@
         // Gruppenplan: geplante Spieler passend zu den echten EA-Positionen einsetzen
         let usedPlan = false;
         if (planned && !slots.some((x) => x.fixed)) {
-          const avail = planned.map((x) => c.players.find((p) => p.id === x.id) && Object.assign({}, x, { p: c.players.find((p) => p.id === x.id) })).filter(Boolean);
+          const avail = planned.map((x) => findPlayer(x.id) && Object.assign({}, x, { p: findPlayer(x.id) })).filter(Boolean);
           if (avail.length === planned.length) {
             const rest = avail.slice();
             slots.forEach((sl) => { if (sl.blocked) return; const k = rest.findIndex((x) => x.pos && x.pos === sl.position); if (k >= 0) sl.fixed = rest.splice(k, 1)[0].p; });
@@ -629,11 +775,11 @@
         }
         setStatus(`Suche Lösung aus ${fmt(pool.length)} Spielern …`);
         await sleep(30);
-        let sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        let sol = await solveSmart(pool, slots, info.decoded.constraints, setStatus);
         if (usedPlan && !sol.feasible) {   // Plan passt nicht (z. B. andere Positionen) -> normal lösen
           usedPlan = false;
           slots.forEach((sl) => { sl.fixed = null; });
-          sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+          sol = await solveSmart(pool, slots, info.decoded.constraints, setStatus);
         }
         if (sol.error) { setStatus(sol.error, true); return; }
         sol.challengeId = info.id;
@@ -641,7 +787,9 @@
         renderReqs(sol.ev.results);
         renderResult(sol);
         const prot = activeWarn ? ' ⚠ Aktive Mannschaft konnte nicht gelesen werden – prüfe selbst, ob Stammspieler dabei sind.' : settings.sbcProtectActive ? ` (${protectedN} Spieler der aktiven Mannschaft geschützt${locked.size ? `, ${locked.size} gesperrt` : ''})` : (locked.size ? ` (${locked.size} gesperrt)` : '');
-        setStatus(sol.feasible ? (usedPlan ? '✓ Lösung aus dem Gruppenplan – prüfen und einsetzen.' : '✓ Lösung gefunden – prüfen und einsetzen.') + prot + (reserved.size ? ` · ${reserved.size} Spieler für andere Gruppen-Aufgaben reserviert` : '') : 'Keine Lösung mit deinem Verein gefunden. Mehr Rechenzeit, Sonderkarten erlauben oder Max. Rating erhöhen.', !sol.feasible);
+        const buyN = sol.players.filter((p) => p && p.concept).length;
+        const buyInfo = buyN ? ` · 🛒 ${buyN} Konzept-Spieler zu kaufen${sol.unverified ? (sol.futbinBlocked ? ' (Futbin pausiert – Preise teils geschätzt)' : ' (Preise teils geschätzt – „Nochmal lösen“ prüft weitere)') : ''}` : '';
+        setStatus(sol.feasible ? (usedPlan ? '✓ Lösung aus dem Gruppenplan – prüfen und einsetzen.' : '✓ Lösung gefunden – prüfen und einsetzen.') + buyInfo + prot + (reserved.size ? ` · ${reserved.size} Spieler für andere Gruppen-Aufgaben reserviert` : '') : (settings.sbcConcepts ? 'Keine Lösung gefunden – auch nicht mit Konzept-Spielern. Mehr Rechenzeit versuchen.' : 'Keine Lösung mit deinem Verein gefunden. Tipp: „🛒 Konzept-Spieler nutzen“ einschalten, mehr Rechenzeit, Sonderkarten erlauben oder Max. Rating erhöhen.'), !sol.feasible);
       } catch (e) {
         setStatus('Fehler: ' + e.message, true);
         log('SBC', e);
@@ -683,6 +831,7 @@
         club: club ? { players: club.players.length, sample: club.players.slice(0, 2) } : null,
         rawCaptured: CAP.raw.size, sampleRawKeys: CAP.raw.size ? Object.keys(CAP.raw.values().next().value).slice(0, 60) : null,
         sampleEntityKeys: sampleEnt ? Object.keys(sampleEnt).slice(0, 60) : null,
+        concept: { fn: !!(W.services && W.services.Item && typeof W.services.Item.searchConceptItems === 'function'), loaded: concept ? concept.players.length : 0, sample: concept && concept.players[0] ? (({ name, rating, leagueId, nationId, clubId, positions, def }) => ({ name, rating, leagueId, nationId, clubId, positions, def }))(concept.players[0]) : null },
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };
       const text = JSON.stringify(d, null, 1);
