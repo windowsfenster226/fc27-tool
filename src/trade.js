@@ -184,6 +184,7 @@
       const btn = root.querySelector('[data-act="tradeRun"]');
       if (running) { stopFlag = true; st.textContent = 'Wird gestoppt …'; return; }
       running = true; stopFlag = false; results = [];
+      futbinBlockedUntil = 0;   // du startest bewusst neu -> eigene Pause aufheben
       btn.textContent = '■ Stopp';
       try {
         st.textContent = 'Lade Spieler aus Futbin …';
@@ -199,7 +200,7 @@
             if (d) { results.push(Object.assign({}, c, d)); renderRows(box); }
           } catch (e) {
             log('Trade', c.name, e);
-            if (e.message === BLOCK_MSG || /Schutzseite/.test(e.message)) { blocked = e.message; break; }
+            if (isFutbinBlock(e) || /Schutzseite/.test(e.message)) { blocked = e.message; break; }
           }
           await sleep(1300 + Math.random() * 900);
         }

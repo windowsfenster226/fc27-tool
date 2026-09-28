@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.7.2
+// @version      2.7.3
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -519,7 +519,9 @@ const SBC = (function () {
   };
 
   let futbinBlockedUntil = 0;
-  const BLOCK_MSG = 'Futbin blockt gerade (zu viele Abrufe). Öffne futbin.com in einem Tab und warte 5–10 Min.';
+  const BLOCK_MSG = 'Futbin bremst gerade (zu viele Abrufe). Bitte 5–10 Min. warten.';
+  const CHECK_MSG = 'Futbin hat die Anfrage abgelehnt (Sicherheitsprüfung). Öffne futbin.com einmal in diesem Browser – am iPhone in Safari –, bestätige ggf. die Prüfung und versuch es dann erneut.';
+  const isFutbinBlock = (e) => !!e && (e.message === BLOCK_MSG || e.message === CHECK_MSG);
   const futbinBlocked = () => Date.now() < futbinBlockedUntil;
   function gmGet(url, type = 'json') {
     if (/futbin\.com/.test(url) && futbinBlocked()) return Promise.reject(new Error(BLOCK_MSG));
@@ -530,9 +532,13 @@ const SBC = (function () {
         timeout: 15000,
         headers: { Accept: type === 'json' ? 'application/json' : 'text/html' },
         onload: (r) => {
-          if ((r.status === 403 || r.status === 429) && /futbin\.com/.test(url)) {
-            futbinBlockedUntil = Date.now() + 5 * 60000;
+          if (r.status === 429 && /futbin\.com/.test(url)) {
+            futbinBlockedUntil = Date.now() + 5 * 60000;   // echte Drosselung -> 5 Min. Pause
             return reject(new Error(BLOCK_MSG));
+          }
+          if (r.status === 403 && /futbin\.com/.test(url)) {
+            futbinBlockedUntil = Date.now() + 60000;       // Sicherheitsprüfung -> nur kurz pausieren
+            return reject(new Error(CHECK_MSG));
           }
           if (r.status < 200 || r.status >= 300) return reject(new Error('HTTP ' + r.status));
           if (type !== 'json') return resolve(r.responseText);
@@ -2633,6 +2639,7 @@ const SBC = (function () {
       const btn = root.querySelector('[data-act="tradeRun"]');
       if (running) { stopFlag = true; st.textContent = 'Wird gestoppt …'; return; }
       running = true; stopFlag = false; results = [];
+      futbinBlockedUntil = 0;   // du startest bewusst neu -> eigene Pause aufheben
       btn.textContent = '■ Stopp';
       try {
         st.textContent = 'Lade Spieler aus Futbin …';
@@ -2648,7 +2655,7 @@ const SBC = (function () {
             if (d) { results.push(Object.assign({}, c, d)); renderRows(box); }
           } catch (e) {
             log('Trade', c.name, e);
-            if (e.message === BLOCK_MSG || /Schutzseite/.test(e.message)) { blocked = e.message; break; }
+            if (isFutbinBlock(e) || /Schutzseite/.test(e.message)) { blocked = e.message; break; }
           }
           await sleep(1300 + Math.random() * 900);
         }

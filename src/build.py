@@ -66,13 +66,19 @@ rep("""  function render() {
 
 # --- Futbin-Sperren (403/429) sauber behandeln + Pause fuer alle Futbin-Abrufe ---
 rep("""          if (r.status < 200 || r.status >= 300) return reject(new Error('HTTP ' + r.status));""",
-"""          if ((r.status === 403 || r.status === 429) && /futbin\\.com/.test(url)) {
-            futbinBlockedUntil = Date.now() + 5 * 60000;
+"""          if (r.status === 429 && /futbin\\.com/.test(url)) {
+            futbinBlockedUntil = Date.now() + 5 * 60000;   // echte Drosselung -> 5 Min. Pause
             return reject(new Error(BLOCK_MSG));
+          }
+          if (r.status === 403 && /futbin\\.com/.test(url)) {
+            futbinBlockedUntil = Date.now() + 60000;       // Sicherheitsprüfung -> nur kurz pausieren
+            return reject(new Error(CHECK_MSG));
           }
           if (r.status < 200 || r.status >= 300) return reject(new Error('HTTP ' + r.status));""")
 rep("""  function gmGet(url, type = 'json') {""","""  let futbinBlockedUntil = 0;
-  const BLOCK_MSG = 'Futbin blockt gerade (zu viele Abrufe). Öffne futbin.com in einem Tab und warte 5–10 Min.';
+  const BLOCK_MSG = 'Futbin bremst gerade (zu viele Abrufe). Bitte 5–10 Min. warten.';
+  const CHECK_MSG = 'Futbin hat die Anfrage abgelehnt (Sicherheitsprüfung). Öffne futbin.com einmal in diesem Browser – am iPhone in Safari –, bestätige ggf. die Prüfung und versuch es dann erneut.';
+  const isFutbinBlock = (e) => !!e && (e.message === BLOCK_MSG || e.message === CHECK_MSG);
   const futbinBlocked = () => Date.now() < futbinBlockedUntil;
   function gmGet(url, type = 'json') {
     if (/futbin\\.com/.test(url) && futbinBlocked()) return Promise.reject(new Error(BLOCK_MSG));""")
