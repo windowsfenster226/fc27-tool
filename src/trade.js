@@ -304,7 +304,12 @@
     }
 
     function mount(root) {
-      root.innerHTML = clubValueHtml() + '<div data-el="watch"></div>' + html();
+      root.innerHTML = '<div data-el="timing"></div>' + clubValueHtml() + '<div data-el="sell"></div><div data-el="ratings"></div><div data-el="watch"></div>' + html();
+      const tim = root.querySelector('[data-el="timing"]');
+      const drawTiming = () => { tim.innerHTML = TIMING.html(); };
+      drawTiming(); setInterval(drawTiming, 5 * 60000);
+      SELL.mount(root.querySelector('[data-el="sell"]'));
+      RATINGS.mount(root.querySelector('[data-el="ratings"]'));
       WATCH.mount(root.querySelector('[data-el="watch"]'));
       root.querySelector('[data-act="clubValue"]').addEventListener('click', (e) => { e.stopPropagation(); runClubValue(root); });
       root.querySelectorAll('[data-t]').forEach((i) => {

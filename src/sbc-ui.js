@@ -450,6 +450,18 @@
     }
     renderLocks();
 
+    // Vergleich: was würde die SBC kosten, wenn man alle Spieler kauft? (nur Teambewertung, laut Futbin-Rating-Preisen)
+    function buyCostHtml(clubValue) {
+      const tr = info && info.decoded && info.decoded.constraints.find((c) => c.kind === 'TEAM_RATING_1_TO_100' && !c.unsupported);
+      const rp = typeof RATINGS !== 'undefined' ? RATINGS.get() : null;
+      if (!tr) return '';
+      if (!rp) return '<div class="note">💰 Kaufkosten-Vergleich: im Trading-Reiter einmal „Rating-Preise laden“.</div>';
+      const c = SBC.cheapestCombo(rp.prices, tr.value);
+      if (!c) return '';
+      const save = c.cost - Math.round(clubValue);
+      return `<div class="note">💰 Komplett gekauft ≈ <b>${fmt(c.cost)}</b> (Teambewertung ${tr.value}, günstigste Ratings) · deine Lösung nutzt Karten im Wert von ${fmt(Math.round(clubValue))}${save > 0 ? ` – du sparst ≈ <b class="fcpt-pos-v">${fmt(save)}</b>` : ''}.</div>`;
+    }
+
     function renderResult(sol) {
       if (!sol) { el('result').innerHTML = ''; return; }
       const ev = sol.ev;
@@ -473,6 +485,7 @@
             <div><div class="l">Wert der Karten</div><div class="v">${fmt(Math.round(value))}</div></div>
           </div>
           <div class="note">${okCount} von ${total} Anforderungen erfüllt · ${fmt(sol.iters || 0)} Kombinationen geprüft</div>
+          ${buyCostHtml(value)}
           <table><thead><tr><th>Pos</th><th>Spieler</th><th style="text-align:right">OVR</th><th style="text-align:right">Chem</th><th style="text-align:right">Wert</th></tr></thead><tbody>${rows}</tbody></table>
           ${anyLocked ? '<div class="note" style="color:#fcd34d">🔒 Gesperrte Spieler in der Lösung – bitte „Nochmal lösen“.</div>' : ''}
           <div class="btns"><button class="btn go" data-a="apply" ${sol.feasible && !anyLocked ? '' : 'disabled'}>✓ In SBC einsetzen</button><button class="btn" data-a="solve">Nochmal lösen</button></div>
@@ -609,6 +622,6 @@
       sbcBtn.classList.toggle('show', on || pane.classList.contains('open'));
     }, 1500);
 
-    return { CAP, readChallenge, findSbcContext, loadClub, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    return { CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 

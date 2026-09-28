@@ -432,7 +432,27 @@ const SBC = (function () {
     return { ...best, feasible: true, iters, restarts, positions };
   }
 
-  return { KEY_FALLBACK, FORMATIONS, normPos, decodeRequirements, describe, teamRating, teamRatingRaw,
+  // ---------- Günstigste Rating-Kombination für eine Teambewertung ----------
+  // prices: { rating: preis } ; fixed: bereits vorhandene Ratings (z. B. eigene Spieler)
+  function cheapestCombo(prices, target, n = 11, fixed = []) {
+    const rs = Object.keys(prices).map(Number).filter((r) => prices[r] > 0).sort((a, b) => a - b);
+    const need = n - fixed.length;
+    if (!rs.length || need <= 0) return null;
+    const minP = Math.min(...rs.map((r) => prices[r]));
+    let best = null;
+    const pick = [];
+    (function rec(start, cost) {
+      if (best && cost + (need - pick.length) * minP >= best.cost) return;
+      if (pick.length === need) {
+        if (teamRating([...fixed, ...pick]) >= target) best = { ratings: [...pick].sort((a, b) => b - a), cost };
+        return;
+      }
+      for (let i = start; i < rs.length; i++) { pick.push(rs[i]); rec(i, cost + prices[rs[i]]); pick.pop(); }
+    })(0, 0);
+    return best;
+  }
+
+  return { cheapestCombo, KEY_FALLBACK, FORMATIONS, normPos, decodeRequirements, describe, teamRating, teamRatingRaw,
     chemistry, evaluate, solve, levelOf, isIcon, isHero };
 })();
 if (typeof module !== 'undefined') module.exports = SBC;

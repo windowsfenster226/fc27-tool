@@ -9,6 +9,20 @@
     if (!Array.isArray(settings.watch)) settings.watch = [];
     if (settings.watchCheck === undefined) settings.watchCheck = true;
     if (settings.watchSound === undefined) settings.watchSound = true;
+    if (settings.ntfyTopic === undefined) settings.ntfyTopic = '';
+
+    // Push aufs Handy über ntfy.sh (kostenlose App „ntfy“, Thema abonnieren)
+    function push(msg, title = 'FC27 Watchlist') {
+      const topic = String(settings.ntfyTopic || '').trim();
+      if (!topic) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        GM_xmlhttpRequest({
+          method: 'POST', url: 'https://ntfy.sh/' + encodeURIComponent(topic), data: msg, timeout: 10000,
+          headers: { Title: title, Tags: 'soccer,star', Priority: 'high' },
+          onload: (r) => resolve(r.status >= 200 && r.status < 300), onerror: () => resolve(false), ontimeout: () => resolve(false),
+        });
+      });
+    }
     const alerted = {};
     let box = null;
 
@@ -46,6 +60,7 @@
       showToast('⭐ ' + msg);
       beep();
       try { if (W.Notification && W.Notification.permission === 'granted') new W.Notification('FC27 Watchlist', { body: msg }); } catch (e) { /* */ }
+      push(msg);
     }
 
     // EA-Karte (aus mapItem) einer Watchlist-Karte zuordnen: gleiches Rating + Name passt
@@ -103,6 +118,8 @@
           <div class="fcpt-set"><span>Futbin-Preis alle 10 Min. prüfen<small>Nur solange die Web App offen ist · 1 Abruf pro Minute</small></span><input type="checkbox" class="fcpt-sw" data-wo="watchCheck"></div>
           <div class="fcpt-set"><span>Ton bei Alarm</span><input type="checkbox" class="fcpt-sw" data-wo="watchSound"></div>
           <button class="fcpt-smallbtn" data-wa="notify">🔔 Browser-Benachrichtigungen erlauben</button>
+          <div class="fcpt-set"><span>📱 Push aufs Handy (ntfy)<small>App „ntfy“ installieren und dieses Thema abonnieren</small></span></div>
+          <div class="ntfy-row"><input type="text" data-wn="topic" placeholder="Thema, z. B. fc27-abc123" value="${esc(settings.ntfyTopic)}"><button class="fcpt-smallbtn" data-wa="gen">Erzeugen</button><button class="fcpt-smallbtn" data-wa="test">Test senden</button></div>
         </div>`;
       box.querySelectorAll('[data-wt]').forEach((i) => i.addEventListener('change', () => {
         const w = settings.watch.find((x) => x.path === i.dataset.wt);
@@ -110,6 +127,21 @@
       }));
       box.querySelectorAll('[data-wx]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); remove(b.dataset.wx); }));
       box.querySelectorAll('[data-wo]').forEach((c) => { c.checked = !!settings[c.dataset.wo]; c.addEventListener('change', () => { settings[c.dataset.wo] = c.checked; saveSettings(); }); });
+      const tp = box.querySelector('[data-wn="topic"]');
+      if (tp) tp.addEventListener('change', () => { settings.ntfyTopic = tp.value.trim().replace(/[^A-Za-z0-9_-]/g, ''); tp.value = settings.ntfyTopic; saveSettings(); });
+      const gen = box.querySelector('[data-wa="gen"]');
+      if (gen) gen.addEventListener('click', (e) => {
+        e.stopPropagation();
+        settings.ntfyTopic = 'fc27-' + Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8);
+        saveSettings(); render();
+      });
+      const tb = box.querySelector('[data-wa="test"]');
+      if (tb) tb.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!settings.ntfyTopic) { showToast('Erst ein Thema eintragen oder erzeugen', true); return; }
+        const ok = await push('Test: Watchlist-Alarme kommen hier an ✅', 'FC27 Tool');
+        showToast(ok ? '📱 Test gesendet – kam die Nachricht an?' : 'Senden fehlgeschlagen – Tampermonkey muss ntfy.sh erlauben', !ok);
+      });
       const nb = box.querySelector('[data-wa="notify"]');
       if (nb) nb.addEventListener('click', (e) => {
         e.stopPropagation();

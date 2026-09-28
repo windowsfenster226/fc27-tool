@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.8.0
+// @version      2.9.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -13,6 +13,7 @@
 // @grant        unsafeWindow
 // @connect      futbin.com
 // @connect      www.futbin.com
+// @connect      ntfy.sh
 // @run-at       document-idle
 // @homepageURL  https://github.com/windowsfenster226/fc27-tool
 // @updateURL    https://raw.githubusercontent.com/windowsfenster226/fc27-tool/main/fc27-preis-tool.user.js
@@ -459,7 +460,27 @@ const SBC = (function () {
     return { ...best, feasible: true, iters, restarts, positions };
   }
 
-  return { KEY_FALLBACK, FORMATIONS, normPos, decodeRequirements, describe, teamRating, teamRatingRaw,
+  // ---------- Günstigste Rating-Kombination für eine Teambewertung ----------
+  // prices: { rating: preis } ; fixed: bereits vorhandene Ratings (z. B. eigene Spieler)
+  function cheapestCombo(prices, target, n = 11, fixed = []) {
+    const rs = Object.keys(prices).map(Number).filter((r) => prices[r] > 0).sort((a, b) => a - b);
+    const need = n - fixed.length;
+    if (!rs.length || need <= 0) return null;
+    const minP = Math.min(...rs.map((r) => prices[r]));
+    let best = null;
+    const pick = [];
+    (function rec(start, cost) {
+      if (best && cost + (need - pick.length) * minP >= best.cost) return;
+      if (pick.length === need) {
+        if (teamRating([...fixed, ...pick]) >= target) best = { ratings: [...pick].sort((a, b) => b - a), cost };
+        return;
+      }
+      for (let i = start; i < rs.length; i++) { pick.push(rs[i]); rec(i, cost + prices[rs[i]]); pick.pop(); }
+    })(0, 0);
+    return best;
+  }
+
+  return { cheapestCombo, KEY_FALLBACK, FORMATIONS, normPos, decodeRequirements, describe, teamRating, teamRatingRaw,
     chemistry, evaluate, solve, levelOf, isIcon, isHero };
 })();
 
@@ -900,6 +921,20 @@ const SBC = (function () {
     .wl-t input{width:84px !important}
     .wl-x{background:none;border:1px solid var(--line);color:var(--ink2);border-radius:6px;cursor:pointer;padding:2px 7px}
     .wl-x:hover{border-color:#ef4444;color:#fca5a5}
+    .tim{display:flex;flex-direction:column;gap:2px;border-radius:12px;padding:9px 12px;border:1px solid var(--line);background:var(--bg2);font-size:12.5px;color:var(--ink2)}
+    .tim b{font-size:13.5px;color:var(--ink)}.tim.buy{border-color:rgba(34,197,94,.5);background:rgba(34,197,94,.08)}
+    .tim.sell{border-color:rgba(239,68,68,.5);background:rgba(239,68,68,.08)}.tim.warn{border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.1)}
+    .rp-list{display:grid;grid-template-columns:1fr;gap:4px}
+    .rp-row{display:grid;grid-template-columns:34px 80px 1fr;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:5px 8px;font-size:13px}
+    .rp-r{background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00;font-weight:800;border-radius:6px;text-align:center;padding:1px 0}
+    .rp-row b{text-align:right;font-variant-numeric:tabular-nums}.rp-row small{color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .combo{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;background:var(--bg3);border-radius:8px;padding:8px 10px;font-size:13px}
+    .combo span{margin-left:auto;color:var(--ink2)}
+    .sa-list{display:flex;flex-direction:column;gap:5px}
+    .sa-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:6px 9px}
+    .sa-n b{display:block;font-size:13px}.sa-n small,.sa-p small,.sa-p span{display:block;font-size:11px;color:var(--ink3)}
+    .sa-p{text-align:right}.sa-p b{font-size:13px;font-variant-numeric:tabular-nums}
+    .ntfy-row{display:flex;gap:6px}.ntfy-row input{flex:1;min-width:0;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:12px system-ui,sans-serif}
     .fcpt-smallbtn{background:var(--bg3);border:1px solid var(--line);color:var(--ink2);border-radius:8px;padding:6px 10px;font:12px system-ui,sans-serif;cursor:pointer}
     .fcpt-inline .fcpt-chip.deal{background:#15803d;color:#fff;font-weight:600}
     .fcpt-bargain{outline:3px solid #22c55e !important;outline-offset:-3px;border-radius:6px}
@@ -2308,6 +2343,18 @@ const SBC = (function () {
     }
     renderLocks();
 
+    // Vergleich: was würde die SBC kosten, wenn man alle Spieler kauft? (nur Teambewertung, laut Futbin-Rating-Preisen)
+    function buyCostHtml(clubValue) {
+      const tr = info && info.decoded && info.decoded.constraints.find((c) => c.kind === 'TEAM_RATING_1_TO_100' && !c.unsupported);
+      const rp = typeof RATINGS !== 'undefined' ? RATINGS.get() : null;
+      if (!tr) return '';
+      if (!rp) return '<div class="note">💰 Kaufkosten-Vergleich: im Trading-Reiter einmal „Rating-Preise laden“.</div>';
+      const c = SBC.cheapestCombo(rp.prices, tr.value);
+      if (!c) return '';
+      const save = c.cost - Math.round(clubValue);
+      return `<div class="note">💰 Komplett gekauft ≈ <b>${fmt(c.cost)}</b> (Teambewertung ${tr.value}, günstigste Ratings) · deine Lösung nutzt Karten im Wert von ${fmt(Math.round(clubValue))}${save > 0 ? ` – du sparst ≈ <b class="fcpt-pos-v">${fmt(save)}</b>` : ''}.</div>`;
+    }
+
     function renderResult(sol) {
       if (!sol) { el('result').innerHTML = ''; return; }
       const ev = sol.ev;
@@ -2331,6 +2378,7 @@ const SBC = (function () {
             <div><div class="l">Wert der Karten</div><div class="v">${fmt(Math.round(value))}</div></div>
           </div>
           <div class="note">${okCount} von ${total} Anforderungen erfüllt · ${fmt(sol.iters || 0)} Kombinationen geprüft</div>
+          ${buyCostHtml(value)}
           <table><thead><tr><th>Pos</th><th>Spieler</th><th style="text-align:right">OVR</th><th style="text-align:right">Chem</th><th style="text-align:right">Wert</th></tr></thead><tbody>${rows}</tbody></table>
           ${anyLocked ? '<div class="note" style="color:#fcd34d">🔒 Gesperrte Spieler in der Lösung – bitte „Nochmal lösen“.</div>' : ''}
           <div class="btns"><button class="btn go" data-a="apply" ${sol.feasible && !anyLocked ? '' : 'disabled'}>✓ In SBC einsetzen</button><button class="btn" data-a="solve">Nochmal lösen</button></div>
@@ -2467,7 +2515,7 @@ const SBC = (function () {
       sbcBtn.classList.toggle('show', on || pane.classList.contains('open'));
     }, 1500);
 
-    return { CAP, readChallenge, findSbcContext, loadClub, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    return { CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 
 
@@ -2777,7 +2825,12 @@ const SBC = (function () {
     }
 
     function mount(root) {
-      root.innerHTML = clubValueHtml() + '<div data-el="watch"></div>' + html();
+      root.innerHTML = '<div data-el="timing"></div>' + clubValueHtml() + '<div data-el="sell"></div><div data-el="ratings"></div><div data-el="watch"></div>' + html();
+      const tim = root.querySelector('[data-el="timing"]');
+      const drawTiming = () => { tim.innerHTML = TIMING.html(); };
+      drawTiming(); setInterval(drawTiming, 5 * 60000);
+      SELL.mount(root.querySelector('[data-el="sell"]'));
+      RATINGS.mount(root.querySelector('[data-el="ratings"]'));
       WATCH.mount(root.querySelector('[data-el="watch"]'));
       root.querySelector('[data-act="clubValue"]').addEventListener('click', (e) => { e.stopPropagation(); runClubValue(root); });
       root.querySelectorAll('[data-t]').forEach((i) => {
@@ -2805,6 +2858,20 @@ const SBC = (function () {
     if (!Array.isArray(settings.watch)) settings.watch = [];
     if (settings.watchCheck === undefined) settings.watchCheck = true;
     if (settings.watchSound === undefined) settings.watchSound = true;
+    if (settings.ntfyTopic === undefined) settings.ntfyTopic = '';
+
+    // Push aufs Handy über ntfy.sh (kostenlose App „ntfy“, Thema abonnieren)
+    function push(msg, title = 'FC27 Watchlist') {
+      const topic = String(settings.ntfyTopic || '').trim();
+      if (!topic) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        GM_xmlhttpRequest({
+          method: 'POST', url: 'https://ntfy.sh/' + encodeURIComponent(topic), data: msg, timeout: 10000,
+          headers: { Title: title, Tags: 'soccer,star', Priority: 'high' },
+          onload: (r) => resolve(r.status >= 200 && r.status < 300), onerror: () => resolve(false), ontimeout: () => resolve(false),
+        });
+      });
+    }
     const alerted = {};
     let box = null;
 
@@ -2842,6 +2909,7 @@ const SBC = (function () {
       showToast('⭐ ' + msg);
       beep();
       try { if (W.Notification && W.Notification.permission === 'granted') new W.Notification('FC27 Watchlist', { body: msg }); } catch (e) { /* */ }
+      push(msg);
     }
 
     // EA-Karte (aus mapItem) einer Watchlist-Karte zuordnen: gleiches Rating + Name passt
@@ -2899,6 +2967,8 @@ const SBC = (function () {
           <div class="fcpt-set"><span>Futbin-Preis alle 10 Min. prüfen<small>Nur solange die Web App offen ist · 1 Abruf pro Minute</small></span><input type="checkbox" class="fcpt-sw" data-wo="watchCheck"></div>
           <div class="fcpt-set"><span>Ton bei Alarm</span><input type="checkbox" class="fcpt-sw" data-wo="watchSound"></div>
           <button class="fcpt-smallbtn" data-wa="notify">🔔 Browser-Benachrichtigungen erlauben</button>
+          <div class="fcpt-set"><span>📱 Push aufs Handy (ntfy)<small>App „ntfy“ installieren und dieses Thema abonnieren</small></span></div>
+          <div class="ntfy-row"><input type="text" data-wn="topic" placeholder="Thema, z. B. fc27-abc123" value="${esc(settings.ntfyTopic)}"><button class="fcpt-smallbtn" data-wa="gen">Erzeugen</button><button class="fcpt-smallbtn" data-wa="test">Test senden</button></div>
         </div>`;
       box.querySelectorAll('[data-wt]').forEach((i) => i.addEventListener('change', () => {
         const w = settings.watch.find((x) => x.path === i.dataset.wt);
@@ -2906,6 +2976,21 @@ const SBC = (function () {
       }));
       box.querySelectorAll('[data-wx]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); remove(b.dataset.wx); }));
       box.querySelectorAll('[data-wo]').forEach((c) => { c.checked = !!settings[c.dataset.wo]; c.addEventListener('change', () => { settings[c.dataset.wo] = c.checked; saveSettings(); }); });
+      const tp = box.querySelector('[data-wn="topic"]');
+      if (tp) tp.addEventListener('change', () => { settings.ntfyTopic = tp.value.trim().replace(/[^A-Za-z0-9_-]/g, ''); tp.value = settings.ntfyTopic; saveSettings(); });
+      const gen = box.querySelector('[data-wa="gen"]');
+      if (gen) gen.addEventListener('click', (e) => {
+        e.stopPropagation();
+        settings.ntfyTopic = 'fc27-' + Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8);
+        saveSettings(); render();
+      });
+      const tb = box.querySelector('[data-wa="test"]');
+      if (tb) tb.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!settings.ntfyTopic) { showToast('Erst ein Thema eintragen oder erzeugen', true); return; }
+        const ok = await push('Test: Watchlist-Alarme kommen hier an ✅', 'FC27 Tool');
+        showToast(ok ? '📱 Test gesendet – kam die Nachricht an?' : 'Senden fehlgeschlagen – Tampermonkey muss ntfy.sh erlauben', !ok);
+      });
       const nb = box.querySelector('[data-wa="notify"]');
       if (nb) nb.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2914,6 +2999,174 @@ const SBC = (function () {
     }
     function mount(el) { box = el; render(); }
     return { add, remove, has, match, marketChip, mount, render };
+  })();
+
+
+  // ==================================================================
+  // EXTRAS: Timing-Ampel · Rating-Preise (+ Futter-Rechner) · Verkaufs-Assistent
+  // ==================================================================
+
+  // ---------- Timing-Ampel (deutsche Zeit) ----------
+  const TIMING = (() => {
+    function info(d = new Date()) {
+      const day = d.getDay();          // 0 So … 5 Fr … 6 Sa
+      const h = d.getHours() + d.getMinutes() / 60;
+      if (day === 5 && h >= 16 && h < 19) return { cls: 'warn', icon: '⚠', title: 'Promo-Freitag – gleich 19 Uhr neue Inhalte', text: 'Preise fallen um 19 Uhr oft deutlich. Jetzt nichts Teures kaufen, eher verkaufen.' };
+      if (day === 5 && h >= 19 && h < 23) return { cls: 'buy', icon: '🟢', title: 'Promo ist raus – Kaufgelegenheit', text: 'Nach dem ersten Preissturz (ab ca. 20–21 Uhr) günstig einkaufen, später teurer verkaufen.' };
+      if (h >= 18.75 && h < 19.5) return { cls: 'warn', icon: '⚡', title: '19 Uhr: neue Inhalte & SBCs', text: 'Neue SBCs können Futter-Preise (83–88er) sprunghaft steigen lassen. Beobachten!' };
+      if (h >= 1 && h < 9) return { cls: 'buy', icon: '🟢', title: 'Kaufzeit', text: 'Wenige Spieler online – Preise meist im Tagestief. Gute Zeit zum Einkaufen.' };
+      const wl = day === 4 || day === 5 || day === 6 || day === 0;
+      if (h >= 17 && h < 23.5) return { cls: 'sell', icon: '🔴', title: wl ? 'Verkaufszeit (Weekend League)' : 'Verkaufszeit', text: wl ? 'Abends Do–So kaufen viele für die Weekend League – beste Zeit zum Verkaufen.' : 'Abends sind die meisten Käufer online – gute Zeit zum Verkaufen.' };
+      return { cls: 'mid', icon: '○', title: 'Neutrale Zeit', text: 'Kein besonderer Vorteil – normal handeln, auf Kaufpreise warten.' };
+    }
+    const html = () => { const t = info(); return `<div class="tim ${t.cls}"><b>${t.icon} ${t.title}</b><span>${t.text}</span></div>`; };
+    return { info, html };
+  })();
+
+  // ---------- Rating-Preise von Futbin (1 Abruf) + Futter-Rechner ----------
+  const RATINGS = (() => {
+    if (settings.comboTarget === undefined) settings.comboTarget = 84;
+    const RC_KEY = 'fcpt_rating_prices';
+    let data = GM_getValue(RC_KEY, null);   // { t, plat, prices: {r: p}, names: {r: [..]} }
+
+    const parseK = (t) => {
+      const m = String(t || '').replace(/\s/g, '').match(/([\d.,]+)\s*([KkMm])?/);
+      if (!m) return null;
+      let v = parseFloat(m[1].replace(/,/g, '.').replace(/\.(?=\d{3}\b)/g, ''));
+      if (m[2]) v *= /[Kk]/.test(m[2]) ? 1000 : 1e6;
+      return Math.round(v) || null;
+    };
+
+    function parse(html, plat) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const heads = [...doc.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].filter((e) => e.children.length === 0 && /^\s*\d{2}\s+Rated Players\s*$/i.test(e.textContent));
+      const prices = {}, names = {};
+      heads.forEach((h, idx) => {
+        const r = parseInt(h.textContent, 10);
+        let box = h.parentElement;
+        while (box && !box.querySelector('a[href*="/player/"]')) box = box.parentElement;
+        if (!box) return;
+        // Enthält die Box mehrere Rating-Blöcke? Dann nur bis zur nächsten Überschrift lesen.
+        const next = heads[idx + 1];
+        const inBlock = (el) => {
+          if (!next || !box.contains(next)) return true;
+          return !!(h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(el.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING);
+        };
+        const vals = [...box.querySelectorAll(`.platform-${plat}-only`)].filter(inBlock).map((e) => parseK(e.textContent)).filter((v) => v && v >= 150);
+        const nm = [...box.querySelectorAll('a[href*="/player/"]')].filter(inBlock).map((a) => a.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
+        if (vals.length) { prices[r] = Math.min(...vals); names[r] = [...new Set(nm)].slice(0, 3); }
+      });
+      return { prices, names };
+    }
+
+    async function load(force) {
+      const plat = settings.platform === 'pc' ? 'pc' : 'ps';
+      if (!force && data && data.plat === plat && Date.now() - data.t < 30 * 60000) return data;
+      const html = await gmGet('https://www.futbin.com/27/stc/cheapest', 'text');
+      if (isCfPage(html)) throw new Error(CHECK_MSG);
+      const res = parse(html, plat);
+      if (!Object.keys(res.prices).length) throw new Error('Futbin-Seite konnte nicht gelesen werden (Aufbau geändert?)');
+      data = { t: Date.now(), plat, prices: res.prices, names: res.names };
+      GM_setValue(RC_KEY, data);
+      return data;
+    }
+    const get = () => data;
+
+    function comboHtml() {
+      if (!data) return '';
+      const c = SBC.cheapestCombo(data.prices, settings.comboTarget);
+      if (!c) return `<div class="note">Für Teambewertung ${settings.comboTarget} keine Kombination aus den Futbin-Ratings möglich.</div>`;
+      const groups = {};
+      c.ratings.forEach((r) => { groups[r] = (groups[r] || 0) + 1; });
+      const txt = Object.keys(groups).sort((a, b) => b - a).map((r) => `<b>${groups[r]}× ${r}</b>`).join(' + ');
+      return `<div class="combo">${txt}<span>≈ <b>${fmt(c.cost)}</b> Münzen (wenn alles gekauft)</span></div>`;
+    }
+
+    let box = null;
+    function render(msg) {
+      if (!box) return;
+      const rows = data ? Object.keys(data.prices).map(Number).sort((a, b) => a - b).map((r) => `
+        <div class="rp-row"><span class="rp-r">${r}</span><b>${fmt(data.prices[r])}</b><small>${esc((data.names[r] || []).join(', '))}</small></div>`).join('') : '';
+      box.innerHTML = `
+        <div class="fcpt-sgroup"><h4>📊 Rating-Preise (günstigste Karte)</h4>
+          <div class="note" style="font-size:12px;color:#a7b3c6">Günstigste Karte pro Rating laut Futbin – zeigt, was SBC-Futter gerade kostet. 1 Abruf, 30 Min. gespeichert.</div>
+          <button class="fcpt-bigbtn" data-ra="load">📊 Rating-Preise laden</button>
+          <div class="fcpt-stand">${msg || (data ? `Stand: ${agoText(data.t)} · ${data.plat === 'pc' ? 'PC' : 'Konsole'}` : '')}</div>
+          ${rows ? `<div class="rp-list">${rows}</div>
+          <div class="fcpt-set"><span>Futter-Rechner: Teambewertung<small>Günstigste Rating-Kombination, wenn du alle 11 kaufst</small></span><input type="number" min="60" max="95" data-ra="target" value="${settings.comboTarget}"></div>
+          <div data-ra="combo">${comboHtml()}</div>` : ''}
+        </div>`;
+      box.querySelector('[data-ra="load"]').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        render('Lade von Futbin …');
+        try { await load(true); render(); } catch (err) { render('Fehler: ' + err.message); }
+      });
+      const t = box.querySelector('[data-ra="target"]');
+      if (t) t.addEventListener('change', () => {
+        settings.comboTarget = Math.max(60, Math.min(95, parseInt(t.value, 10) || 84)); saveSettings();
+        box.querySelector('[data-ra="combo"]').innerHTML = comboHtml();
+      });
+    }
+    function mount(el) { box = el; render(); }
+    return { load, get, mount, parse };
+  })();
+
+  // ---------- Verkaufs-Assistent ----------
+  const SELL = (() => {
+    if (settings.sellMinValue === undefined) settings.sellMinValue = 1000;
+    let box = null, list = null, status = '';
+    const setSt = (m) => { status = m; const el = box && box.querySelector('[data-sa="st"]'); if (el) el.textContent = m; };
+    async function run() {
+      const btn = box.querySelector('[data-sa="run"]');
+      btn.disabled = true;
+      try {
+        const c = await SBCUI.loadClub((m) => setSt(m), false);
+        setSt('Lese aktive Mannschaft …');
+        const act = await SBCUI.activeSquadIds();
+        const locked = new Set((settings.sbcLocked || []).map((x) => x.id));
+        const L = [];
+        for (const p of c.players) {
+          if (p.untradeable || p.loans > 0 || act.has(p.id)) continue;
+          const ent = c.ents.get(p.id);
+          const resId = ent && (ent.resourceId || ent.definitionId);
+          const fb = resId != null ? cacheGet(`futbin:${settings.platform}:${resId}`) : null;
+          const raw = SBCUI.CAP.raw.get(p.id) || {};
+          const val = fb || raw.marketAverage || p.value || null;
+          if (!val || val < settings.sellMinValue) continue;
+          const srcName = fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'geschätzt';
+          const bin = roundPrice(val);
+          const quick = raw.discardValue || (ent && ent.discardValue) || 0;
+          L.push({ name: p.name, rating: p.rating, val, src: srcName, bin, start: lowerStep(bin), net: afterTax(bin), quick, fav: locked.has(p.id) });
+        }
+        L.sort((a, b) => b.val - a.val);
+        list = { L, activeRead: act.size > 0 };
+        status = `${L.length} Karten ab ${fmt(settings.sellMinValue)} gefunden · aktive Mannschaft ${act.size ? 'ausgeschlossen' : 'konnte nicht gelesen werden – selbst prüfen!'}`;
+        render();
+      } catch (e) { setSt('Fehler: ' + e.message); } finally { const b2 = box.querySelector('[data-sa="run"]'); if (b2) b2.disabled = false; }
+    }
+    function render() {
+      if (!box) return;
+      const t = TIMING.info();
+      const rows = list ? list.L.slice(0, 40).map((r) => `
+        <div class="sa-row">
+          <div class="sa-n"><b>${esc(r.rating)} ${esc(r.name)}</b>${r.fav ? ' <span title="Im SBC-Solver gesperrt – evtl. Lieblingsspieler">🔒</span>' : ''}<small>Wert ${fmt(r.val)} (${r.src})${r.quick && r.quick > r.net ? ' · <span class="fcpt-neg-v">Schnellverkauf bringt mehr!</span>' : ''}</small></div>
+          <div class="sa-p"><span>Einstellen</span><b>${fmt(r.start)} / ${fmt(r.bin)}</b><small>du bekommst ${fmt(r.net)}</small></div>
+        </div>`).join('') : '';
+      const total = list ? list.L.reduce((a, r) => a + r.net, 0) : 0;
+      box.innerHTML = `
+        <div class="fcpt-sgroup"><h4>🏷 Verkaufs-Assistent</h4>
+          <div class="note" style="font-size:12px;color:#a7b3c6">Handelbare Spieler, die <b>nicht in deiner aktiven Mannschaft</b> stehen – mit Preisvorschlag (Start / Sofortkauf). Einstellen machst du selbst in der Web App (Tipp: „Futbin-Preis übernehmen“).</div>
+          ${TIMING.html()}
+          <div class="fcpt-set"><span>Nur Karten ab Wert</span><input type="number" step="500" min="0" data-sa="min" value="${settings.sellMinValue}"></div>
+          <button class="fcpt-bigbtn" data-sa="run">🏷 Verkaufs-Kandidaten suchen</button>
+          <div class="fcpt-stand" data-sa="st">${esc(status)}</div>
+          ${list && list.L.length ? `<div class="fcpt-stand">Alles verkauft brächte ca. <b class="fcpt-pos-v">${fmt(total)}</b> nach Steuer${t.cls === 'sell' ? ' · 🔴 jetzt ist Verkaufszeit' : t.cls === 'buy' ? ' · besser abends einstellen' : ''}</div><div class="sa-list">${rows}</div>` : ''}
+        </div>`;
+      box.querySelector('[data-sa="run"]').addEventListener('click', (e) => { e.stopPropagation(); run(); });
+      box.querySelector('[data-sa="min"]').addEventListener('change', (e) => { settings.sellMinValue = Math.max(0, parseInt(e.target.value, 10) || 0); saveSettings(); });
+    }
+    function mount(el) { box = el; render(); }
+    return { mount };
   })();
 
 

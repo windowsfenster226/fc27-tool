@@ -65,3 +65,6 @@ console.log('     ratings', r3.players.map((p) => p.rating).sort().join(','), 'T
 assert(r3.feasible && r3.players.some((p) => p.rating >= 86), 'Lösung enthält einen 86er');
 const d4 = S.decodeRequirements([{ type: 'PLAYER_COUNT', eligibilitySlot: 1, eligibilityKey: 2, eligibilityValue: 2 }, { type: 'SOMETHING_NEW', eligibilitySlot: 1, eligibilityKey: 99, eligibilityValue: 5 }]);
 assert(d4.unsupported.length === 1, 'Unbekannte Angabe wird markiert statt ignoriert (' + S.describe(d4.constraints[0]) + ')');
+const P = { 81: 650, 82: 650, 83: 900, 84: 1500, 85: 2100, 86: 4200, 87: 7000, 88: 11000, 89: 18000, 90: 28000, 91: 45000 };
+let tt = Date.now(); const cc = S.cheapestCombo(P, 86); console.log('     Kombi 86:', cc.ratings.join(','), 'Kosten', cc.cost, 'TR', S.teamRating(cc.ratings), (Date.now() - tt) + 'ms');
+assert(cc && S.teamRating(cc.ratings) >= 86 && cc.cost < 11 * 4200, 'Günstigste Kombination für TR 86 billiger als 11×86');

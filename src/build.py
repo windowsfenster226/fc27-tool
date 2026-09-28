@@ -7,6 +7,7 @@ core=open(os.path.join(D,'sbc-core.js')).read().replace("if (typeof module !== '
 ui=open(os.path.join(D,'sbc-ui.js')).read()
 trade=open(os.path.join(D,'trade.js')).read()
 watch=open(os.path.join(D,'watch.js')).read()
+extras=open(os.path.join(D,'extras.js')).read()
 def rep(a,b):
     global s
     assert s.count(a)==1, a[:80]
@@ -14,7 +15,7 @@ def rep(a,b):
 rep("@version      1.9.0","@version      "+ver)
 rep("// @description  Zeigt für deine Transferliste","// @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste")
 rep("  const W = unsafeWindow;\n","  const W = unsafeWindow;\n\n"+core+"\n")
-rep("  function installHook() {", ui+"\n"+trade+"\n"+watch+"\n  function installHook() {")
+rep("  function installHook() {", ui+"\n"+trade+"\n"+watch+"\n"+extras+"\n  function installHook() {")
 # Trading-Tab
 rep("""<div class="fcpt-tabs"><button data-tab="list" class="on">Transferliste</button><button data-tab="hist">Historie</button><button data-tab="settings">⚙ Einstellungen</button></div>""",
     """<div class="fcpt-tabs"><button data-tab="list" class="on">Transferliste</button><button data-tab="hist">Historie</button><button data-tab="trade">📈 Trading</button><button data-tab="settings" title="Einstellungen">⚙</button></div>""")
@@ -172,6 +173,26 @@ rep("""// @run-at       document-idle""","""// @run-at       document-idle
 // @homepageURL  https://github.com/windowsfenster226/fc27-tool
 // @updateURL    https://raw.githubusercontent.com/windowsfenster226/fc27-tool/main/fc27-preis-tool.user.js
 // @downloadURL  https://raw.githubusercontent.com/windowsfenster226/fc27-tool/main/fc27-preis-tool.user.js""")
+
+
+# --- ntfy + Extras-CSS ---
+rep("""// @connect      www.futbin.com""","""// @connect      www.futbin.com
+// @connect      ntfy.sh""")
+rep("""    .fcpt-smallbtn{""","""    .tim{display:flex;flex-direction:column;gap:2px;border-radius:12px;padding:9px 12px;border:1px solid var(--line);background:var(--bg2);font-size:12.5px;color:var(--ink2)}
+    .tim b{font-size:13.5px;color:var(--ink)}.tim.buy{border-color:rgba(34,197,94,.5);background:rgba(34,197,94,.08)}
+    .tim.sell{border-color:rgba(239,68,68,.5);background:rgba(239,68,68,.08)}.tim.warn{border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.1)}
+    .rp-list{display:grid;grid-template-columns:1fr;gap:4px}
+    .rp-row{display:grid;grid-template-columns:34px 80px 1fr;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:5px 8px;font-size:13px}
+    .rp-r{background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00;font-weight:800;border-radius:6px;text-align:center;padding:1px 0}
+    .rp-row b{text-align:right;font-variant-numeric:tabular-nums}.rp-row small{color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .combo{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;background:var(--bg3);border-radius:8px;padding:8px 10px;font-size:13px}
+    .combo span{margin-left:auto;color:var(--ink2)}
+    .sa-list{display:flex;flex-direction:column;gap:5px}
+    .sa-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:6px 9px}
+    .sa-n b{display:block;font-size:13px}.sa-n small,.sa-p small,.sa-p span{display:block;font-size:11px;color:var(--ink3)}
+    .sa-p{text-align:right}.sa-p b{font-size:13px;font-variant-numeric:tabular-nums}
+    .ntfy-row{display:flex;gap:6px}.ntfy-row input{flex:1;min-width:0;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:12px system-ui,sans-serif}
+    .fcpt-smallbtn{""")
 
 open(os.path.join(D,'..','fc27-preis-tool.user.js'),'w').write(s)
 print('built', ver)
