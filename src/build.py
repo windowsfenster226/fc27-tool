@@ -41,6 +41,8 @@ rep("""    #fcpt-panel.v-settings .fcpt-settings{display:flex}""","""    #fcpt-p
     .tc-name:hover{color:var(--gold)}
     .tc-profit{text-align:right;flex:none}.tc-profit b{display:block;color:var(--pos);font-size:18px;font-variant-numeric:tabular-nums}.tc-profit small{color:var(--ink3);font-size:11px}
     .tc-sig{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+    .trel{font-size:11px;font-weight:700;border-radius:999px;padding:3px 8px;white-space:nowrap}
+    .trel.good{background:rgba(34,197,94,.15);color:#86efac}.trel.mid{background:rgba(245,158,11,.15);color:#fcd34d}.trel.bad{background:rgba(239,68,68,.15);color:#fca5a5}
     .tc-trend{font-size:11.5px;color:var(--ink3)}.tc-trend.up{color:#86efac}.tc-trend.down{color:#fca5a5}
     .tspark{width:100%;height:46px;display:block;margin-top:8px}
     .tspark .pl{fill:none;stroke:#f5c518;stroke-width:2;vector-effect:non-scaling-stroke}

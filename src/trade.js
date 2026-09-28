@@ -9,6 +9,7 @@
     if (settings.tradeCount === undefined || settings.tradeCount > 60) settings.tradeCount = 25;
     if (settings.tradeHideFalling === undefined) settings.tradeHideFalling = true;
     if (settings.tradeSort === undefined) settings.tradeSort = 'profit';
+    if (settings.tradeOnlyReliable === undefined) settings.tradeOnlyReliable = true;
 
     // Ergebnisse 60 Min. dauerhaft merken (auch nach Neuladen) -> weniger Futbin-Abrufe
     const TC_KEY = 'fcpt_trade_cache';
@@ -56,7 +57,7 @@
 
     async function analyse(c, maxAge = 60 * 60000) {
       const hit = TCACHE[c.path];
-      if (hit && Date.now() - hit.t < maxAge) return hit.data;
+      if (hit && Date.now() - hit.t < maxAge && hit.data && hit.data.nDays != null) return hit.data;
       const html = await gmGet(`https://www.futbin.com${c.path}/market`, 'text');
       if (isCfPage(html)) throw new Error('Futbin-Schutzseite');
       const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -77,23 +78,32 @@
       const buy = stepDown(med(days.map((d) => pct(d, 0.1))));
       const sell = stepUp(med(days.map((d) => pct(d, 0.9))));
       const profit = afterTax(sell) - buy;
+      // Zuverlässigkeit: an wie vielen der letzten Tage gab es wirklich Kaufpreis UND Verkaufspreis?
+      const nDays = days.length;
+      const hitDays = days.filter((d) => Math.min(...d) <= buy * 1.01 && Math.max(...d) >= sell * 0.99).length;
       let trend = null;
       if (daily && daily.length >= 4) {
         const d = daily.map((x) => x[1]);
         const ref = d[d.length - 4];
         if (ref > 0) trend = (current - ref) / ref;
       }
-      const data = { current, buy, sell, profit, margin: buy ? profit / buy : 0, trend, low: Math.min(...last72), high: Math.max(...last72), spark: last72 };
+      const data = { current, buy, sell, profit, margin: buy ? profit / buy : 0, trend, low: Math.min(...last72), high: Math.max(...last72), spark: last72, nDays, hitDays };
       TCACHE[c.path] = { t: Date.now(), data }; saveTC();
       return data;
     }
 
     const falling = (r) => r.trend != null && r.trend < -0.15;
     function signal(r) {
-      if (falling(r)) return '<span class="tsig bad" title="Preis ist in 3 Tagen um mehr als 15 % gefallen">⚠ Fällt stark</span>';
-      if (r.current <= r.buy * 1.02) return '<span class="tsig good" title="Aktueller Preis liegt im Tagestief">● Jetzt kaufen</span>';
-      if (r.current >= r.sell * 0.98) return '<span class="tsig hot" title="Aktueller Preis liegt im Tageshoch">● Jetzt verkaufen</span>';
-      return '<span class="tsig" title="Preis liegt zwischen Tief und Hoch">○ Abwarten</span>';
+      if (falling(r)) return '<span class="tsig bad" title="Preis ist in 3 Tagen um mehr als 15 % gefallen">⚠ Fällt stark – Finger weg</span>';
+      if (r.current <= r.buy * 1.02) return '<span class="tsig good" title="Aktueller Preis liegt im Tagestief">● Guter Kaufpreis</span>';
+      if (r.current >= r.sell * 0.98) return '<span class="tsig hot" title="Preis liegt im Tageshoch – zum Kaufen zu teuer. Besitzt du die Karte: guter Verkaufszeitpunkt.">● Gerade teuer – nicht kaufen</span>';
+      return '<span class="tsig" title="Preis liegt zwischen Tief und Hoch">○ Auf Kaufpreis warten</span>';
+    }
+    function reliability(r) {
+      if (r.nDays == null) return '';
+      const cls = r.hitDays >= 2 ? 'good' : r.hitDays === 1 ? 'mid' : 'bad';
+      const txt = r.hitDays >= 2 ? `Regelmäßig: an ${r.hitDays} von ${r.nDays} Tagen machbar` : r.hitDays === 1 ? `Nur an 1 von ${r.nDays} Tagen machbar` : `An keinem Tag ganz erreicht`;
+      return `<span class="trel ${cls}" title="An wie vielen der letzten Tage der Preis sowohl bis „Kaufen bis“ fiel als auch bis „Verkaufen für“ stieg">${txt}</span>`;
     }
 
     // Mini-Preisverlauf (72 Std.) mit Kauf- und Verkaufslinie
@@ -116,11 +126,14 @@
       let list = results.filter((r) => r.profit >= settings.tradeMinProfit);
       const hidden = settings.tradeHideFalling ? list.filter(falling).length : 0;
       if (settings.tradeHideFalling) list = list.filter((r) => !falling(r));
+      const hiddenRare = settings.tradeOnlyReliable ? list.filter((r) => (r.hitDays ?? 0) < 2).length : 0;
+      if (settings.tradeOnlyReliable) list = list.filter((r) => (r.hitDays ?? 0) >= 2);
       const rank = (r) => (r.current <= r.buy * 1.02 ? 0 : r.current >= r.sell * 0.98 ? 2 : 1);
       const sorters = {
         profit: (a, b) => b.profit - a.profit,
         margin: (a, b) => b.margin - a.margin,
         now: (a, b) => rank(a) - rank(b) || b.profit - a.profit,
+        reliable: (a, b) => (b.hitDays ?? -1) - (a.hitDays ?? -1) || b.profit - a.profit,
       };
       list.sort(sorters[settings.tradeSort] || sorters.profit);
       const cards = list.map((r) => `
@@ -131,7 +144,7 @@
             <div class="tc-profit"><b>${signed(r.profit)}</b><small>${Math.round(r.margin * 100)} % Profit</small></div>
             <button class="tc-star ${WATCH.has(r.path) ? 'on' : ''}" data-star="${esc(r.path)}" title="${WATCH.has(r.path) ? 'Auf der Watchlist' : 'Beobachten – Alarm, sobald die Karte unter „Kaufen bis“ auftaucht'}">${WATCH.has(r.path) ? '★' : '☆'}</button>
           </div>
-          <div class="tc-sig">${signal(r)}${r.trend == null ? '' : `<span class="tc-trend ${r.trend >= 0 ? 'up' : 'down'}">${r.trend >= 0 ? '↑' : '↓'} ${Math.abs(Math.round(r.trend * 100))} % in 3 Tagen</span>`}</div>
+          <div class="tc-sig">${signal(r)}${reliability(r)}${r.trend == null ? '' : `<span class="tc-trend ${r.trend >= 0 ? 'up' : 'down'}">${r.trend >= 0 ? '↑' : '↓'} ${Math.abs(Math.round(r.trend * 100))} % in 3 Tagen</span>`}</div>
           ${spark(r)}
           <div class="tc-stats">
             <div><span>Aktuell</span><b>${fmt(r.current)}</b></div>
@@ -143,9 +156,11 @@
           <select data-ts="tradeSort">
             <option value="profit">Sortieren: höchster Profit</option>
             <option value="margin">Sortieren: höchster Profit in %</option>
-            <option value="now">Sortieren: jetzt kaufen zuerst</option>
+            <option value="now">Sortieren: guter Kaufpreis zuerst</option>
+            <option value="reliable">Sortieren: am regelmäßigsten zuerst</option>
           </select>
           <label class="tchk"><input type="checkbox" data-tc="tradeHideFalling"> Fallende ausblenden${hidden ? ` (${hidden})` : ''}</label>
+          <label class="tchk"><input type="checkbox" data-tc2="tradeOnlyReliable"> Nur regelmäßige${hiddenRare ? ` (${hiddenRare} ausgeblendet)` : ''}</label>
         </div>`;
       box.innerHTML = results.length || running ? head + (list.length ? `<div class="tlist">${cards}</div>`
         : `<div class="fcpt-msg">${running ? 'Suche läuft …' : `Keine passenden Spieler mit mind. ${fmt(settings.tradeMinProfit)} Profit – Budget oder Mindest-Profit ändern.`}</div>`)
@@ -159,6 +174,8 @@
         if (WATCH.has(r.path)) WATCH.remove(r.path); else WATCH.add(r);
         renderRows(box);
       }));
+      const chk2 = box.querySelector('[data-tc2]');
+      if (chk2) { chk2.checked = !!settings.tradeOnlyReliable; chk2.onchange = () => { settings.tradeOnlyReliable = chk2.checked; saveSettings(); renderRows(box); }; }
       const chk = box.querySelector('[data-tc]');
       if (chk) { chk.checked = !!settings.tradeHideFalling; chk.onchange = () => { settings.tradeHideFalling = chk.checked; saveSettings(); renderRows(box); }; }
     }
@@ -166,7 +183,7 @@
     function html() {
       return `
         <div class="fcpt-sgroup"><h4>Trading-Finder</h4>
-          <div class="note" style="font-size:12px;color:#a7b3c6">Findet Spieler, deren Preis im Tagesverlauf schwankt: im Tagestief kaufen, im Tageshoch verkaufen. Profit nach 5 % Steuer, berechnet aus den Futbin-Stundenpreisen der letzten 3 Tage.</div>
+          <div class="note" style="font-size:12px;color:#a7b3c6">Findet Spieler, deren Preis im Tagesverlauf schwankt: im Tagestief kaufen, im Tageshoch verkaufen. Am verlässlichsten sind Karten mit „Regelmäßig“ – dort hat die Spanne an mehreren Tagen geklappt. Profit nach 5 % Steuer, berechnet aus den Futbin-Stundenpreisen der letzten 3 Tage.</div>
           <div class="fcpt-set"><span>Budget von</span><input type="number" step="500" min="0" data-t="tradeMin"></div>
           <div class="fcpt-set"><span>Budget bis</span><input type="number" step="500" min="0" data-t="tradeMax"></div>
           <div class="fcpt-set"><span>Mindest-Profit pro Karte</span><input type="number" step="100" min="0" data-t="tradeMinProfit"></div>
