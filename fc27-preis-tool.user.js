@@ -1,0 +1,2899 @@
+// ==UserScript==
+// @name         FC27 Transferliste – Preis- & Profit-Tool
+// @namespace    fc27-preis-tool
+// @version      2.7.2
+// @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
+// @match        https://www.ea.com/*ultimate-team/web-app*
+// @match        https://ea.com/*ultimate-team/web-app*
+// @match        https://*.ea.com/*ultimate-team/web-app*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addStyle
+// @grant        unsafeWindow
+// @connect      futbin.com
+// @connect      www.futbin.com
+// @run-at       document-idle
+// @homepageURL  https://github.com/windowsfenster226/fc27-tool
+// @updateURL    https://raw.githubusercontent.com/windowsfenster226/fc27-tool/main/fc27-preis-tool.user.js
+// @downloadURL  https://raw.githubusercontent.com/windowsfenster226/fc27-tool/main/fc27-preis-tool.user.js
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  const W = unsafeWindow;
+  const TOOL_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '?';
+
+// ==========================================================================
+// SBC-Solver-Kern (reine Logik, keine EA-/DOM-Zugriffe)
+// Anforderungen dekodieren · Teambewertung · Chemie (FC27) · heuristische Suche
+// Datenformat der Anforderungen (elgReq) laut dokumentierter FC27-Web-App-Aufzeichnung
+// aus dem MIT-lizenzierten Projekt "fut-squad-lab" (B. S. Knudsen) – Code hier ist eigenständig.
+// ==========================================================================
+const SBC = (function () {
+  'use strict';
+
+  // --- EA-Schlüssel (Fallback, falls window.SBCEligibilityKey fehlt) ---
+  const KEY_FALLBACK = {
+    0: 'TEAM_STAR_RATING', 2: 'PLAYER_COUNT', 3: 'PLAYER_QUALITY', 4: 'SAME_NATION_COUNT',
+    5: 'SAME_LEAGUE_COUNT', 6: 'SAME_CLUB_COUNT', 7: 'NATION_COUNT', 8: 'LEAGUE_COUNT',
+    9: 'CLUB_COUNT', 10: 'NATION_ID', 11: 'LEAGUE_ID', 12: 'CLUB_ID', 13: 'SCOPE',
+    15: 'LEGEND_COUNT', 16: 'NUM_TROPHY_REQUIRED', 17: 'PLAYER_LEVEL', 18: 'PLAYER_RARITY',
+    19: 'TEAM_RATING_1_TO_100', 21: 'PLAYER_COUNT_COMBINED', 25: 'PLAYER_RARITY_GROUP',
+    26: 'PLAYER_MIN_OVR', 27: 'PLAYER_EXACT_OVR', 28: 'PLAYER_MAX_OVR',
+    30: 'FIRST_OWNER_PLAYERS_COUNT', 33: 'PLAYER_TRADABILITY', 35: 'CHEMISTRY_POINTS',
+    36: 'ALL_PLAYERS_CHEMISTRY_POINTS',
+  };
+  const SCOPE = { 0: 'MIN', 1: 'MAX', 2: 'EXACT', 3: 'RANGE' };
+
+  // Spielerbezogene Filter (zusammen mit PLAYER_COUNT: "mind. X Spieler mit …")
+  const MATCH = {
+    NATION_ID: { field: 'nationId', label: 'aus Nation' },
+    LEAGUE_ID: { field: 'leagueId', label: 'aus Liga' },
+    CLUB_ID: { field: 'clubId', label: 'aus Verein' },
+    PLAYER_LEVEL: { field: 'level', label: 'Qualität' },
+    PLAYER_RARITY: { field: 'rarity', label: 'Seltenheit' },
+    PLAYER_MIN_OVR: { field: 'minOvr', label: 'Rating mind.' },
+    PLAYER_EXACT_OVR: { field: 'exactOvr', label: 'Rating genau' },
+    PLAYER_MAX_OVR: { field: 'maxOvr', label: 'Rating max.' },
+    PLAYER_TRADABILITY: { field: 'tradability', label: 'Handelbarkeit' },
+    PLAYER_RARITY_GROUP: { field: 'rarityGroup', label: 'Kartengruppe' },
+  };
+  const LEVEL_NAME = { 1: 'Bronze', 2: 'Silber', 3: 'Gold' };
+
+  // Formationen: Slot-Positionen in Payload-Reihenfolge (nur verifizierte Codes;
+  // bevorzugt werden die Positionen direkt aus EAs Squad gelesen)
+  const FORMATIONS = {
+    f343: ['GK', 'LB', 'CB', 'CB', 'RB', 'CM', 'CM', 'CM', 'LW', 'ST', 'RW'],
+    f442: ['GK', 'LB', 'CB', 'CB', 'RB', 'LM', 'CM', 'CM', 'RM', 'ST', 'ST'],
+    f4141: ['GK', 'LB', 'CB', 'CB', 'RB', 'CDM', 'LM', 'CM', 'CM', 'RM', 'ST'],
+    f451: ['GK', 'LB', 'CB', 'CB', 'RB', 'LM', 'CM', 'CM', 'CM', 'RM', 'ST'],
+    f532: ['GK', 'LB', 'CB', 'CB', 'CB', 'RB', 'CM', 'CM', 'CM', 'ST', 'ST'],
+    f5212: ['GK', 'LB', 'CB', 'CB', 'CB', 'RB', 'CDM', 'CDM', 'CAM', 'ST', 'ST'],
+    f3142: ['GK', 'CB', 'CB', 'CB', 'CDM', 'LM', 'CM', 'CM', 'RM', 'ST', 'ST'],
+  };
+
+  // EA-Positions-IDs -> allgemeine Position
+  const POS_BY_ID = ['GK', 'CB', 'RWB', 'RB', 'CB', 'CB', 'CB', 'LB', 'LWB', 'CDM', 'CDM', 'CDM', 'RM',
+    'CM', 'CM', 'CM', 'LM', 'CAM', 'CAM', 'CAM', 'CF', 'CF', 'CF', 'RW', 'ST', 'ST', 'ST', 'LW'];
+  const POS_ALIAS = { RCB: 'CB', LCB: 'CB', SW: 'CB', RDM: 'CDM', LDM: 'CDM', RCM: 'CM', LCM: 'CM',
+    RAM: 'CAM', LAM: 'CAM', RF: 'CF', LF: 'CF', RS: 'ST', LS: 'ST' };
+  function normPos(p) {
+    if (p == null) return null;
+    if (typeof p === 'number') return POS_BY_ID[p] || null;
+    const s = String(p).toUpperCase().trim();
+    if (/^\d+$/.test(s)) return POS_BY_ID[+s] || null;
+    return POS_ALIAS[s] || s;
+  }
+
+  const ICON_LEAGUE = 2118;
+  const ICON_RARITY = 12;
+  const HERO_RARITIES = new Set([72]);
+  const levelOf = (rating) => (rating >= 75 ? 3 : rating >= 65 ? 2 : 1);
+
+  // ---------- Anforderungen dekodieren ----------
+  function keyName(key, liveEnum) {
+    if (liveEnum && typeof liveEnum[key] === 'string') return liveEnum[key];
+    return KEY_FALLBACK[key] || `KEY_${key}`;
+  }
+
+  // EA benutzt für dieselbe Anforderung teils andere Namen – auf einen Namen vereinheitlichen
+  const ALIAS = {
+    PLAYER_OVERALL_RATING_MIN: 'PLAYER_MIN_OVR', PLAYER_OVERALL_RATING_MAX: 'PLAYER_MAX_OVR',
+    PLAYER_OVERALL_RATING_EXACT: 'PLAYER_EXACT_OVR', PLAYER_OVR_MIN: 'PLAYER_MIN_OVR', PLAYER_OVR_MAX: 'PLAYER_MAX_OVR',
+    TEAM_RATING: 'TEAM_RATING_1_TO_100', TEAM_CHEMISTRY: 'CHEMISTRY_POINTS',
+  };
+  const KNOWN_NAMES = new Set([...Object.values(KEY_FALLBACK), ...Object.keys(MATCH)]);
+  function canonical(e, liveEnum) {
+    let n = typeof e.type === 'string' && e.type ? e.type : keyName(e.eligibilityKey, liveEnum);
+    if (ALIAS[n]) n = ALIAS[n];
+    if (!KNOWN_NAMES.has(n) && KEY_FALLBACK[e.eligibilityKey]) n = KEY_FALLBACK[e.eligibilityKey];
+    return n;
+  }
+
+  function decodeRequirements(elgReq, liveEnum) {
+    const slots = new Map();
+    for (const e of elgReq || []) {
+      if (!e || typeof e !== 'object') continue;
+      const slot = e.eligibilitySlot ?? 0;
+      const name = canonical(e, liveEnum);
+      if (!slots.has(slot)) slots.set(slot, []);
+      slots.get(slot).push({ name, value: e.eligibilityValue, count: e.count, label: e.label });
+    }
+    const constraints = [];
+    const unsupported = [];
+    for (const [slot, entries] of [...slots.entries()].sort((a, b) => a[0] - b[0])) {
+      const scopeEntry = entries.find((x) => x.name === 'SCOPE');
+      const scope = scopeEntry ? SCOPE[scopeEntry.value] || 'MIN' : 'MIN';
+      const rest = entries.filter((x) => x.name !== 'SCOPE');
+      const count = rest.find((x) => x.name === 'PLAYER_COUNT' || x.name === 'PLAYER_COUNT_COMBINED');
+      const matches = rest.filter((x) => MATCH[x.name]);
+      const scalars = rest.filter((x) => x !== count && !MATCH[x.name]);
+      if (count || matches.length) {
+        if (!matches.length) {
+          const c = { id: slot, kind: 'SQUAD_SIZE', value: count.value, scope };
+          // weitere, unbekannte Angaben im selben Block -> nicht raten, sondern markieren
+          if (scalars.length) { c.unsupported = true; c.extra = scalars.map((x) => `${x.name}=${x.value}`).join(', '); unsupported.push(c); }
+          constraints.push(c);
+          continue;
+        }
+        const m = MATCH[matches[0].name];
+        const n = count ? (count.value > 0 ? count.value : count.count) : 11;
+        const values = matches.map((x) => x.value);
+        const c = { id: slot, kind: 'COUNT', field: m.field, fieldName: matches[0].name, values, n, scope };
+        if (m.field === 'rarityGroup') { c.unsupported = true; unsupported.push(c); }
+        constraints.push(c);
+        continue;
+      }
+      for (const s of scalars) {
+        const c = { id: slot, kind: s.name, value: s.value, scope, label: s.label };
+        const known = ['TEAM_RATING_1_TO_100', 'CHEMISTRY_POINTS', 'ALL_PLAYERS_CHEMISTRY_POINTS',
+          'PLAYER_QUALITY', 'SAME_NATION_COUNT', 'SAME_LEAGUE_COUNT', 'SAME_CLUB_COUNT',
+          'NATION_COUNT', 'LEAGUE_COUNT', 'CLUB_COUNT', 'LEGEND_COUNT', 'FIRST_OWNER_PLAYERS_COUNT'];
+        if (!known.includes(s.name)) { c.unsupported = true; unsupported.push(c); }
+        constraints.push(c);
+      }
+    }
+    return { constraints, unsupported };
+  }
+
+  const scopeWord = (scope) => (scope === 'MAX' ? 'max.' : scope === 'EXACT' ? 'genau' : 'mind.');
+
+  function describe(c, names = {}) {
+    const nm = (field, v) => (names[field] && names[field][v]) || `#${v}`;
+    switch (c.kind) {
+      case 'SQUAD_SIZE': return c.extra ? `${scopeWord(c.scope)} ${c.value} Spieler – ${c.extra}` : `Spieler im Team: ${scopeWord(c.scope)} ${c.value}`;
+      case 'TEAM_RATING_1_TO_100': return `Teambewertung: ${scopeWord(c.scope)} ${c.value}`;
+      case 'CHEMISTRY_POINTS': return `Chemie gesamt: ${scopeWord(c.scope)} ${c.value}`;
+      case 'ALL_PLAYERS_CHEMISTRY_POINTS': return `Chemie pro Spieler: ${scopeWord(c.scope)} ${c.value}`;
+      case 'PLAYER_QUALITY': return `Spielerqualität: ${c.scope === 'MAX' ? 'max.' : c.scope === 'EXACT' ? 'genau' : 'mind.'} ${LEVEL_NAME[c.value] || c.value}`;
+      case 'SAME_NATION_COUNT': return `Spieler derselben Nation: ${scopeWord(c.scope)} ${c.value}`;
+      case 'SAME_LEAGUE_COUNT': return `Spieler derselben Liga: ${scopeWord(c.scope)} ${c.value}`;
+      case 'SAME_CLUB_COUNT': return `Spieler desselben Vereins: ${scopeWord(c.scope)} ${c.value}`;
+      case 'NATION_COUNT': return `Nationen: ${scopeWord(c.scope)} ${c.value}`;
+      case 'LEAGUE_COUNT': return `Ligen: ${scopeWord(c.scope)} ${c.value}`;
+      case 'CLUB_COUNT': return `Vereine: ${scopeWord(c.scope)} ${c.value}`;
+      case 'LEGEND_COUNT': return `Icons: ${scopeWord(c.scope)} ${c.value}`;
+      case 'FIRST_OWNER_PLAYERS_COUNT': return `Spieler aus erster Hand: ${scopeWord(c.scope)} ${c.value}`;
+      case 'COUNT': {
+        const v = c.values.map((x) => {
+          if (c.field === 'level') return LEVEL_NAME[x] || x;
+          if (c.field === 'rarity') return x === 1 ? 'Selten' : x === 0 ? 'Gewöhnlich' : `Seltenheit ${x}`;
+          if (c.field === 'tradability') return x === 1 ? 'nicht handelbar' : 'handelbar';
+          if (c.field === 'minOvr' || c.field === 'exactOvr' || c.field === 'maxOvr') return x;
+          return nm(c.field, x);
+        }).join(' / ');
+        const what = MATCH[c.fieldName] ? MATCH[c.fieldName].label : c.fieldName;
+        return `${scopeWord(c.scope)} ${c.n} Spieler – ${what}: ${v}`;
+      }
+      default: return `${c.kind}: ${scopeWord(c.scope)} ${c.value}`;
+    }
+  }
+
+  // ---------- Teambewertung (EA-Formel) ----------
+  function teamRatingRaw(ratings) {
+    const r = ratings.slice(0, 11);
+    while (r.length < 11) r.push(0);
+    const sum = r.reduce((a, b) => a + b, 0);
+    const mean = sum / 11;
+    const total = r.reduce((a, x) => a + (x <= mean ? x : 2 * x - mean), 0);
+    return Math.round((total / 11) * 100) / 100;
+  }
+  function teamRating(ratings) {
+    const raw = teamRatingRaw(ratings);
+    const base = Math.floor(raw);
+    return raw - base >= 0.96 - 1e-9 ? base + 1 : base;
+  }
+
+  // ---------- Chemie (FC27-Regeln) ----------
+  const CLUB_T = [[7, 3], [4, 2], [2, 1]];
+  const LEAGUE_T = [[8, 3], [5, 2], [3, 1]];
+  const NATION_T = [[8, 3], [5, 2], [2, 1]];
+  const pts = (n, table) => { for (const [need, p] of table) if (n >= need) return p; return 0; };
+  const isIcon = (p) => p.rarity === ICON_RARITY || p.leagueId === ICON_LEAGUE;
+  const isHero = (p) => HERO_RARITIES.has(p.rarity);
+
+  // players: Array (Länge = Slots) von Spielerobjekten oder null; positions: Slot-Positionen (oder null = unbekannt)
+  function chemistry(players, positions) {
+    const inPos = players.map((p, i) => {
+      if (!p) return false;
+      const slot = positions && positions[i];
+      if (!slot) return true;
+      return (p.positions || []).includes(slot);
+    });
+    const club = new Map(), league = new Map(), nation = new Map();
+    const add = (m, k, n = 1) => { if (k == null) return; m.set(k, (m.get(k) || 0) + n); };
+    const leaguesPresent = new Set();
+    players.forEach((p, i) => {
+      if (!p || !inPos[i]) return;
+      if (isIcon(p)) { add(nation, p.nationId, 1); return; }
+      if (isHero(p)) { add(league, p.leagueId, 1); add(nation, p.nationId, 1); leaguesPresent.add(p.leagueId); return; }
+      add(club, p.clubId); add(league, p.leagueId); add(nation, p.nationId);
+      leaguesPresent.add(p.leagueId);
+    });
+    const iconCount = players.filter((p, i) => p && inPos[i] && isIcon(p)).length;
+    if (iconCount) for (const l of leaguesPresent) add(league, l, iconCount);
+    const per = players.map((p, i) => {
+      if (!p || !inPos[i]) return 0;
+      if (isIcon(p) || isHero(p)) return 3;
+      return Math.min(3, pts(club.get(p.clubId) || 0, CLUB_T) + pts(league.get(p.leagueId) || 0, LEAGUE_T) +
+        pts(nation.get(p.nationId) || 0, NATION_T));
+    });
+    return { per, total: per.reduce((a, b) => a + b, 0), inPos };
+  }
+
+  // ---------- Bewertung einer Aufstellung ----------
+  function cmpScope(val, target, scope) {
+    // gibt Fehlbetrag (0 = erfüllt) zurück
+    if (scope === 'MAX') return Math.max(0, val - target);
+    if (scope === 'EXACT') return Math.abs(val - target);
+    return Math.max(0, target - val);
+  }
+
+  function matchesValue(p, field, values) {
+    switch (field) {
+      case 'nationId': return values.includes(p.nationId);
+      case 'leagueId': return values.includes(p.leagueId);
+      case 'clubId': return values.includes(p.clubId);
+      case 'level': return values.includes(levelOf(p.rating));
+      case 'rarity': return values.some((v) => (v === 1 ? p.rarity >= 1 : v === 0 ? p.rarity === 0 : p.rarity === v));
+      case 'minOvr': return values.some((v) => p.rating >= v);
+      case 'exactOvr': return values.includes(p.rating);
+      case 'maxOvr': return values.some((v) => p.rating <= v);
+      case 'tradability': return values.some((v) => (v === 1 ? p.untradeable : !p.untradeable));
+      default: return true;
+    }
+  }
+
+  function groupSizes(players, key) {
+    const m = new Map();
+    for (const p of players) if (p && p[key] != null) m.set(p[key], (m.get(p[key]) || 0) + 1);
+    return m;
+  }
+
+  function evaluate(players, positions, constraints) {
+    const present = players.filter(Boolean);
+    const ratings = players.map((p) => (p ? p.rating : 0));
+    const rRaw = teamRatingRaw(ratings);
+    const rating = teamRating(ratings);
+    const chem = chemistry(players, positions);
+    const results = [];
+    let penalty = 0;
+    for (const c of constraints) {
+      if (c.unsupported) { results.push({ c, ok: null, miss: 0 }); continue; }
+      let miss = 0, val = null;
+      switch (c.kind) {
+        case 'SQUAD_SIZE': val = present.length; miss = cmpScope(val, c.value, c.scope); break;
+        case 'TEAM_RATING_1_TO_100': val = rating;
+          miss = c.scope === 'MAX' ? Math.max(0, rating - c.value) : Math.max(0, c.value - rRaw);
+          if (c.scope !== 'MAX' && rating >= c.value) miss = 0;
+          break;
+        case 'CHEMISTRY_POINTS': val = chem.total; miss = cmpScope(val, c.value, c.scope); break;
+        case 'ALL_PLAYERS_CHEMISTRY_POINTS':
+          miss = chem.per.reduce((a, x, i) => a + (players[i] ? Math.max(0, c.value - x) : 0), 0);
+          val = Math.min(...chem.per.filter((x, i) => players[i]));
+          break;
+        case 'PLAYER_QUALITY': {
+          const lv = present.map((p) => levelOf(p.rating));
+          miss = lv.reduce((a, l) => a + cmpScope(l, c.value, c.scope), 0);
+          val = c.scope === 'MAX' ? Math.max(...lv) : Math.min(...lv);
+          break;
+        }
+        case 'SAME_NATION_COUNT': case 'SAME_LEAGUE_COUNT': case 'SAME_CLUB_COUNT': {
+          const key = c.kind === 'SAME_NATION_COUNT' ? 'nationId' : c.kind === 'SAME_LEAGUE_COUNT' ? 'leagueId' : 'clubId';
+          const sizes = [...groupSizes(present, key).values()];
+          val = sizes.length ? Math.max(...sizes) : 0;
+          miss = c.scope === 'MAX' ? sizes.reduce((a, s) => a + Math.max(0, s - c.value), 0) : cmpScope(val, c.value, c.scope);
+          break;
+        }
+        case 'NATION_COUNT': case 'LEAGUE_COUNT': case 'CLUB_COUNT': {
+          const key = c.kind === 'NATION_COUNT' ? 'nationId' : c.kind === 'LEAGUE_COUNT' ? 'leagueId' : 'clubId';
+          val = groupSizes(present, key).size; miss = cmpScope(val, c.value, c.scope); break;
+        }
+        case 'LEGEND_COUNT': val = present.filter(isIcon).length; miss = cmpScope(val, c.value, c.scope); break;
+        case 'FIRST_OWNER_PLAYERS_COUNT': val = present.filter((p) => p.owners === 1).length; miss = cmpScope(val, c.value, c.scope); break;
+        case 'COUNT': {
+          val = present.filter((p) => matchesValue(p, c.field, c.values)).length;
+          miss = cmpScope(val, c.n, c.scope); break;
+        }
+        default: break;
+      }
+      penalty += miss;
+      results.push({ c, ok: miss === 0, miss, val });
+    }
+    // gleicher Spieler (assetId) darf nicht doppelt vorkommen
+    const seen = new Set();
+    let dup = 0;
+    for (const p of present) { if (seen.has(p.assetId)) dup++; seen.add(p.assetId); }
+    penalty += dup * 5;
+    return { rating, ratingRaw: rRaw, chem, results, penalty, feasible: penalty === 0 };
+  }
+
+  // ---------- Suche ----------
+  function solve(pool, slots, constraints, opts = {}) {
+    const timeMs = opts.timeMs ?? 3000;
+    const now = typeof performance !== 'undefined' ? () => performance.now() : () => Date.now();
+    const t0 = now();
+    const n = slots.length;
+    const positions = slots.map((s) => s.position || null);
+    const fixed = slots.map((s) => s.fixed || null);
+    const open = slots.map((s, i) => i).filter((i) => !fixed[i] && !slots[i].blocked);
+    const cand = pool.filter((p) => !fixed.some((f) => f && f.assetId === p.assetId));
+    if (cand.length < open.length) return { error: `Zu wenige passende Spieler im Verein (${cand.length}).` };
+
+    const byRating = [...cand].sort((a, b) => a.rating - b.rating || a.cost - b.cost);
+    const cheapest = [...cand].sort((a, b) => a.cost - b.cost);
+    const hasChem = constraints.some((c) => !c.unsupported && (c.kind === 'CHEMISTRY_POINTS' || c.kind === 'ALL_PLAYERS_CHEMISTRY_POINTS'));
+    const W = 1e6;
+    const score = (arr) => {
+      const ev = evaluate(arr, positions, constraints);
+      let cost = 0;
+      for (const i of open) if (arr[i]) cost += arr[i].cost;
+      return { s: cost + ev.penalty * W, cost, ev };
+    };
+    const rnd = (k) => Math.floor(Math.random() * k);
+    const fitsPos = (p, i) => !positions[i] || (p.positions || []).includes(positions[i]);
+
+    function initial() {
+      const arr = fixed.slice();
+      const used = new Set(fixed.filter(Boolean).map((p) => p.assetId));
+      for (const i of open) {
+        let pick = null;
+        const src = cheapest.slice(0, Math.min(cheapest.length, 400));
+        const pref = hasChem ? src.filter((p) => fitsPos(p, i)) : src;
+        const list = pref.length ? pref : src;
+        for (let t = 0; t < 40 && !pick; t++) {
+          const p = list[rnd(Math.min(list.length, 60))];
+          if (p && !used.has(p.assetId)) pick = p;
+        }
+        if (!pick) pick = cand.find((p) => !used.has(p.assetId));
+        arr[i] = pick; used.add(pick.assetId);
+      }
+      return arr;
+    }
+
+    // Kandidaten, die eine verletzte Bedingung verbessern könnten
+    function targeted(ev, i) {
+      const bad = ev.results.filter((r) => r.ok === false);
+      if (!bad.length || Math.random() < 0.35) return cand[rnd(cand.length)];
+      const r = bad[rnd(bad.length)].c;
+      if (r.kind === 'TEAM_RATING_1_TO_100') {
+        const lo = byRating.findIndex((p) => p.rating >= r.value - 3);
+        const from = lo < 0 ? byRating.length - 30 : lo;
+        return byRating[Math.max(0, from + rnd(Math.max(1, Math.min(60, byRating.length - from))))];
+      }
+      if (r.kind === 'COUNT') {
+        const m = cand.filter((p) => matchesValue(p, r.field, r.values));
+        if (m.length && r.scope !== 'MAX') return m[rnd(m.length)];
+      }
+      if (r.kind === 'CHEMISTRY_POINTS' || r.kind === 'ALL_PLAYERS_CHEMISTRY_POINTS' || r.kind.startsWith('SAME_')) {
+        // Spieler, die Nation/Liga/Verein mit bereits gesetzten teilen
+        const other = ev.__arr.filter(Boolean);
+        const ref = other[rnd(other.length)];
+        const keys = ['clubId', 'leagueId', 'nationId'];
+        const k = keys[rnd(3)];
+        const m = cand.filter((p) => p[k] === ref[k] && fitsPos(p, i));
+        if (m.length) return m[rnd(m.length)];
+      }
+      if (r.kind === 'PLAYER_QUALITY') {
+        const m = cand.filter((p) => cmpScope(levelOf(p.rating), r.value, r.scope) === 0);
+        if (m.length) return m[rnd(Math.min(m.length, 200))];
+      }
+      if (hasChem) { const m = cand.filter((p) => fitsPos(p, i)); if (m.length) return m[rnd(m.length)]; }
+      return cand[rnd(cand.length)];
+    }
+
+    let best = null;
+    let iters = 0, restarts = 0;
+    while (now() - t0 < timeMs) {
+      restarts++;
+      let cur = initial();
+      let cs = score(cur); cs.ev.__arr = cur;
+      let temp = 1;
+      const restartBudget = Math.max(400, timeMs / 6);
+      const rt0 = now();
+      while (now() - rt0 < restartBudget && now() - t0 < timeMs) {
+        iters++;
+        const next = cur.slice();
+        const mv = Math.random();
+        if (mv < 0.2 && open.length > 1) {
+          const a = open[rnd(open.length)], b = open[rnd(open.length)];
+          [next[a], next[b]] = [next[b], next[a]];
+        } else {
+          const i = open[rnd(open.length)];
+          const p = targeted(cs.ev, i);
+          if (!p || next.some((q) => q && q.assetId === p.assetId)) continue;
+          next[i] = p;
+        }
+        const ns = score(next); ns.ev.__arr = next;
+        const d = ns.s - cs.s;
+        if (d <= 0 || Math.random() < Math.exp(-d / (temp * 500))) { cur = next; cs = ns; }
+        temp *= 0.9995;
+        if (cs.ev.feasible && (!best || cs.cost < best.cost)) best = { players: cur.slice(), cost: cs.cost, ev: cs.ev };
+      }
+      if (!best && restarts > 50) break;
+    }
+    if (!best) {
+      // bestes Nicht-Ergebnis zurückgeben (zur Anzeige, was fehlt)
+      const cur = initial();
+      const cs = score(cur);
+      return { players: cur, cost: cs.cost, ev: cs.ev, feasible: false, iters, restarts };
+    }
+    return { ...best, feasible: true, iters, restarts, positions };
+  }
+
+  return { KEY_FALLBACK, FORMATIONS, normPos, decodeRequirements, describe, teamRating, teamRatingRaw,
+    chemistry, evaluate, solve, levelOf, isIcon, isHero };
+})();
+
+  console.log('[FC27-Tool] Skript geladen – Version', GM_info && GM_info.script && GM_info.script.version);
+
+  // ------------------------------------------------------------------
+  // Grundeinstellungen
+  // ------------------------------------------------------------------
+  const CONFIG = {
+    year: 27,              // Spieljahr in den URLs der Preisseiten
+    taxRate: 0.05,         // EA-Steuer auf Verkäufe
+    cacheMinutes: 15,      // wie lange ein Preis zwischengespeichert wird
+    requestDelayMs: 800,   // Pause zwischen Anfragen an Futbin
+    debug: false,          // true = Details in der Browser-Konsole (F12)
+    overpriceTolerance: 0.10, // ab so viel über Marktpreis kommt die Warnung "verkauft evtl. nicht"
+    historyMax: 5000,      // so viele Verkäufe werden höchstens gespeichert
+    bidDelayMin: 1500,     // Pause zwischen zwei Geboten (ms) – zufällig zwischen Min und Max
+    bidDelayMax: 3500,
+    maxBidsPerRun: 20,     // höchstens so viele Gebote pro Klick auf "Alle bieten"
+    minSecondsLeft: 5,     // Auktionen, die in weniger Sekunden enden, werden übersprungen
+  };
+
+  const SETTINGS_KEY = 'fcpt_settings';
+  const DEFAULTS = {
+    platform: 'ps',        // 'ps' = Konsole, 'pc' = PC
+    mainSource: 'futbin',  // Quelle für die Spalte "Marktpreis"
+    sources: { futbin: true, ea: true },
+  };
+  const stored = GM_getValue(SETTINGS_KEY, {});
+  const settings = Object.assign({}, DEFAULTS, stored);
+  settings.mainSource = 'futbin';
+  if (settings.sources.ea === undefined) settings.sources.ea = true;
+  settings.sources = Object.assign({}, DEFAULTS.sources, stored.sources || {});
+  const saveSettings = () => GM_setValue(SETTINGS_KEY, settings);
+
+  const log = (...a) => CONFIG.debug && console.log('[FC27-Tool]', ...a);
+  if (settings.inline === undefined) settings.inline = true;
+  if (settings.minBargain === undefined) settings.minBargain = 500;
+  if (settings.maxBid === undefined) settings.maxBid = 2000;
+  if (settings.autoRefresh === undefined) settings.autoRefresh = true;
+  if (settings.sort === undefined) settings.sort = 'status';
+  if (settings.ampel === undefined) settings.ampel = true;
+  if (settings.hotkeys === undefined) settings.hotkeys = true;
+  if (settings.bumpMinBin === undefined) settings.bumpMinBin = true;
+  settings.keys = Object.assign({ search: '1', buy: '2', confirm: '3', back: '4', up: '5', down: '6' }, settings.keys || {});
+  if (settings.stepField === undefined) settings.stepField = 2;   // 0 Min.-Gebot, 1 Max.-Gebot, 2 Min.-Sofortkauf, 3 Max.-Sofortkauf
+  if (settings.autoBack === undefined) settings.autoBack = true;
+
+  // ------------------------------------------------------------------
+  // Hilfsfunktionen
+  // ------------------------------------------------------------------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const fmt = (n) => (n == null ? '–' : Number(n).toLocaleString('de-DE'));
+  const signed = (n) => (n == null ? '–' : (n > 0 ? '+' : '') + fmt(n));
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const toNum = (v) => {
+    if (v == null) return null;
+    if (typeof v === 'number') return v > 0 ? v : null;
+    const n = parseInt(String(v).replace(/[^\d]/g, ''), 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const afterTax = (n) => Math.floor(n * (1 - CONFIG.taxRate));
+  // Mindest-Verkaufspreis ohne Verlust (nach Steuer), auf gültige EA-Preisstufe aufgerundet
+  const breakEven = (b) => {
+    const v = Math.ceil(b / (1 - CONFIG.taxRate));
+    const st = v < 1000 ? 50 : v < 10000 ? 100 : v < 50000 ? 250 : v < 100000 ? 500 : 1000;
+    return Math.ceil(v / st) * st;
+  };
+  const fmtTime = (sec) => {
+    if (sec == null || sec < 0) return '–';
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return h ? `${h} Std ${m} Min` : `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  let futbinBlockedUntil = 0;
+  const BLOCK_MSG = 'Futbin blockt gerade (zu viele Abrufe). Öffne futbin.com in einem Tab und warte 5–10 Min.';
+  const futbinBlocked = () => Date.now() < futbinBlockedUntil;
+  function gmGet(url, type = 'json') {
+    if (/futbin\.com/.test(url) && futbinBlocked()) return Promise.reject(new Error(BLOCK_MSG));
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: 15000,
+        headers: { Accept: type === 'json' ? 'application/json' : 'text/html' },
+        onload: (r) => {
+          if ((r.status === 403 || r.status === 429) && /futbin\.com/.test(url)) {
+            futbinBlockedUntil = Date.now() + 5 * 60000;
+            return reject(new Error(BLOCK_MSG));
+          }
+          if (r.status < 200 || r.status >= 300) return reject(new Error('HTTP ' + r.status));
+          if (type !== 'json') return resolve(r.responseText);
+          try { resolve(JSON.parse(r.responseText)); } catch { reject(new Error('Antwort ist kein JSON')); }
+        },
+        onerror: () => reject(new Error('Netzwerkfehler')),
+        ontimeout: () => reject(new Error('Zeitüberschreitung')),
+      });
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Cache
+  // ------------------------------------------------------------------
+  const CACHE_KEY = 'fcpt_cache';
+  const cache = GM_getValue(CACHE_KEY, {});
+  const ttl = () => CONFIG.cacheMinutes * 60000;
+  for (const k of Object.keys(cache)) if (Date.now() - cache[k].t > ttl()) delete cache[k];
+  const cacheGet = (k) => (cache[k] && Date.now() - cache[k].t <= ttl() ? cache[k].v : undefined);
+  let lastPriceFetch = Object.values(cache).reduce((m, c) => Math.max(m, c.t || 0), 0) || null;
+  const cacheSet = (k, v) => { cache[k] = { t: Date.now(), v }; lastPriceFetch = Date.now(); GM_setValue(CACHE_KEY, cache); };
+  const cacheClear = () => { for (const k of Object.keys(cache)) delete cache[k]; GM_setValue(CACHE_KEY, cache); };
+  const agoText = (t) => {
+    if (!t) return 'noch keine';
+    const m = Math.floor((Date.now() - t) / 60000);
+    return m < 1 ? 'gerade eben' : m === 1 ? 'vor 1 Min.' : m < 60 ? `vor ${m} Min.` : `vor ${Math.floor(m / 60)} Std.`;
+  };
+
+  // ------------------------------------------------------------------
+  // Preisquellen – jede Quelle liefert eine Zahl (oder null)
+  // Wenn eine Seite ihr Format ändert, muss nur der passende Block angepasst werden.
+  // ------------------------------------------------------------------
+  // Futbin hat keine offene Preis-Schnittstelle mehr. Das Skript liest deshalb die Futbin-Seiten
+  // so, wie sie im Browser angezeigt werden: 1) Suche nach dem Namen -> Futbin-Spielerseite finden
+  // (wird dauerhaft gemerkt), 2) Spielerseite -> niedrigster Preis für Konsole bzw. PC.
+  // FUT.GG (Preise per Einmal-Schlüssel geschützt) und Futwiz (liefert für FC 27 keine Preise)
+  // sind deshalb nicht mehr enthalten.
+  const FB_KEY = 'fcpt_futbin_ids';
+  const futbinIds = GM_getValue(FB_KEY, {});
+  const futbinUrl = (rid) => (futbinIds[rid] ? `https://www.futbin.com${futbinIds[rid]}` : null);
+  const isCfPage = (html) => /Just a moment|cf-challenge|challenge-platform\/h\/[a-z]\/orchestrate/i.test(html) && !/price-box/.test(html);
+
+  async function futbinFind(p, query) {
+    const html = await gmGet(`https://www.futbin.com/players?search=${encodeURIComponent(query)}`, 'text');
+    if (isCfPage(html)) throw new Error('Futbin-Schutzseite – öffne futbin.com einmal in einem Tab, dann erneut versuchen');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    for (const tr of doc.querySelectorAll('tbody tr')) {
+      const img = tr.querySelector(`img[src*="/players/${p.resourceId}."], img[src*="/players/p${p.resourceId}."]`);
+      const a = tr.querySelector('a[href*="/player/"]');
+      if (img && a) return a.getAttribute('href');
+    }
+    return null;
+  }
+
+  const SOURCES = {
+    ea: {
+      label: 'EA-Ø',
+      async price(p) {
+        // EAs eigener Marktdurchschnitt aus den Daten, die die Web App ohnehin lädt
+        const cap = typeof SBCUI !== 'undefined' ? SBCUI.CAP : null;
+        if (!cap) return null;
+        let raw = p.itemId != null ? cap.raw.get(p.itemId) : null;
+        if (!raw || !raw.marketAverage) {
+          for (const r of cap.raw.values()) { if (r.resourceId === p.resourceId && r.marketAverage) { raw = r; break; } }
+        }
+        return raw && raw.marketAverage > 0 ? raw.marketAverage : null;
+      },
+    },
+    futbin: {
+      label: 'Futbin',
+      async price(p) {
+        let path = futbinIds[p.resourceId];
+        if (!path) {
+          path = await futbinFind(p, p.name);
+          if (!path && p.fullName && p.fullName !== p.name) path = await futbinFind(p, p.fullName);
+          if (!path) throw new Error('Karte bei Futbin nicht gefunden');
+          futbinIds[p.resourceId] = path;
+          GM_setValue(FB_KEY, futbinIds);
+        }
+        const html = await gmGet(`https://www.futbin.com${path}`, 'text');
+        if (isCfPage(html)) throw new Error('Futbin-Schutzseite – öffne futbin.com einmal in einem Tab, dann erneut versuchen');
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const plat = settings.platform === 'pc' ? 'pc' : 'ps';
+        const el = doc.querySelector(`.price-box.platform-${plat}-only .lowest-price-1`) ||
+          doc.querySelector(`.platform-${plat}-only .lowest-price-1`);
+        return toNum(el && el.textContent);
+      },
+    },
+  };
+
+  // Gemeinsamer Preis-Abruf: Cache, keine doppelten Anfragen, Pause zwischen Anfragen je Seite
+  const inflight = {};
+  const queues = {};
+  function enqueue(key, fn) {
+    const run = (queues[key] || Promise.resolve()).then(() => fn());
+    queues[key] = run.catch(() => {}).then(() => sleep(CONFIG.requestDelayMs + Math.random() * 400));
+    return run;
+  }
+  function getPrice(key, p) {
+    const ck = `${key}:${settings.platform}:${p.resourceId}`;
+    const cached = cacheGet(ck);
+    if (cached !== undefined) return Promise.resolve(cached);
+    if (inflight[ck]) return inflight[ck];
+    const pr = enqueue(key, () => SOURCES[key].price(p))
+      .then((v) => { cacheSet(ck, v); return v; })
+      .finally(() => { delete inflight[ck]; });
+    inflight[ck] = pr;
+    return pr;
+  }
+  const enabledSources = () => Object.keys(SOURCES).filter((k) => settings.sources[k]);
+
+  // ------------------------------------------------------------------
+  // Daten aus der EA Web App lesen
+  // ------------------------------------------------------------------
+  function loadTransferList() {
+    return new Promise((resolve, reject) => {
+      const svc = W.services && W.services.Item;
+      if (!svc || typeof svc.requestTransferItems !== 'function') {
+        return reject(new Error('Web App noch nicht bereit. Bitte einloggen, kurz warten und erneut auf „Aktualisieren“ klicken.'));
+      }
+      svc.requestTransferItems().observe(W, function (observer, res) {
+        if (observer && typeof observer.unobserve === 'function') observer.unobserve(W);
+        if (!res || !res.success) return reject(new Error('EA hat die Transferliste nicht geliefert.'));
+        resolve((res.response && res.response.items) || (res.data && res.data.items) || []);
+      });
+    });
+  }
+
+  // EA liefert die Position als Zahl -> deutsche Kürzel wie in der Web App
+  const POS = ['TW', 'LIB', 'RAV', 'RV', 'IV', 'IV', 'IV', 'LV', 'LAV', 'ZDM', 'ZDM', 'ZDM', 'RM', 'ZM', 'ZM', 'ZM', 'LM',
+    'ZOM', 'ZOM', 'ZOM', 'RS', 'MS', 'LS', 'RF', 'ST', 'ST', 'ST', 'LF'];
+  const posName = (v) => (typeof v === 'number' ? POS[v] || '' : v || '');
+
+  // Selbst eingetragene Kaufpreise (für gezogene Karten oder wenn EA keinen kennt), je Item-ID
+  const BOUGHT_KEY = 'fcpt_bought';
+  const manualBought = GM_getValue(BOUGHT_KEY, {});
+  const AUTO_KEY = 'fcpt_bought_auto';
+  const autoBought = GM_getValue(AUTO_KEY, {});
+  function recordBuy(itemId, price) {
+    price = toNum(price);
+    if (itemId == null || !price || autoBought[itemId]) return;
+    autoBought[itemId] = price;
+    const keys = Object.keys(autoBought);
+    if (keys.length > 3000) keys.slice(0, keys.length - 3000).forEach((k) => delete autoBought[k]);
+    GM_setValue(AUTO_KEY, autoBought);
+    log('Kauf erfasst', itemId, price);
+  }
+  function setManualBought(itemId, price) {
+    if (itemId == null) return;
+    if (price) manualBought[itemId] = price; else delete manualBought[itemId];
+    GM_setValue(BOUGHT_KEY, manualBought);
+  }
+
+  function mapItem(it) {
+    try {
+      const a = typeof it.getAuctionData === 'function' ? it.getAuctionData() : it._auction || {};
+      const sd = typeof it.getStaticData === 'function' ? it.getStaticData() : it._staticData || {};
+      const isPlayer = typeof it.isPlayer === 'function' ? it.isPlayer() : it.type === 'player';
+      const state = a.tradeState;
+      const sold = typeof a.isSold === 'function' ? a.isSold() : state === 'closed';
+      const expired = !sold && (typeof a.isExpired === 'function' ? a.isExpired() : state === 'expired');
+      const active = !sold && !expired && state === 'active';
+      const manual = it.id != null ? toNum(manualBought[it.id]) : null;
+      const autoB = it.id != null ? toNum(autoBought[it.id]) : null;
+      const bought = manual || autoB || toNum(it.lastSalePrice);
+      const soldFor = sold ? toNum(a.currentBid) || toNum(a.buyNowPrice) : null;
+      const buyNow = toNum(a.buyNowPrice);
+
+      return {
+        isPlayer,
+        resourceId: it.resourceId || it.definitionId,
+        name: sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${it.definitionId}`,
+        rating: it.rating,
+        position: posName(it.preferredPosition),
+        fullName: [sd.firstName, sd.lastName].filter(Boolean).join(' '),
+        startPrice: toNum(a.startingBid),
+        buyNow,
+        currentBid: toNum(a.currentBid),
+        expires: a.expires,
+        sold, expired, active,
+        bought,
+        soldFor,
+        profit: soldFor ? afterTax(soldFor) - (bought || 0) : null,
+        potentialProfit: !sold && buyNow ? afterTax(buyNow) - (bought || 0) : null,
+        itemId: it.id,
+        boughtManual: !!manual,
+        boughtAuto: !manual && !!autoB,
+        tradeId: a.tradeId,
+        tradeOwner: typeof a.tradeOwner === 'boolean' ? a.tradeOwner : null,
+        bidState: a.bidState,
+      };
+    } catch (e) {
+      log('Item konnte nicht gelesen werden', e);
+      return null;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Profit-Historie: jeder erkannte Verkauf wird dauerhaft gespeichert
+  // ------------------------------------------------------------------
+  const HIST_KEY = 'fcpt_history';
+  let history = GM_getValue(HIST_KEY, []);
+  let onHistoryChange = () => {};
+  function recordSale(p) {
+    if (!p || !p.sold || !p.soldFor) return;
+    if (p.itemId == null && p.tradeId == null) return;
+    const k = `${p.itemId}:${p.tradeId}`;
+    if (history.some((h) => h.k === k)) return;
+    history.push({ k, t: Date.now(), name: p.name, rating: p.rating, bought: p.bought || 0, sold: p.soldFor, profit: p.profit });
+    if (history.length > CONFIG.historyMax) history = history.slice(-CONFIG.historyMax);
+    GM_setValue(HIST_KEY, history);
+    onHistoryChange();
+  }
+
+  // ------------------------------------------------------------------
+  // Warnung bei falschem Verkaufspreis (eigene Karten)
+  // ------------------------------------------------------------------
+  function listingWarn(p, market) {
+    if (!market || !p.buyNow || p.sold || !(p.active || p.expired)) return '';
+    if (p.buyNow < market) {
+      return `<span class="fcpt-chip loss">⚠ Sofortkauf ${fmt(market - p.buyNow)} unter Marktpreis</span>`;
+    }
+    if (p.buyNow > market * (1 + CONFIG.overpriceTolerance)) {
+      return `<span class="fcpt-chip warn">⚠ ${Math.round((p.buyNow / market - 1) * 100)} % über Marktpreis – verkauft evtl. nicht</span>`;
+    }
+    return '';
+  }
+
+  // ------------------------------------------------------------------
+  // Oberfläche
+  // ------------------------------------------------------------------
+  GM_addStyle(`
+    #fcpt-btn{position:fixed;right:24px;bottom:24px;z-index:100000;background:linear-gradient(135deg,#f9d85a,#e0a800);color:#1a1300;border:0;border-radius:999px;padding:11px 18px;font:700 14px system-ui,sans-serif;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.4);transition:transform .12s}
+    #fcpt-btn:hover{transform:translateY(-1px)}
+    #fcpt-panel{--bg:#0b111c;--bg2:#121a28;--bg3:#1a2436;--line:#243149;--ink:#eef2f8;--ink2:#a7b3c6;--ink3:#7d8aa0;--gold:#f5c518;--pos:#22c55e;--neg:#ef4444;--warn:#f59e0b;--blue:#3b82f6;
+      position:fixed;top:0;right:0;width:440px;max-width:100vw;height:100vh;z-index:99999;background:var(--bg);color:var(--ink);font:14px system-ui,-apple-system,Segoe UI,sans-serif;box-shadow:-10px 0 30px rgba(0,0,0,.55);display:none;flex-direction:column;border-left:1px solid var(--line)}
+    #fcpt-panel.open{display:flex;animation:fcptIn .18s ease-out}
+    @keyframes fcptIn{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+    #fcpt-panel *{box-sizing:border-box}
+    .fcpt-head{padding:14px 14px 10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#111a2a,var(--bg))}
+    .fcpt-top{display:flex;align-items:center;gap:10px}
+    .fcpt-brand{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+    .fcpt-logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:linear-gradient(135deg,#f9d85a,#e0a800);font-size:18px;flex:none}
+    .fcpt-brand .t{font-weight:800;font-size:15px;letter-spacing:.2px}
+    .fcpt-ver{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;color:#1a1300;background:#f5c518;border-radius:999px;padding:1px 7px;vertical-align:middle}
+    .fcpt-icons{display:flex;gap:6px}
+    .fcpt-icons .ic{width:34px;height:34px;border-radius:10px;background:var(--bg3);border:1px solid var(--line);color:var(--ink);font:16px system-ui;cursor:pointer;display:grid;place-items:center}
+    .fcpt-icons .ic:hover{border-color:var(--gold);color:var(--gold)}
+    .fcpt-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    #fcpt-panel select{background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:13px;cursor:pointer}
+    .fcpt-tabs{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:3px}
+    .fcpt-tabs button{flex:1;background:transparent;color:var(--ink2);border:0;border-radius:8px;padding:7px 6px;font:600 13px system-ui,sans-serif;cursor:pointer}
+    .fcpt-tabs button.on{background:var(--gold);color:#1a1300}
+    .fcpt-sum{font-size:13px;color:var(--ink2)}
+    .fcpt-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .fcpt-list{overflow:auto;padding:10px 12px 90px;display:flex;flex-direction:column;gap:8px;flex:1}
+    .fcpt-settings{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}
+    #fcpt-panel.v-settings .fcpt-settings{display:flex}
+    .fcpt-trade{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}
+    #fcpt-panel.v-trade .fcpt-trade{display:flex}
+    #fcpt-panel.v-trade .fcpt-list,#fcpt-panel.v-trade .fcpt-sum,#fcpt-panel.v-trade .fcpt-toolbar{display:none}
+    .fcpt-tabs button[data-tab="settings"]{flex:0 0 42px}
+    .fcpt-bigbtn{width:100%;background:linear-gradient(135deg,#f9d85a,#e0a800);color:#1a1300;border:0;border-radius:10px;padding:10px 12px;font:700 14px system-ui,sans-serif;cursor:pointer}
+    .fcpt-trade input[type=number]{width:96px;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;text-align:right}
+    .ttab{font-size:12px}.ttab td{vertical-align:top}.ttab td.n{white-space:nowrap}.ttab a{color:var(--ink);text-decoration:none}.ttab a:hover{color:var(--gold)}
+    .tsig{font-size:11.5px;font-weight:700;white-space:nowrap;color:var(--ink2);background:#1f2a3c;border-radius:999px;padding:3px 9px}
+    .tsig.good{color:#86efac;background:rgba(34,197,94,.15)}.tsig.hot{color:#fca5a5;background:rgba(239,68,68,.15)}.tsig.bad{color:#fcd34d;background:rgba(245,158,11,.15)}
+    .tbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+    .tchk{font-size:12px;color:var(--ink2);display:flex;gap:5px;align-items:center;cursor:pointer}
+    .tlist{display:flex;flex-direction:column;gap:8px}
+    .tcard{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+    .tc-top{display:flex;align-items:center;gap:10px}
+    .tc-ovr{background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00;font-weight:800;border-radius:6px;padding:3px 7px;font-size:13px;flex:none}
+    .tc-name{flex:1;min-width:0;color:var(--ink);font-weight:700;font-size:15px;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .tc-name:hover{color:var(--gold)}
+    .tc-profit{text-align:right;flex:none}.tc-profit b{display:block;color:var(--pos);font-size:18px;font-variant-numeric:tabular-nums}.tc-profit small{color:var(--ink3);font-size:11px}
+    .tc-sig{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+    .tc-trend{font-size:11.5px;color:var(--ink3)}.tc-trend.up{color:#86efac}.tc-trend.down{color:#fca5a5}
+    .tspark{width:100%;height:46px;display:block;margin-top:8px}
+    .tspark .pl{fill:none;stroke:#f5c518;stroke-width:2;vector-effect:non-scaling-stroke}
+    .tspark .lb{stroke:#22c55e;stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke}
+    .tspark .ls{stroke:#ef4444;stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke}
+    .tspark .pt{fill:#f5c518}
+    .tc-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+    .tc-stats>div{background:var(--bg3);border-radius:8px;padding:5px 8px}
+    .tc-stats span{display:block;font-size:10.5px;color:var(--ink3)}.tc-stats b{font-size:14px;font-variant-numeric:tabular-nums}
+    .tc-stats .buy b{color:#86efac}.tc-stats .sell b{color:#fca5a5}
+    .cv-bands{display:flex;flex-direction:column;gap:5px;margin:4px 0}
+    .cv-band{display:grid;grid-template-columns:62px 1fr 78px 34px;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
+    .cv-band b{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums}.cv-band small{color:var(--ink3);text-align:right}
+    .cv-bar{height:8px;background:var(--bg3);border-radius:4px;overflow:hidden}.cv-bar i{display:block;height:100%;background:#f5c518;border-radius:4px}
+    #fcpt-panel.v-settings .fcpt-list,#fcpt-panel.v-settings .fcpt-sum,#fcpt-panel.v-settings .fcpt-toolbar,#fcpt-panel.v-hist .fcpt-toolbar{display:none}
+    .fcpt-sgroup{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+    .fcpt-sgroup h4{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink3)}
+    .fcpt-set{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;color:var(--ink)}
+    .fcpt-set small{display:block;color:var(--ink3);font-size:11px}
+    .fcpt-sw{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:999px;background:#334155;position:relative;cursor:pointer;flex:none;transition:background .15s;margin:0}
+    .fcpt-sw::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s}
+    .fcpt-sw:checked{background:var(--pos)}.fcpt-sw:checked::after{left:19px}
+    .fcpt-settings input[type=number]{width:96px;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;text-align:right}
+    .fcpt-card{position:relative;border:1px solid var(--line);border-left:4px solid #475569;border-radius:12px;padding:10px 12px;background:var(--bg2);transition:border-color .15s}
+    .fcpt-card:hover{border-color:#34445f}
+    .fcpt-card.sold{border-left-color:var(--pos)}.fcpt-card.expired{border-left-color:var(--warn)}.fcpt-card.active{border-left-color:var(--blue)}
+    .c-top{display:flex;align-items:center;gap:10px}
+    .c-badge{width:42px;height:48px;border-radius:8px;background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00;display:flex;flex-direction:column;align-items:center;justify-content:center;flex:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+    .c-badge b{font-size:17px;line-height:1}.c-badge small{font-size:10px;font-weight:700;opacity:.8}
+    .c-main{flex:1;min-width:0}
+    .c-name{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .c-status{display:inline-block;margin-top:3px;font-size:11px;font-weight:600;border-radius:999px;padding:2px 8px;background:#1f2a3c;color:var(--ink2)}
+    .c-status.sold{background:rgba(34,197,94,.15);color:#86efac}.c-status.expired{background:rgba(245,158,11,.15);color:#fcd34d}.c-status.active{background:rgba(59,130,246,.15);color:#93c5fd}
+    .c-profit{text-align:right;flex:none}
+    .c-profit .fcpt-profit{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}
+    .c-profit .c-plabel{font-size:11px;color:var(--ink3)}
+    .c-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+    .c-stats>div{background:var(--bg3);border-radius:8px;padding:5px 7px}
+    .c-stats span{display:block;font-size:10.5px;color:var(--ink3)}
+    .c-stats b{font-size:13px;font-variant-numeric:tabular-nums}
+    .fcpt-pos-v{color:var(--pos,#22c55e)}.fcpt-neg-v{color:var(--neg,#ef4444)}.fcpt-muted{color:var(--ink3,#8b98aa);font-weight:400}
+    .fcpt-chips{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+    .fcpt-chip{background:#1f2b3d;border-radius:999px;padding:3px 9px;font-size:12px;color:#c7d0dc}
+    .fcpt-chip b{color:#fff}
+    .fcpt-msg{padding:24px 16px;color:var(--ink2);text-align:center}
+    #fcpt-keyhint{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99998;display:none;gap:10px;align-items:center;background:rgba(11,17,28,.92);border:1px solid #243149;border-radius:12px;padding:7px 12px;font:12px system-ui,sans-serif;color:#a7b3c6;box-shadow:0 6px 18px rgba(0,0,0,.4);backdrop-filter:blur(4px)}
+    #fcpt-keyhint.show{display:flex}
+    #fcpt-keyhint kbd{display:inline-block;min-width:20px;text-align:center;background:#1a2436;border:1px solid #3a4a66;border-bottom-width:2px;border-radius:5px;padding:1px 5px;margin-right:4px;color:#f5c518;font:700 12px system-ui,sans-serif}
+    @media (pointer:coarse){#fcpt-keyhint{display:none !important}}
+    .fcpt-inline{flex-basis:100%;width:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 2px;font:12px system-ui,sans-serif;color:#c7d0dc}
+    .fcpt-inline .fcpt-chip.main{background:#2a3a14;color:#e7f5c8}
+    .fcpt-inline .fcpt-chip.profit{background:#10301f}
+    .fcpt-inline .fcpt-chip.loss,.fcpt-card .fcpt-chip.loss{background:#3a1515;color:#fecaca}
+    .fcpt-inline .fcpt-chip.warn,.fcpt-card .fcpt-chip.warn{background:#3a2a0e;color:#fde68a}
+    .fcpt-chip.be{background:#1d2a44;color:#bfdbfe}
+    .fcpt-chip.watch{background:#6d28d9;color:#fff;font-weight:700}
+    .fcpt-watchhit{outline:3px solid #a855f7 !important;outline-offset:-3px;border-radius:6px}
+    .tc-star{background:none;border:0;color:#f5c518;font-size:20px;cursor:pointer;padding:0 2px;line-height:1;flex:none}
+    .tc-star:not(.on){color:#7d8aa0}.tc-star:hover{color:#f5c518}
+    .wl-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:6px 8px;border-left:3px solid transparent}
+    .wl-row.hit{border-left-color:#a855f7;background:rgba(168,85,247,.12)}
+    .wl-name b{display:block;font-size:13px}.wl-name small{font-size:11px;color:var(--ink3)}
+    .wl-t{font-size:11px;color:var(--ink3);display:flex;align-items:center;gap:4px}
+    .wl-t input{width:84px !important}
+    .wl-x{background:none;border:1px solid var(--line);color:var(--ink2);border-radius:6px;cursor:pointer;padding:2px 7px}
+    .wl-x:hover{border-color:#ef4444;color:#fca5a5}
+    .fcpt-smallbtn{background:var(--bg3);border:1px solid var(--line);color:var(--ink2);border-radius:8px;padding:6px 10px;font:12px system-ui,sans-serif;cursor:pointer}
+    .fcpt-inline .fcpt-chip.deal{background:#15803d;color:#fff;font-weight:600}
+    .fcpt-bargain{outline:3px solid #22c55e !important;outline-offset:-3px;border-radius:6px}
+    .fcpt-head input[type=number]{width:80px;background:#1c2636;color:#e8ecf2;border:1px solid #33425a;border-radius:6px;padding:4px 6px;font:inherit}
+    .fcpt-tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+    .fcpt-tile{background:#172131;border:1px solid #243044;border-radius:10px;padding:10px 12px}
+    .fcpt-tile .l{color:#8b98aa;font-size:12px}.fcpt-tile .v{font-size:20px;font-weight:700}.fcpt-tile .s{color:#8b98aa;font-size:12px}
+    .fcpt-hist{width:100%;border-collapse:collapse;font-size:13px}
+    .fcpt-hist th{text-align:left;color:#8b98aa;font-weight:500;padding:6px 4px;border-bottom:1px solid #243044}
+    .fcpt-hist td{padding:6px 4px;border-bottom:1px solid #1c2636}
+    .fcpt-hist td.n{text-align:right;font-variant-numeric:tabular-nums}
+    .fcpt-actions{display:flex;gap:8px}
+    .fcpt-actions button{background:#1c2636;color:#e8ecf2;border:1px solid #33425a;border-radius:6px;padding:6px 10px;font:inherit;cursor:pointer}
+    .fcpt-warn:empty{display:none}.fcpt-warn{margin-top:6px;display:flex}
+    a.fcpt-chip{text-decoration:none !important;cursor:pointer}a.fcpt-chip:hover{outline:1px solid #f5c518}
+    #fcpt-bidbar .st:empty{display:none}
+    .fcpt-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;width:100%}
+    .fcpt-keys label{flex-direction:column;align-items:flex-start !important;gap:2px !important}
+    .fcpt-keys label{font-size:11px;color:var(--ink3);display:flex}
+    .fcpt-keys input{width:100%;text-align:center;background:#1c2636;color:#f5c518;border:1px solid #33425a;border-radius:6px;padding:4px;font:600 13px system-ui,sans-serif;text-transform:uppercase}
+    #fcpt-toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:100001;background:#0f1622;color:#e8ecf2;border:1px solid #33425a;border-left:4px solid #f5c518;border-radius:8px;padding:8px 14px;font:600 13px system-ui,sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.5);opacity:0;transition:opacity .15s;pointer-events:none}
+    #fcpt-toast.show{opacity:1}#fcpt-toast.err{border-left-color:#ef4444}
+    button.fcpt-edit{border:1px dashed #4b5d78;cursor:pointer;font:inherit;font-size:12px}
+    button.fcpt-edit:hover{border-color:#f5c518}
+    .fcpt-boughtinput{width:110px;background:#1c2636;color:#e8ecf2;border:1px solid #f5c518;border-radius:999px;padding:3px 10px;font:12px system-ui,sans-serif}
+    .fcpt-sec{margin-top:4px;font-size:13px;font-weight:600;color:#c7d0dc}
+    .fcpt-chart{background:#172131;border:1px solid #243044;border-radius:10px;padding:8px}
+    .fcpt-chart svg{width:100%;height:auto;display:block}
+    .fcpt-chart .cap{font-size:11px;color:#8b98aa;margin-bottom:4px;display:flex;justify-content:space-between}
+    .fcpt-2col{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .fcpt-mini{background:#172131;border:1px solid #243044;border-radius:10px;padding:8px 10px;font-size:12px}
+    .fcpt-mini .h{color:#8b98aa;margin-bottom:4px}
+    .fcpt-mini .r{display:flex;justify-content:space-between;gap:6px;padding:2px 0}
+    .fcpt-mini .r span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}a.fcpt-chip:hover{outline:1px solid #f5c518}
+    .fcpt-good{box-shadow:inset 5px 0 0 #22c55e !important}
+    .fcpt-bad{box-shadow:inset 5px 0 0 #ef4444 !important}
+    .fcpt-meh{box-shadow:inset 5px 0 0 #f59e0b !important}
+    .fcpt-overview{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+    .fcpt-overview>div{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:7px 9px}
+    .fcpt-overview .l{color:#8b98aa;font-size:11px}.fcpt-overview .v{font-weight:700;font-size:15px}
+    .fcpt-stand{font-size:12px;color:#8b98aa}
+    #fcpt-listbtn{margin:8px 0;width:100%;background:#f5c518;color:#111;border:0;border-radius:6px;padding:9px 12px;font:600 14px system-ui,sans-serif;cursor:pointer}
+    #fcpt-listbtn[disabled]{opacity:.5;cursor:default}
+    .fcpt-listhint{font:12px system-ui,sans-serif;color:#9aa7b8;margin-bottom:6px}
+    #fcpt-bidbar{position:fixed;right:160px;bottom:20px;z-index:100000;display:none;align-items:center;gap:8px;background:#0f1622;border:1px solid #33425a;border-radius:999px;padding:6px 8px 6px 14px;font:13px system-ui,sans-serif;color:#e8ecf2;box-shadow:0 4px 14px rgba(0,0,0,.45)}
+    #fcpt-bidbar.show{display:flex}
+    #fcpt-bidbar input{width:90px;background:#1c2636;color:#e8ecf2;border:1px solid #33425a;border-radius:6px;padding:5px 6px;font:inherit}
+    #fcpt-bidbar button{background:#3b82f6;color:#fff;border:0;border-radius:999px;padding:7px 14px;font:600 13px system-ui,sans-serif;cursor:pointer}
+    #fcpt-bidbar button.stop{background:#ef4444}
+    #fcpt-bidbar .st{color:#9aa7b8;max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .fcpt-inline .fcpt-chip.nb{background:#1e3a5f;color:#dbeafe}
+    .fcpt-inline .fcpt-chip.nb.over{background:#1f2b3d;color:#8b98aa}
+    .fcpt-inline .fcpt-chip.bidok{background:#1d4ed8;color:#fff;font-weight:600}
+    .fcpt-inline .fcpt-chip.biderr{background:#7f1d1d;color:#fff}
+    @media (max-width: 700px){
+      #fcpt-panel{width:100vw;font-size:13px}
+      #fcpt-btn{right:12px;bottom:88px;padding:9px 13px;font-size:13px}
+      #fcpt-bidbar{left:8px;right:8px;bottom:140px;border-radius:14px;flex-wrap:wrap;font-size:12px;padding:6px 8px}
+      #fcpt-bidbar input{width:72px}
+      #fcpt-bidbar button{padding:6px 10px;font-size:12px}
+      #fcpt-bidbar .st{max-width:100%}
+      .c-stats{grid-template-columns:repeat(2,1fr)}
+      .fcpt-overview{grid-template-columns:1fr 1fr 1fr}
+      .fcpt-overview .v{font-size:13px}
+      .fcpt-2col{grid-template-columns:1fr}
+      .fcpt-inline{font-size:11px;gap:4px}
+
+    }
+  `);
+
+  const btn = document.createElement('button');
+  btn.id = 'fcpt-btn';
+  btn.innerHTML = '💰 Preise';
+  document.body.appendChild(btn);
+
+  const panel = document.createElement('div');
+  panel.id = 'fcpt-panel';
+  panel.innerHTML = `
+    <div class="fcpt-head">
+      <div class="fcpt-top">
+        <div class="fcpt-brand"><span class="fcpt-logo">💰</span>
+          <div><div class="t">FC27 Preis-Tool <span class="fcpt-ver" title="Installierte Version">v${TOOL_VERSION}</span></div><div class="fcpt-stand"></div></div></div>
+        <div class="fcpt-icons">
+          <button class="ic" data-act="refresh" title="Transferliste neu laden">↻</button>
+          <button class="ic" data-act="reload" title="Alle Preise sofort frisch von Futbin holen">⟳</button>
+          <button class="ic" data-act="close" title="Schließen">✕</button>
+        </div>
+      </div>
+      <div class="fcpt-tabs"><button data-tab="list" class="on">Transferliste</button><button data-tab="hist">Historie</button><button data-tab="trade">📈 Trading</button><button data-tab="settings" title="Einstellungen">⚙</button></div>
+      <div class="fcpt-sum"></div>
+      <div class="fcpt-toolbar">
+        <select data-set="sort">
+          <option value="status">Sortieren: Status</option>
+          <option value="profitDesc">Profit – beste zuerst</option>
+          <option value="profitAsc">Profit – schlechteste zuerst</option>
+          <option value="marketDesc">Marktpreis – höchster zuerst</option>
+          <option value="name">Name A–Z</option>
+        </select>
+      </div>
+    </div>
+    <div class="fcpt-settings">
+      <div class="fcpt-sgroup"><h4>Preise</h4>
+        <div class="fcpt-set"><span>Plattform</span><select data-set="platform"><option value="ps">Konsole</option><option value="pc">PC</option></select></div>
+        <div class="fcpt-set" style="display:none"><select data-set="mainSource">${Object.entries(SOURCES).map(([k, s2]) => `<option value="${k}">${s2.label}</option>`).join('')}</select>
+          ${Object.entries(SOURCES).map(([k, s2]) => `<input type="checkbox" data-src="${k}">`).join('')}</div>
+        <div class="fcpt-set"><span>Automatisch aktualisieren<small>Alle 15 Min. neue Preise, solange der Tab offen ist</small></span><input type="checkbox" class="fcpt-sw" data-opt="autoRefresh"></div>
+      </div>
+      <div class="fcpt-sgroup"><h4>Anzeige</h4>
+        <div class="fcpt-set"><span>Preise in EAs Liste anzeigen</span><input type="checkbox" class="fcpt-sw" data-opt="inline"></div>
+        <div class="fcpt-set"><span>Ampel-Farben<small>Grün = Gewinn, Rot = Verlust, Orange = Preis falsch</small></span><input type="checkbox" class="fcpt-sw" data-opt="ampel"></div>
+        <div class="fcpt-set"><span>Schnäppchen ab<small>Mindest-Profit nach Steuer auf dem Transfermarkt</small></span><input type="number" min="0" step="100" data-num="minBargain"></div>
+      </div>
+      <div class="fcpt-sgroup"><h4>Tastenkürzel zum Snipen</h4>
+        <div class="fcpt-set"><span>Tastenkürzel aktiv</span><input type="checkbox" class="fcpt-sw" data-opt="hotkeys"></div>
+        <div class="fcpt-set"><span>Min.-Sofortkauf bei jeder Suche ändern<small>Sorgt für frische Suchergebnisse</small></span><input type="checkbox" class="fcpt-sw" data-opt="bumpMinBin"></div>
+        <div class="fcpt-set"><span>Nach Bestätigen zurück zur Suche</span><input type="checkbox" class="fcpt-sw" data-opt="autoBack"></div>
+        <div class="fcpt-set"><span>Preis-Tasten ändern</span>
+          <select data-set="stepField">
+            <option value="2">Min.-Sofortkauf</option><option value="3">Max.-Sofortkauf</option>
+            <option value="0">Min.-Gebot</option><option value="1">Max.-Gebot</option>
+          </select></div>
+        <div class="fcpt-keys">
+          <label>Suchen<input data-key="search" maxlength="12"></label>
+          <label>Sofortkauf<input data-key="buy" maxlength="12"></label>
+          <label>Bestätigen<input data-key="confirm" maxlength="12"></label>
+          <label>Zurück<input data-key="back" maxlength="12"></label>
+          <label>Preis hoch<input data-key="up" maxlength="12"></label>
+          <label>Preis runter<input data-key="down" maxlength="12"></label>
+        </div>
+        <small style="color:#7d8aa0;font-size:11px">In ein Feld klicken und die neue Taste drücken.</small>
+      </div>
+    </div>
+    <div class="fcpt-trade"></div>
+    <div class="fcpt-list"><div class="fcpt-msg">Klicke auf ↻, um deine Transferliste zu laden.</div></div>`;
+  document.body.appendChild(panel);
+
+  const listEl = panel.querySelector('.fcpt-list');
+  const sumEl = panel.querySelector('.fcpt-sum');
+  panel.querySelector('[data-set="platform"]').value = settings.platform;
+  panel.querySelector('[data-set="mainSource"]').value = settings.mainSource;
+  panel.querySelectorAll('[data-src]').forEach((cb) => { cb.checked = !!settings.sources[cb.dataset.src]; });
+  panel.querySelector('[data-opt="inline"]').checked = !!settings.inline;
+  panel.querySelector('[data-num="minBargain"]').value = settings.minBargain;
+  panel.querySelector('[data-opt="autoRefresh"]').checked = !!settings.autoRefresh;
+  panel.querySelector('[data-opt="ampel"]').checked = !!settings.ampel;
+  panel.querySelector('[data-opt="hotkeys"]').checked = !!settings.hotkeys;
+  panel.querySelector('[data-opt="bumpMinBin"]').checked = !!settings.bumpMinBin;
+  panel.querySelector('[data-opt="autoBack"]').checked = !!settings.autoBack;
+  panel.querySelector('[data-set="stepField"]').value = String(settings.stepField);
+  const keyLabel = (k) => (k === ' ' ? 'Leertaste' : k.length === 1 ? k.toUpperCase() : k);
+  panel.querySelectorAll('[data-key]').forEach((inp) => {
+    inp.value = keyLabel(settings.keys[inp.dataset.key]);
+    inp.addEventListener('keydown', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      if (['Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes(ev.key)) return;
+      settings.keys[inp.dataset.key] = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+      inp.value = keyLabel(ev.key);
+      saveSettings(); inp.blur();
+    });
+  });
+  panel.querySelector('[data-set="sort"]').value = settings.sort;
+  const standEl = panel.querySelector('.fcpt-stand');
+  const updateStand = () => { standEl.textContent = `Preise: ${agoText(lastPriceFetch)}`; };
+  updateStand();
+  let view = 'list';
+
+  let items = [];
+  const ownIds = new Set();   // Item-IDs deiner eigenen Transferliste
+  let priceStore = {};
+  let runId = 0;
+
+  const setMsg = (m) => { listEl.innerHTML = `<div class="fcpt-msg">${esc(m)}</div>`; sumEl.textContent = ''; };
+
+  function marketPrice(rid) {
+    const ps = priceStore[rid] || {};
+    if (settings.sources[settings.mainSource] && ps[settings.mainSource]?.v) return ps[settings.mainSource].v;
+    for (const k of Object.keys(SOURCES)) if (settings.sources[k] && ps[k]?.v) return ps[k].v;
+    return null;
+  }
+
+  function chipsHtml(rid) {
+    const ps = priceStore[rid] || {};
+    return Object.entries(SOURCES)
+      .filter(([k]) => settings.sources[k])
+      .map(([k, s]) => {
+        const e = ps[k] || {};
+        const val = e.loading || (!('v' in e) && !e.err) ? '…' : e.err ? '✕' : fmt(e.v);
+        const url = k === 'futbin' ? futbinUrl(rid) : null;
+        return url
+          ? `<a class="fcpt-chip" href="${url}" target="_blank" rel="noopener" title="Futbin-Seite öffnen">${s.label}: <b>${val}</b> ↗</a>`
+          : `<span class="fcpt-chip" title="${esc(e.err || '')}">${s.label}: <b>${val}</b></span>`;
+      }).join('');
+  }
+
+  const profitCls = (n) => (n == null ? '' : n >= 0 ? 'fcpt-pos-v' : 'fcpt-neg-v');
+
+  function profitValue(p, market) {
+    if (p.sold) return p.profit;
+    if (p.potentialProfit != null) return p.potentialProfit;
+    if (market && p.bought) return afterTax(market) - p.bought;
+    return null;
+  }
+
+  function overviewHtml() {
+    const open = items.filter((p) => p.isPlayer && !p.sold);
+    let value = 0, profit = 0, withPrice = 0;
+    for (const p of open) {
+      const m = marketPrice(p.resourceId);
+      if (!m) continue;
+      withPrice++; value += m;
+      if (p.bought) profit += afterTax(m) - p.bought;
+    }
+    const sold = items.filter((p) => p.sold);
+    const soldProfit = sold.reduce((s2, p) => s2 + (p.profit || 0), 0);
+    return `<div class="fcpt-overview">
+      <div><div class="l">Wert der Liste (Markt)</div><div class="v">${fmt(value)}</div></div>
+      <div><div class="l">Profit bei Verkauf zum Markt</div><div class="v ${profitCls(profit)}">${signed(profit)}</div></div>
+      <div><div class="l">Verkauft (${sold.length})</div><div class="v ${profitCls(soldProfit)}">${signed(soldProfit)}</div></div>
+    </div><div class="fcpt-stand" style="margin-top:4px">${items.length} Karten · Preise für ${withPrice} von ${open.length} offenen Karten geladen</div>`;
+  }
+  let ovTimer = null;
+  const updateOverview = () => {
+    if (view !== 'list' || !items.length) return;
+    clearTimeout(ovTimer);
+    ovTimer = setTimeout(() => { sumEl.innerHTML = overviewHtml(); updateStand(); }, 150);
+  };
+
+  function profitCell(p, market) {
+    const v = profitValue(p, market);
+    return v == null ? '<span class="fcpt-muted">–</span>' : `<span class="${profitCls(v)}">${signed(v)}</span>`;
+  }
+  const profitLabel = (p) => (p.sold ? 'Netto-Profit' : p.potentialProfit != null ? 'bei Sofortkauf' : 'bei Marktpreis');
+
+  function cardHtml(p) {
+    const cls = p.sold ? 'sold' : p.expired ? 'expired' : p.active ? 'active' : '';
+    const status = p.sold ? '✓ Verkauft' : p.expired ? 'Abgelaufen' : p.active ? `⏱ ${fmtTime(p.expires)}` : 'Nicht gelistet';
+    const midLabel = p.sold ? 'Verkauft' : 'Gebot';
+    const midVal = p.sold ? fmt(p.soldFor) : fmt(p.currentBid);
+    const market = p.isPlayer ? marketPrice(p.resourceId) : null;
+    const boughtChip = p.sold
+      ? `<span class="fcpt-chip">Gekauft: <b>${p.bought ? fmt(p.bought) : 'gezogen'}</b></span>`
+      : `<button class="fcpt-chip fcpt-edit" data-act="editBought" data-iid="${p.itemId ?? ''}" title="Kaufpreis eintragen/ändern">Gekauft: <b>${p.bought ? fmt(p.bought) : 'gezogen'}</b>${p.boughtManual ? ' (manuell)' : p.boughtAuto ? ' (erfasst)' : ''} ✎</button>`;
+    const beChip = !p.sold && p.bought ? `<span class="fcpt-chip be" title="Mindestpreis, damit du nach 5 % Steuer keinen Verlust machst">Ohne Verlust ab <b>${fmt(breakEven(p.bought))}</b></span>` : '';
+    return `
+      <div class="fcpt-card ${cls}" data-rid="${p.resourceId}" data-iid="${p.itemId ?? ''}">
+        <div class="c-top">
+          <div class="c-badge"><b>${esc(p.rating ?? '')}</b><small>${esc(p.position)}</small></div>
+          <div class="c-main"><div class="c-name">${esc(p.name)}</div><span class="c-status ${cls}">${esc(status)}</span></div>
+          <div class="c-profit"><div class="fcpt-profit">${profitCell(p, market)}</div><div class="c-plabel">${profitLabel(p)}</div></div>
+        </div>
+        <div class="c-stats">
+          <div><span>Start</span><b>${fmt(p.startPrice)}</b></div>
+          <div><span>Sofortkauf</span><b>${fmt(p.buyNow)}</b></div>
+          <div><span>${midLabel}</span><b>${midVal}</b></div>
+          <div><span>Markt</span><b class="fcpt-market">${p.isPlayer ? fmt(market) : '–'}</b></div>
+        </div>
+        <div class="fcpt-chips">${boughtChip}${beChip}<span class="fcpt-prices" style="display:contents">${p.isPlayer ? chipsHtml(p.resourceId) : ''}</span></div>
+        <div class="fcpt-warn">${p.isPlayer ? listingWarn(p, market) : ''}</div>
+      </div>`;
+  }
+
+  function render() {
+    if (view === 'settings' || view === 'trade') return;
+    if (view === 'hist') return renderHistory();
+    if (!items.length) return setMsg('Deine Transferliste ist leer.');
+    const order = (p) => (p.sold ? 0 : p.expired ? 1 : p.active ? 2 : 3);
+    const pv = (p) => profitValue(p, p.isPlayer ? marketPrice(p.resourceId) : null);
+    const cmp = {
+      status: (a, b) => order(a) - order(b),
+      profitDesc: (a, b) => (pv(b) ?? -1e12) - (pv(a) ?? -1e12),
+      profitAsc: (a, b) => (pv(a) ?? 1e12) - (pv(b) ?? 1e12),
+      marketDesc: (a, b) => (marketPrice(b.resourceId) || 0) - (marketPrice(a.resourceId) || 0),
+      name: (a, b) => String(a.name).localeCompare(String(b.name), 'de'),
+    }[settings.sort] || ((a, b) => order(a) - order(b));
+    const sorted = [...items].sort(cmp);
+    listEl.innerHTML = sorted.map(cardHtml).join('');
+    sumEl.innerHTML = overviewHtml();
+    updateStand();
+  }
+
+  function updatePrices(rid) {
+    panel.querySelectorAll(`.fcpt-card[data-rid="${rid}"]`).forEach((card) => {
+      card.querySelector('.fcpt-prices').innerHTML = chipsHtml(rid);
+      card.querySelector('.fcpt-market').textContent = fmt(marketPrice(rid));
+      const p = items.find((x) => card.dataset.iid !== '' && String(x.itemId) === card.dataset.iid) ||
+        items.find((x) => String(x.resourceId) === card.dataset.rid);
+      if (p) {
+        card.querySelector('.fcpt-warn').innerHTML = listingWarn(p, marketPrice(rid));
+        const pc = card.querySelector('.fcpt-profit');
+        if (pc) pc.innerHTML = profitCell(p, marketPrice(rid));
+      }
+    });
+    updateOverview();
+  }
+
+  function sumSince(ms) {
+    const from = ms == null ? 0 : ms;
+    const rows = history.filter((h) => h.t >= from);
+    return { n: rows.length, profit: rows.reduce((s, h) => s + (h.profit || 0), 0) };
+  }
+
+  function renderHistory() {
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const tiles = [
+      ['Heute', sumSince(d0.getTime())],
+      ['Letzte 7 Tage', sumSince(Date.now() - 7 * 864e5)],
+      ['Letzte 30 Tage', sumSince(Date.now() - 30 * 864e5)],
+      ['Gesamt', sumSince(null)],
+    ].map(([l, x]) => `<div class="fcpt-tile"><div class="l">${l}</div><div class="v ${profitCls(x.profit)}">${signed(x.profit)}</div><div class="s">${x.n} Verkäufe</div></div>`).join('');
+    const rows = [...history].sort((a, b) => b.t - a.t).slice(0, 200).map((h) => `
+      <tr><td>${new Date(h.t).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+      <td>${esc(h.rating ?? '')} ${esc(h.name)}</td><td class="n">${h.bought ? fmt(h.bought) : 'gezogen'}</td>
+      <td class="n">${fmt(h.sold)}</td><td class="n ${profitCls(h.profit)}">${signed(h.profit)}</td></tr>`).join('');
+    listEl.innerHTML = `
+      <div class="fcpt-tiles">${tiles}</div>
+      ${history.length ? statsHtml() : ''}
+      <div class="fcpt-actions"><button data-act="csv">⬇ Als CSV exportieren</button><button data-act="clear">Historie löschen</button></div>
+      ${history.length ? `<table class="fcpt-hist"><thead><tr><th>Erkannt</th><th>Spieler</th><th style="text-align:right">Gekauft</th><th style="text-align:right">Verkauft</th><th style="text-align:right">Profit</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="fcpt-msg">Noch keine Verkäufe gespeichert. Öffne die Transferliste, dann werden verkaufte Karten automatisch erfasst.</div>'}`;
+    sumEl.textContent = `${history.length} gespeicherte Verkäufe`;
+  }
+  // Profit-Statistik: Tagesprofit der letzten 14 Tage + beste/schlechteste Trades + lohnendste Spieler
+  function statsHtml() {
+    const days = 14;
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const buckets = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const from = d0.getTime() - i * 864e5;
+      const rows = history.filter((h) => h.t >= from && h.t < from + 864e5);
+      buckets.push({ from, n: rows.length, v: rows.reduce((a, h) => a + (h.profit || 0), 0) });
+    }
+    const W = 380, H = 130, padL = 4, padR = 4, padT = 10, padB = 18;
+    const max = Math.max(1, ...buckets.map((b) => b.v)), min = Math.min(0, ...buckets.map((b) => b.v));
+    const y = (v) => padT + (max - v) / (max - min) * (H - padT - padB);
+    const bw = (W - padL - padR) / days;
+    const bars = buckets.map((b, i) => {
+      const x = padL + i * bw + bw * 0.2, w = bw * 0.6;
+      const y0 = y(0), y1 = y(b.v);
+      const top = Math.min(y0, y1), h = Math.max(b.v ? 2 : 0, Math.abs(y1 - y0));
+      const col = b.v >= 0 ? '#22c55e' : '#ef4444';
+      const lbl = new Date(b.from).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      const tip = `${lbl}: ${signed(b.v)} (${b.n} Verkäufe)`;
+      const showX = i % 2 === (days - 1) % 2;
+      return `<g><title>${tip}</title>
+        <rect x="${padL + i * bw}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent"></rect>
+        ${h ? `<rect x="${x}" y="${top}" width="${w}" height="${h}" rx="3" fill="${col}"></rect>` : ''}
+        ${showX ? `<text x="${x + w / 2}" y="${H - 5}" text-anchor="middle" font-size="9" fill="#8b98aa">${lbl}</text>` : ''}</g>`;
+    }).join('');
+    const zero = `<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" stroke="#33425a" stroke-width="1"></line>`;
+    const best = [...history].sort((a, b) => (b.profit || 0) - (a.profit || 0)).slice(0, 5);
+    const worst = [...history].sort((a, b) => (a.profit || 0) - (b.profit || 0)).filter((h) => (h.profit || 0) < 0).slice(0, 5);
+    const byPlayer = {};
+    for (const h of history) {
+      const k = `${h.rating ?? ''} ${h.name}`;
+      const e = byPlayer[k] || (byPlayer[k] = { n: 0, v: 0 });
+      e.n++; e.v += h.profit || 0;
+    }
+    const players = Object.entries(byPlayer).sort((a, b) => b[1].v - a[1].v).slice(0, 5);
+    const row = (l, v, extra = '') => `<div class="r"><span>${esc(l)}${extra}</span><b class="${profitCls(v)}">${signed(v)}</b></div>`;
+    const total14 = buckets.reduce((a, b) => a + b.v, 0);
+    return `
+      <div class="fcpt-sec">Statistik</div>
+      <div class="fcpt-chart"><div class="cap"><span>Profit pro Tag – letzte 14 Tage</span><span class="${profitCls(total14)}">${signed(total14)}</span></div>
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Profit pro Tag der letzten 14 Tage">${zero}${bars}</svg></div>
+      <div class="fcpt-2col">
+        <div class="fcpt-mini"><div class="h">Beste Trades</div>${best.map((h) => row(`${h.rating ?? ''} ${h.name}`, h.profit || 0)).join('')}</div>
+        <div class="fcpt-mini"><div class="h">Lohnendste Spieler</div>${players.map(([k, e]) => row(k, e.v, ` <span class="fcpt-muted">(${e.n}×)</span>`)).join('')}</div>
+      </div>
+      ${worst.length ? `<div class="fcpt-mini"><div class="h">Verlust-Trades</div>${worst.map((h) => row(`${h.rating ?? ''} ${h.name}`, h.profit || 0)).join('')}</div>` : ''}
+      <div class="fcpt-sec">Alle Verkäufe</div>`;
+  }
+
+  onHistoryChange = () => { if (view === 'hist' && panel.classList.contains('open')) renderHistory(); };
+
+  function exportCsv() {
+    const head = 'Erkannt am;Spieler;Rating;Gekauft;Verkauft;Netto-Profit';
+    const lines = history.map((h) => [new Date(h.t).toLocaleString('de-DE'), `"${String(h.name).replace(/"/g, '""')}"`, h.rating ?? '', h.bought || 0, h.sold, h.profit ?? ''].join(';'));
+    const blob = new Blob(['\ufeff' + [head, ...lines].join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `fc27-verkaeufe-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  async function fetchSource(key, players, myRun) {
+    const src = SOURCES[key];
+    await Promise.all(players.map(async (p) => {
+      const rid = p.resourceId;
+      priceStore[rid] = priceStore[rid] || {};
+      priceStore[rid][key] = { loading: true };
+      updatePrices(rid);
+      try {
+        priceStore[rid][key] = { v: await getPrice(key, p) };
+      } catch (e) {
+        priceStore[rid][key] = { err: `${src.label}: ${e.message}` };
+        log(key, p.name, e);
+      }
+      if (myRun === runId) updatePrices(rid);
+    }));
+  }
+
+  async function refresh() {
+    const myRun = ++runId;
+    setMsg('Lade Transferliste …');
+    try {
+      items = (await loadTransferList()).map((raw) => { const x = mapItem(raw); if (x) x.__raw = raw; return x; }).filter(Boolean);
+    } catch (e) {
+      setMsg(e.message);
+      return;
+    }
+    if (myRun !== runId) return;
+    items.forEach(recordSale);
+    items.forEach((x) => { if (x.itemId != null) ownIds.add(x.itemId); });
+    priceStore = {};
+    render();
+    if (view === 'hist') return;
+    const seen = new Set();
+    const players = items.filter((p) => p.isPlayer && !seen.has(p.resourceId) && seen.add(p.resourceId));
+    await Promise.all(enabledSources().map((k) => fetchSource(k, players, myRun)));
+    lastRefresh = Date.now();
+    if (myRun === runId && view === 'list' && settings.sort !== 'status') render();
+  }
+  let lastRefresh = 0;
+
+  // Ereignisse
+  btn.addEventListener('click', () => {
+    const open = panel.classList.toggle('open');
+    if (open && !items.length) refresh();
+  });
+  panel.addEventListener('click', (e) => {
+    const actEl = e.target.closest && e.target.closest('[data-act]');
+    const act = actEl && actEl.dataset.act;
+    if (act === 'close') panel.classList.remove('open');
+    if (act === 'refresh') refresh();
+    if (act === 'reload') { cacheClear(); refresh(); redecorateAll(); }
+    if (act === 'editBought') {
+      const b = e.target.closest('[data-act="editBought"]');
+      const it = items.find((x) => String(x.itemId) === b.dataset.iid);
+      if (!it) return;
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '0'; inp.step = '50'; inp.className = 'fcpt-boughtinput';
+      inp.placeholder = 'Kaufpreis'; inp.value = it.bought || '';
+      b.replaceWith(inp); inp.focus(); inp.select();
+      let done = false;
+      const save = () => {
+        if (done) return; done = true;
+        const v = Math.max(0, parseInt(inp.value, 10) || 0);
+        setManualBought(it.itemId, v || null);
+        items = items.map((x) => (x.itemId === it.itemId && x.__raw ? mapItem(x.__raw) : x));
+        render(); redecorateAll();
+      };
+      inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save(); if (ev.key === 'Escape') { done = true; render(); } });
+      inp.addEventListener('blur', save);
+    }
+    if (act === 'csv') exportCsv();
+    if (act === 'clear' && confirm('Gesamte Profit-Historie löschen?')) { history = []; GM_setValue(HIST_KEY, history); renderHistory(); }
+    const tab = e.target.dataset && e.target.dataset.tab;
+    if (tab) {
+      view = tab;
+      panel.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+      panel.classList.toggle('v-settings', tab === 'settings');
+      panel.classList.toggle('v-hist', tab === 'hist');
+      panel.classList.toggle('v-trade', tab === 'trade');
+      if (tab === 'settings') return;
+      if (tab === 'trade') { const tr = panel.querySelector('.fcpt-trade'); if (!tr.__mounted) { TRADE.mount(tr); tr.__mounted = true; } return; }
+      if (tab === 'hist') renderHistory(); else if (items.length) render(); else refresh();
+    }
+  });
+  panel.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset.set) settings[t.dataset.set] = t.value;
+    if (t.dataset.src) settings.sources[t.dataset.src] = t.checked;
+    if (t.dataset.opt === 'inline') { settings.inline = t.checked; saveSettings(); return; }
+    if (t.dataset.opt === 'autoRefresh') { settings.autoRefresh = t.checked; saveSettings(); return; }
+    if (t.dataset.opt === 'hotkeys') { settings.hotkeys = t.checked; saveSettings(); return; }
+    if (t.dataset.opt === 'bumpMinBin') { settings.bumpMinBin = t.checked; saveSettings(); return; }
+    if (t.dataset.opt === 'autoBack') { settings.autoBack = t.checked; saveSettings(); return; }
+    if (t.dataset.set === 'stepField') { settings.stepField = parseInt(t.value, 10); saveSettings(); return; }
+    if (t.dataset.key) return;
+    if (t.dataset.opt === 'ampel') { settings.ampel = t.checked; saveSettings(); redecorateAll(); return; }
+    if (t.dataset.set === 'sort') { settings.sort = t.value; saveSettings(); if (items.length) render(); return; }
+    if (t.dataset.num) { settings[t.dataset.num] = Math.max(0, parseInt(t.value, 10) || 0); saveSettings(); return; }
+    saveSettings();
+    if (t.dataset.set === 'mainSource') { if (items.length) render(); Object.keys(priceStore).forEach(updatePrices); }
+    else refresh();
+  });
+
+  // ------------------------------------------------------------------
+  // Anzeige direkt in EAs Transferliste (wie Paletools / FC Enhancer)
+  // ------------------------------------------------------------------
+  const decorated = new Map();   // Zeile -> Item, für Auto-Aktualisieren und Ampel
+  let lastSelected = null;       // zuletzt angeklickte Karte (für "Preis übernehmen")
+  function redecorateAll() {
+    for (const [root, raw] of decorated) {
+      if (!root.isConnected) { decorated.delete(root); continue; }
+      decorateRow(root, raw);
+    }
+  }
+
+  function decorateRow(root, raw) {
+    if (!root || !raw) return;
+    const p = mapItem(raw);
+    if (!p) return;
+    decorated.set(root, raw);
+    if (!root.__fcptClick) {
+      root.__fcptClick = true;
+      root.addEventListener('click', () => { lastSelected = decorated.get(root) || raw; updateListButton(); }, true);
+    }
+    recordSale(p);
+    // Fremde Angebote (Transfermarkt-Suche, Transferziele) vs. eigene Karten
+    const inSearch = !!(root.closest && root.closest('.SearchResults, .ut-market-search-results-view, .ut-search-results-view'));
+    // Nicht gelistete eigene Karten haben keine Auktion (tradeId 0) – die zählen nie als Markt-Angebot
+    const hasAuction = !!toNum(p.tradeId);
+    const isMarket = !ownIds.has(p.itemId) && hasAuction && (p.tradeOwner === false || (p.tradeOwner == null && inSearch));
+    if (isMarket && p.active && p.tradeId != null) marketRows.set(p.tradeId, { raw, root });
+    root.classList.remove('fcpt-bargain', 'fcpt-good', 'fcpt-bad', 'fcpt-meh', 'fcpt-watchhit');
+    root.querySelectorAll('.fcpt-inline').forEach((e) => e.remove());
+    const box = document.createElement('div');
+    box.className = 'fcpt-inline';
+    root.appendChild(box);
+    const prices = {};
+
+    const draw = () => {
+      const keys = enabledSources();
+      const main = (prices[settings.mainSource] && prices[settings.mainSource].v) ||
+        keys.map((k) => prices[k] && prices[k].v).find(Boolean) || null;
+      let profitHtml = '';
+      if (isMarket) {
+        root.classList.remove('fcpt-bargain');
+        if (main && p.buyNow) {
+          const v = afterTax(main) - p.buyNow;
+          if (v >= settings.minBargain) {
+            root.classList.add('fcpt-bargain');
+            profitHtml = `<span class="fcpt-chip deal">💰 Schnäppchen: ${signed(v)} nach Steuer</span>`;
+          } else {
+            profitHtml = `<span class="fcpt-chip ${v >= 0 ? 'profit' : 'loss'}">Bei Weiterverkauf: <b>${signed(v)}</b></span>`;
+          }
+        }
+      } else if (p.sold && p.profit != null) {
+        profitHtml = `<span class="fcpt-chip ${p.profit >= 0 ? 'profit' : 'loss'}">Profit: <b>${signed(p.profit)}</b></span>`;
+      } else if (p.potentialProfit != null) {
+        profitHtml = `<span class="fcpt-chip ${p.potentialProfit >= 0 ? 'profit' : 'loss'}">Bei Sofortkauf: <b>${signed(p.potentialProfit)}</b></span>`;
+      } else if (main && p.bought) {
+        const v = afterTax(main) - p.bought;
+        profitHtml = `<span class="fcpt-chip ${v >= 0 ? 'profit' : 'loss'}">Bei Marktpreis: <b>${signed(v)}</b></span>`;
+      }
+      const chips = p.isPlayer ? keys.map((k) => {
+        const e = prices[k];
+        const val = !e ? '…' : e.err ? '✕' : fmt(e.v);
+        const url = k === 'futbin' ? futbinUrl(p.resourceId) : null;
+        return url
+          ? `<a class="fcpt-chip" href="${url}" target="_blank" rel="noopener" title="Futbin-Seite öffnen">${SOURCES[k].label}: <b>${val}</b> ↗</a>`
+          : `<span class="fcpt-chip" title="${esc((e && e.err) || '')}">${SOURCES[k].label}: <b>${val}</b></span>`;
+      }).join('') : '';
+      // Ampel: grün = Gewinn, rot = Verlust, orange = Preis falsch gesetzt
+      root.classList.remove('fcpt-good', 'fcpt-bad', 'fcpt-meh');
+      if (settings.ampel && !isMarket && p.isPlayer) {
+        const warn = listingWarn(p, main);
+        const v = profitValue(p, main);
+        if (warn) root.classList.add('fcpt-meh');
+        else if (v != null && v > 0) root.classList.add('fcpt-good');
+        else if (v != null && v < 0) root.classList.add('fcpt-bad');
+      }
+      box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main">Markt: <b>${fmt(main)}</b></span>` : '') + chips + profitHtml +
+        (!isMarket ? listingWarn(p, main) : '') + (isMarket && p.active ? bidChip(p) : '') +
+        (!isMarket && p.isPlayer && p.bought && !p.sold ? `<span class="fcpt-chip be">Ohne Verlust ab <b>${fmt(breakEven(p.bought))}</b></span>` : '') +
+        (isMarket && p.isPlayer ? WATCH.marketChip(p, root) : '');
+    };
+
+    draw();
+    box.addEventListener('click', (e) => { if (e.target.closest('a')) e.stopPropagation(); });
+    if (!p.isPlayer) return;
+    enabledSources().forEach((k) => {
+      getPrice(k, p)
+        .then((v) => { prices[k] = { v }; })
+        .catch((e) => { prices[k] = { err: e.message }; log(k, p.name, e); })
+        .finally(() => { if (box.isConnected) draw(); });
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Gebots-Helfer: auf alle aktuell angezeigten Suchergebnisse bis Max-Gebot bieten
+  // Wird nur durch deinen Klick gestartet – keine automatische Suche.
+  // ------------------------------------------------------------------
+  const marketRows = new Map();   // tradeId -> { raw, root }
+  const bidDone = {};             // tradeId -> { ok, amount, err }
+  let bidRunning = false, bidStop = false;
+
+  const bidStep = (v) => (v < 1000 ? 50 : v < 10000 ? 100 : v < 50000 ? 250 : v < 100000 ? 500 : 1000);
+  const nextBid = (p) => (p.currentBid ? p.currentBid + bidStep(p.currentBid) : p.startPrice || null);
+
+  function bidChip(p) {
+    const d = bidDone[p.tradeId];
+    if (d && d.ok && p.bidState !== 'outbid') return `<span class="fcpt-chip bidok">✓ Geboten: ${fmt(d.amount)}</span>`;
+    if (d && d.err) return `<span class="fcpt-chip biderr" title="${esc(d.err)}">✕ Gebot fehlgeschlagen</span>`;
+    if (p.bidState === 'highest') return `<span class="fcpt-chip bidok">✓ Du bist Höchstbietender</span>`;
+    const nb = nextBid(p);
+    if (!nb) return '';
+    return `<span class="fcpt-chip nb ${nb > settings.maxBid ? 'over' : ''}">Nächstes Gebot: <b>${fmt(nb)}</b>${nb > settings.maxBid ? ' (über Max)' : ''}</span>`;
+  }
+
+  function eligibleBids() {
+    const out = [];
+    for (const [tid, r] of marketRows) {
+      if (!r.root.isConnected) { marketRows.delete(tid); continue; }
+      const p = mapItem(r.raw);
+      if (!p || !p.active) continue;
+      if (p.expires != null && p.expires >= 0 && p.expires < CONFIG.minSecondsLeft) continue;
+      if (p.bidState === 'highest') continue;
+      if (bidDone[tid] && bidDone[tid].ok && p.bidState !== 'outbid') continue;
+      const nb = nextBid(p);
+      if (nb && nb <= settings.maxBid) out.push({ tid, raw: r.raw, root: r.root, p, nb });
+    }
+    return out.sort((a, b) => (a.p.expires ?? 1e9) - (b.p.expires ?? 1e9));
+  }
+
+  function userCoins() {
+    try {
+      const u = W.services.User.getUser();
+      return toNum(u.coins && (u.coins.amount ?? u.coins));
+    } catch { return null; }
+  }
+
+  function placeBid(raw, amount) {
+    return new Promise((resolve, reject) => {
+      const svc = W.services && W.services.Item;
+      if (!svc || typeof svc.bid !== 'function') return reject(new Error('Bieten-Funktion der Web App nicht gefunden'));
+      try {
+        svc.bid(raw, amount).observe(W, (obs, res) => {
+          if (obs && typeof obs.unobserve === 'function') obs.unobserve(W);
+          if (res && res.success) resolve();
+          else reject(new Error('EA-Fehler ' + ((res && (res.status || (res.error && res.error.code))) || 'unbekannt')));
+        });
+      } catch (e) { reject(e); }
+    });
+  }
+
+  const bidbar = document.createElement('div');
+  bidbar.id = 'fcpt-bidbar';
+  bidbar.innerHTML = `<span>Max-Gebot</span><input type="number" min="0" step="50" data-bid="max"><button data-bid="run">Alle bieten</button><span class="st"></span>`;
+  document.body.appendChild(bidbar);
+  const bidInput = bidbar.querySelector('[data-bid="max"]');
+  const bidBtn = bidbar.querySelector('[data-bid="run"]');
+  const bidStatus = bidbar.querySelector('.st');
+  bidInput.value = settings.maxBid;
+  const setBidStatus = (m) => { bidStatus.textContent = m; bidStatus.title = m; };
+
+  function redrawRow(r) {
+    // Chips der Zeile neu zeichnen, ohne neue Preisabrufe (Preise kommen aus dem Cache)
+    if (r.root.isConnected) decorateRow(r.root, r.raw);
+  }
+
+  function updateBidBar() {
+    for (const [tid, r] of marketRows) if (!r.root.isConnected) marketRows.delete(tid);
+    bidbar.classList.toggle('show', marketRows.size > 0 || bidRunning);
+    if (!bidRunning) bidBtn.textContent = `Alle bieten (${Math.min(eligibleBids().length, CONFIG.maxBidsPerRun)})`;
+  }
+  setInterval(updateBidBar, 1000);
+
+  bidInput.addEventListener('change', () => {
+    settings.maxBid = Math.max(0, parseInt(bidInput.value, 10) || 0);
+    saveSettings();
+    for (const r of marketRows.values()) redrawRow(r);
+    updateBidBar();
+  });
+
+  bidBtn.addEventListener('click', async () => {
+    if (bidRunning) { bidStop = true; setBidStatus('Wird nach dem laufenden Gebot gestoppt …'); return; }
+    const list = eligibleBids().slice(0, CONFIG.maxBidsPerRun);
+    if (!list.length) { setBidStatus(`Keine Karte mit nächstem Gebot bis ${fmt(settings.maxBid)}`); return; }
+    const total = list.reduce((s, x) => s + x.nb, 0);
+    const coins = userCoins();
+    const msg = `${list.length} Gebote bis max. ${fmt(settings.maxBid)} Münzen abgeben?\n\n` +
+      `Dafür werden bis zu ${fmt(total)} Münzen gebunden, bis du überboten wirst.` +
+      (coins != null ? `\nDein Guthaben: ${fmt(coins)}` : '');
+    if (!confirm(msg)) return;
+
+    bidRunning = true; bidStop = false;
+    bidBtn.textContent = '■ Stopp'; bidBtn.classList.add('stop');
+    let ok = 0, failsInRow = 0, spent = 0, i = 0;
+    for (const x of list) {
+      i++;
+      if (bidStop) break;
+      if (!x.root.isConnected) continue;
+      const c = userCoins();
+      if (c != null && c < x.nb) { setBidStatus('Guthaben reicht nicht mehr – gestoppt'); break; }
+      setBidStatus(`${i}/${list.length}: biete ${fmt(x.nb)} auf ${x.p.name} …`);
+      try {
+        await placeBid(x.raw, x.nb);
+        bidDone[x.tid] = { ok: true, amount: x.nb };
+        ok++; spent += x.nb; failsInRow = 0;
+      } catch (e) {
+        bidDone[x.tid] = { err: e.message };
+        failsInRow++;
+        log('Gebot fehlgeschlagen', x.p.name, e);
+        if (failsInRow >= 3) { redrawRow(x); setBidStatus(`3 Fehler hintereinander – gestoppt (${e.message})`); break; }
+      }
+      redrawRow(x);
+      await sleep(CONFIG.bidDelayMin + Math.random() * (CONFIG.bidDelayMax - CONFIG.bidDelayMin));
+    }
+    bidRunning = false;
+    bidBtn.classList.remove('stop');
+    if (!/gestoppt/.test(bidStatus.textContent) || bidStop) {
+      setBidStatus(`${ok} Gebote abgegeben · ${fmt(spent)} Münzen gebunden${bidStop ? ' · abgebrochen' : ''}`);
+    }
+    updateBidBar();
+  });
+
+  // ------------------------------------------------------------------
+  // Preis mit 1 Klick übernehmen (Schnellverkauf-/Anbieten-Bereich)
+  // Füllt nur die Felder aus – anbieten musst du selbst.
+  // ------------------------------------------------------------------
+  const PRICE_STEPS = [[1000, 50], [10000, 100], [50000, 250], [100000, 500], [Infinity, 1000]];
+  const stepFor = (v) => PRICE_STEPS.find(([lim]) => v < lim)[1];
+  const roundPrice = (v) => { const st = stepFor(v); return Math.max(200, Math.round(v / st) * st); };
+  const lowerStep = (v) => Math.max(150, v - stepFor(v - 1));
+
+  function findListPanel() {
+    const direct = document.querySelector('.ut-quick-list-panel-view, .QuickListPanel');
+    if (direct) return direct;
+    const btn = [...document.querySelectorAll('button')].find((b) => /auf transfermarkt anbieten|list on transfer market/i.test(b.textContent));
+    return btn ? btn.closest('.ut-quick-list-panel-view, .panelActions, .DetailPanel, section, div') : null;
+  }
+
+  function setInputValue(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    input.focus();
+    setter.call(input, String(value));
+    ['input', 'keyup', 'change', 'blur'].forEach((ev) => input.dispatchEvent(new Event(ev, { bubbles: true })));
+  }
+
+  let listBtn = null;
+  const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };  // verhindert Endlosschleife mit dem MutationObserver
+  function updateListButton() {
+    const host = findListPanel();
+    if (!host) { if (listBtn) { listBtn.remove(); listBtn = null; } return; }
+    if (!listBtn || !host.contains(listBtn)) {
+      if (listBtn) listBtn.remove();
+      listBtn = document.createElement('div');
+      listBtn.innerHTML = `<button id="fcpt-listbtn">💰 Futbin-Preis übernehmen</button><div class="fcpt-listhint"></div>`;
+      host.insertBefore(listBtn, host.firstChild);
+      listBtn.querySelector('button').addEventListener('click', applyListPrice);
+    }
+    const hint = listBtn.querySelector('.fcpt-listhint');
+    const b = listBtn.querySelector('button');
+    const p = lastSelected && mapItem(lastSelected);
+    if (!p || !p.isPlayer) { b.disabled = true; setText(hint, 'Karte in der Liste anklicken, dann hier übernehmen.'); return; }
+    const m = cacheGet(`futbin:${settings.platform}:${p.resourceId}`);
+    if (b.disabled !== !m) b.disabled = !m;
+    if (!m) { setText(hint, `${p.name}: Futbin-Preis wird noch geladen …`); return; }
+    const bin = roundPrice(m);
+    const start = lowerStep(bin);
+    const prof = p.bought ? afterTax(bin) - p.bought : null;
+    setText(hint, `${p.name}: Start ${fmt(start)} · Sofortkauf ${fmt(bin)}` + (prof != null ? ` · Profit ${signed(prof)}` : '') +
+      (p.bought && bin < breakEven(p.bought) ? ` · ⚠ unter „ohne Verlust“ (${fmt(breakEven(p.bought))})` : ''));
+  }
+
+  function applyListPrice(e) {
+    e.preventDefault(); e.stopPropagation();
+    const host = findListPanel();
+    const p = lastSelected && mapItem(lastSelected);
+    if (!host || !p) return;
+    const m = cacheGet(`futbin:${settings.platform}:${p.resourceId}`);
+    if (!m) return;
+    const bin = roundPrice(m);
+    const start = lowerStep(bin);
+    const inputs = [...host.querySelectorAll('input')].filter((i) => i.type !== 'checkbox' && i.offsetParent !== null);
+    if (inputs.length < 2) { listBtn.querySelector('.fcpt-listhint').textContent = 'Preisfelder nicht gefunden – bitte „Schnellverkauf/Anbieten“ aufklappen.'; return; }
+    setInputValue(inputs[0], start);
+    setInputValue(inputs[1], bin);
+    listBtn.querySelector('.fcpt-listhint').textContent = `Eingetragen: Start ${fmt(start)} · Sofortkauf ${fmt(bin)} – prüfen und selbst auf „Anbieten“ klicken.`;
+  }
+
+  let listObsPending = false;
+  new MutationObserver(() => {
+    if (listObsPending) return;
+    listObsPending = true;
+    requestAnimationFrame(() => { listObsPending = false; updateListButton(); });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  // ------------------------------------------------------------------
+  // Automatisch aktualisieren: alle 15 Min. neue Preise (nur wenn der Tab sichtbar ist)
+  // ------------------------------------------------------------------
+  setInterval(() => {
+    updateStand();
+    if (!settings.autoRefresh || document.visibilityState !== 'visible') return;
+    if (Date.now() - (lastPriceFetch || 0) < CONFIG.cacheMinutes * 60000) return;
+    if (Date.now() - lastRefresh < CONFIG.cacheMinutes * 60000) return;
+    lastRefresh = Date.now();
+    log('Auto-Aktualisieren');
+    redecorateAll();
+    if (panel.classList.contains('open') && view === 'list') refresh();
+  }, 60000);
+
+  // ------------------------------------------------------------------
+  // Tastenkürzel zum Snipen: jede Taste = genau EIN Klick, den du sonst mit der Maus machst.
+  // Nichts läuft von allein – ohne Tastendruck passiert nichts.
+  // ------------------------------------------------------------------
+  const toast = document.createElement('div');
+  toast.id = 'fcpt-toast';
+  document.body.appendChild(toast);
+  let toastTimer = null;
+  function showToast(msg, err) {
+    toast.textContent = msg;
+    toast.classList.toggle('err', !!err);
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1400);
+  }
+
+  const visible = (el) => !!el && el.offsetParent !== null && !el.disabled && !el.classList.contains('disabled');
+  const btnText = (b) => (b.textContent || '').replace(/\s+/g, ' ').trim();
+  const findButton = (re, root = document) =>
+    [...root.querySelectorAll('button')].find((b) => visible(b) && !b.closest('#fcpt-panel, #fcpt-bidbar') && re.test(btnText(b)));
+
+  // EA-Buttons reagieren auf Maus-/Touch-Ereignisse, nicht nur auf click()
+  function pressButton(b) {
+    const opts = { bubbles: true, cancelable: true, view: W };
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((t) => {
+      const Ev = t.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      b.dispatchEvent(new Ev(t, opts));
+    });
+  }
+
+  function findSearchButton() {
+    return findButton(/^(suchen|search)$/i);
+  }
+  function findBackButton() {
+    return [...document.querySelectorAll('.ut-navigation-button-control, button.ut-navigation-button-control')].find(visible);
+  }
+  function findBuyButton() {
+    return [...document.querySelectorAll('button.buyButton')].find(visible) ||
+      findButton(/^(sofortkauf|jetzt kaufen|buy now)\b/i);
+  }
+  function findConfirmButton() {
+    const dlg = [...document.querySelectorAll('.ea-dialog-view, .Dialog, .ut-dialog-view, [class*="dialog"]')].filter((d) => d.offsetParent !== null).pop();
+    if (!dlg) return null;
+    return findButton(/^(ok|okay|bestätigen|ja|yes|kaufen|confirm)$/i, dlg) || [...dlg.querySelectorAll('button')].find(visible);
+  }
+
+  // Min.-Sofortkauf abwechselnd eine Stufe hoch/runter -> EA liefert frische statt zwischengespeicherte Ergebnisse
+  let bumpUp = true;
+  function bumpMinBin() {
+    const filters = [...document.querySelectorAll('.search-prices .price-filter, .price-filter')].filter((f) => f.offsetParent !== null);
+    const minBin = filters[2];
+    if (!minBin) return false;
+    const up = minBin.querySelector('.increment-value, button[class*="increment"]');
+    const down = minBin.querySelector('.decrement-value, button[class*="decrement"]');
+    const input = minBin.querySelector('input');
+    const cur = input ? toNum(input.value) || 0 : 0;
+    const target = bumpUp || cur === 0 ? up : down;
+    if (!target || !visible(target)) return false;
+    pressButton(target);
+    bumpUp = !bumpUp;
+    return true;
+  }
+
+  const FIELD_NAMES = ['Min.-Gebot', 'Max.-Gebot', 'Min.-Sofortkauf', 'Max.-Sofortkauf'];
+  function stepPrice(dir) {
+    const filters = [...document.querySelectorAll('.search-prices .price-filter, .price-filter')].filter((f) => f.offsetParent !== null);
+    const f = filters[settings.stepField];
+    if (!f) return showToast('Preisfelder nicht gefunden – öffne die Transfermarkt-Suche', true);
+    const b = f.querySelector(dir > 0 ? '.increment-value, button[class*="increment"]' : '.decrement-value, button[class*="decrement"]');
+    if (!b || !visible(b)) return showToast(`${FIELD_NAMES[settings.stepField]}: Button nicht gefunden`, true);
+    pressButton(b);
+    setTimeout(() => {
+      const inp = f.querySelector('input');
+      showToast(`${dir > 0 ? '▲' : '▼'} ${FIELD_NAMES[settings.stepField]}: ${inp ? fmt(toNum(inp.value) || 0) : ''}`);
+    }, 60);
+  }
+
+  function doSearch() {
+    const s = findSearchButton();
+    if (s) {
+      if (settings.bumpMinBin) bumpMinBin();
+      pressButton(s);
+      showToast('🔍 Suche');
+      return;
+    }
+    // Auf der Ergebnisseite: erst zurück, dann suchen
+    const back = findBackButton();
+    if (!back) return showToast('Kein Suchen-Button gefunden – öffne die Transfermarkt-Suche', true);
+    pressButton(back);
+    let tries = 0;
+    const iv = setInterval(() => {
+      const s2 = findSearchButton();
+      if (s2) {
+        clearInterval(iv);
+        if (settings.bumpMinBin) bumpMinBin();
+        pressButton(s2);
+        showToast('🔍 Neue Suche');
+      } else if (++tries > 20) { clearInterval(iv); showToast('Suchen-Button nicht gefunden', true); }
+    }, 50);
+  }
+
+  function doBuy() {
+    const b = findBuyButton();
+    if (!b) return showToast('Kein Sofortkauf-Button – Karte in den Ergebnissen auswählen', true);
+    pressButton(b);
+    showToast('💰 ' + btnText(b));
+  }
+
+  function doConfirm() {
+    const b = findConfirmButton();
+    if (!b) return showToast('Kein Bestätigen-Dialog offen', true);
+    pressButton(b);
+    showToast('✔ Bestätigt');
+    if (settings.autoBack) {
+      // kurz warten, bis EA den Kauf verarbeitet hat, dann eine Seite zurück zur Suche
+      let tries = 0;
+      const iv = setInterval(() => {
+        if (findConfirmButton() && ++tries < 30) return;       // Dialog noch offen
+        clearInterval(iv);
+        setTimeout(() => {
+          if (findSearchButton()) return;                      // schon auf der Suchseite
+          const back = findBackButton();
+          if (back) { pressButton(back); showToast('✔ Bestätigt · ← zurück zur Suche'); }
+        }, 250);
+      }, 50);
+    }
+  }
+
+  function doBack() {
+    const b = findBackButton();
+    if (!b) return showToast('Kein Zurück-Button gefunden', true);
+    pressButton(b);
+    showToast('← Zurück');
+  }
+
+  const keyhint = document.createElement('div');
+  keyhint.id = 'fcpt-keyhint';
+  document.body.appendChild(keyhint);
+  const kb = (k) => `<kbd>${esc(keyLabel(settings.keys[k]))}</kbd>`;
+  setInterval(() => {
+    const onMarket = settings.hotkeys && !panel.classList.contains('open') && (findSearchButton() || findBuyButton() || findConfirmButton());
+    keyhint.classList.toggle('show', !!onMarket);
+    if (!onMarket) return;
+    const html = `<span>${kb('search')}Suchen</span><span>${kb('buy')}Kaufen</span><span>${kb('confirm')}OK</span><span>${kb('back')}Zurück</span><span>${kb('up')}${kb('down')}Preis ±</span>`;
+    if (keyhint.__html !== html) { keyhint.__html = html; keyhint.innerHTML = html; }
+  }, 700);
+
+  document.addEventListener('keydown', (ev) => {
+    if (!settings.hotkeys || ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
+    const a = document.activeElement;
+    if (a && (/^(input|textarea|select)$/i.test(a.tagName) || a.isContentEditable)) return;
+    const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    const k = settings.keys;
+    const map = { [k.search]: doSearch, [k.buy]: doBuy, [k.confirm]: doConfirm, [k.back]: doBack,
+      [k.up]: () => stepPrice(1), [k.down]: () => stepPrice(-1) };
+    const fn = map[key];
+    if (!fn) return;
+    ev.preventDefault(); ev.stopPropagation();
+    fn();
+  }, true);
+
+  // ==================================================================
+  // SBC-SOLVER – Anbindung an die EA Web App + Oberfläche
+  // ==================================================================
+  const SBCUI = (() => {
+    // ---------- 1) Netzwerk mitlesen (nur lesen): Anforderungen, Squad, Vereinsdaten ----------
+    const CAP = { challenges: new Map(), currentId: null, currentAt: 0, squads: new Map(), raw: new Map(), urls: [], activeIds: null };
+
+    function findChallengeObjects(data, out = [], depth = 0) {
+      if (!data || typeof data !== 'object' || depth > 5) return out;
+      if (Array.isArray(data)) { data.forEach((x) => findChallengeObjects(x, out, depth + 1)); return out; }
+      if (Array.isArray(data.elgReq) && data.challengeId != null) out.push(data);
+      else Object.values(data).forEach((v) => findChallengeObjects(v, out, depth + 1));
+      return out;
+    }
+
+    function capture(url, text) {
+      if (!url || !text || !/\/ut\/game\//.test(url)) return;
+      let data;
+      try { data = JSON.parse(text); } catch { return; }
+      const u = String(url).split('?')[0];
+      if (CAP.urls.length > 40) CAP.urls.shift();
+      CAP.urls.push(u.replace(/^.*\/ut\/game\/[^/]+/, ''));
+      for (const c of findChallengeObjects(data)) CAP.challenges.set(c.challengeId, c);
+      const m = u.match(/\/sbs\/challenge\/(\d+)(\/squad)?$/);
+      if (m) {
+        CAP.currentId = +m[1]; CAP.currentAt = Date.now();
+        if (data && data.squad) CAP.squads.set(+m[1], data.squad);
+      }
+      if (/\/squad\/active$/.test(u) || (/\/squad\/\d+$/.test(u) && data && data.squadType === 'CLUB')) {
+        const pl = (data && (data.players || (data.squad && data.squad.players))) || [];
+        const ids = pl.map((x) => x && x.itemData && x.itemData.id).filter((x) => x);
+        if (ids.length) CAP.activeIds = ids;
+      }
+      const arr = data && (Array.isArray(data.itemData) ? data.itemData : Array.isArray(data.items) ? data.items : null);
+      // Transferliste / Beobachtungsliste / Suchergebnisse: Items stecken in auctionInfo[].itemData
+      if (data && Array.isArray(data.auctionInfo)) {
+        for (const ai of data.auctionInfo) {
+          const it = ai && ai.itemData;
+          if (it && it.id != null) CAP.raw.set(it.id, Object.assign({}, CAP.raw.get(it.id) || {}, it));
+          // Kauf erkannt (Sofortkauf oder gewonnenes Gebot) -> Kaufpreis automatisch merken
+          if (it && it.id != null && ai.tradeState === 'closed' && ai.bidState === 'highest' && ai.tradeOwner === false) {
+            recordBuy(it.id, ai.currentBid || ai.buyNowPrice);
+          }
+        }
+      }
+      if (arr && /\/(club|purchased\/items|storagepile|item)/.test(u)) {
+        const dupSrc = /purchased\/items/.test(u);
+        for (const it of arr) if (it && it.id != null) CAP.raw.set(it.id, Object.assign({}, it, dupSrc ? { __unassigned: true } : {}));
+      }
+    }
+
+    try {
+      const XP = W.XMLHttpRequest && W.XMLHttpRequest.prototype;
+      if (XP && !XP.__fcptSbc) {
+        const oOpen = XP.open, oSend = XP.send;
+        XP.open = function (m, url) { this.__fcptUrl = url; return oOpen.apply(this, arguments); };
+        XP.send = function () {
+          try {
+            this.addEventListener('load', function () {
+              try {
+                if (!this.responseType || this.responseType === 'text') capture(this.__fcptUrl, this.responseText);
+                else if (this.responseType === 'json') capture(this.__fcptUrl, JSON.stringify(this.response));
+              } catch (e) { /* ignorieren */ }
+            });
+          } catch (e) { /* ignorieren */ }
+          return oSend.apply(this, arguments);
+        };
+        XP.__fcptSbc = true;
+      }
+      if (typeof W.fetch === 'function' && !W.fetch.__fcptSbc) {
+        const oFetch = W.fetch;
+        const wrapped = function (input, init) {
+          const url = typeof input === 'string' ? input : input && input.url;
+          return oFetch.apply(this, arguments).then((res) => {
+            try { if (/\/ut\/game\//.test(url || '')) res.clone().text().then((t) => capture(url, t)).catch(() => {}); } catch (e) { /* */ }
+            return res;
+          });
+        };
+        wrapped.__fcptSbc = true;
+        W.fetch = wrapped;
+      }
+    } catch (e) { log('Netzwerk-Mitschnitt nicht möglich', e); }
+
+    // ---------- 2) EA-Objekte finden ----------
+    const observeOnce = (obs, ms = 10000) => new Promise((resolve, reject) => {
+      if (!obs || typeof obs.observe !== 'function') return reject(new Error('Keine EA-Antwort (kein Observable)'));
+      const sub = {};
+      const t = setTimeout(() => reject(new Error('Zeitüberschreitung bei EA')), ms);
+      obs.observe(sub, (o, ev) => { clearTimeout(t); try { o && o.unobserve && o.unobserve(sub); } catch (e) { /* */ } resolve(ev || {}); });
+    });
+
+    const isChallenge = (o) => !!o && typeof o === 'object' && ((W.UTSBCChallengeEntity && o instanceof W.UTSBCChallengeEntity) || ('elgReq' in o && 'squad' in o));
+    const isSquad = (o) => !!o && typeof o === 'object' && ((W.UTSquadEntity && o instanceof W.UTSquadEntity) || (typeof o.getPlayers === 'function' && 'formation' in o));
+
+    function scanFor(obj, depth, want, seen = new Set()) {
+      if (!obj || typeof obj !== 'object' || seen.has(obj) || depth < 0) return null;
+      seen.add(obj);
+      if (want(obj)) return obj;
+      let vals = [];
+      try {
+        if (obj instanceof Map || obj instanceof Set) vals = [...obj.values()];
+        else vals = Object.keys(obj).map((k) => { try { return obj[k]; } catch (e) { return null; } });
+      } catch (e) { return null; }
+      for (const v of vals) {
+        if (!v || typeof v !== 'object' || v === W || (v.nodeType && v.nodeType > 0)) continue;
+        if (Array.isArray(v) && v.length > 300) continue;
+        const r = scanFor(v, depth - 1, want, seen);
+        if (r) return r;
+      }
+      return null;
+    }
+
+    function contextFromRepository(id) {
+      if (id == null) return null;
+      const repo = W.services && W.services.SBC && (W.services.SBC.repository || W.services.SBC.sbcDAO);
+      const ch = scanFor(repo, 6, (o) => isChallenge(o) && (o.id === id || o.challengeId === id));
+      if (!ch) return null;
+      return { controller: null, challenge: ch, squad: isSquad(ch.squad) ? ch.squad : null, via: 'repository' };
+    }
+
+    // Nur lesen, nichts an EA verändern: erst EAs SBC-Daten, dann die Navigation durchsuchen
+    function findSbcContext() {
+      const w = findSbcContextWalk();
+      if (w && w.squad) return w;
+      const r = contextFromRepository(CAP.currentId);
+      if (r && r.squad) return Object.assign(r, { controller: (w && w.controller) || null });
+      return w || r || null;
+    }
+
+    function findSbcContextWalk() {
+      let root = null;
+      try { root = W.getAppMain && W.getAppMain().getRootViewController(); } catch (e) { /* */ }
+      if (!root) return null;
+      const seen = new Set();
+      const queue = [[root, 0]];
+      const kids = ['_leftController', '_rightController', '_currentController', '_childViewControllers', '_viewControllers',
+        '_presentedViewController', '_navigationController', '_rootController', '_controllers', '_tabController'];
+      const getters = ['getPresentedViewController', 'getCurrentViewController', 'getCurrentController'];
+      while (queue.length) {
+        const [o, d] = queue.shift();
+        if (!o || typeof o !== 'object' || seen.has(o) || d > 9) continue;
+        seen.add(o);
+        if (o._challenge && (o._squad || o._challenge.squad)) return { controller: o, challenge: o._challenge, squad: o._squad || o._challenge.squad, via: 'walk' };
+        for (const k of kids) {
+          const v = o[k];
+          if (Array.isArray(v)) v.forEach((x) => queue.push([x, d + 1]));
+          else if (v) queue.push([v, d + 1]);
+        }
+        for (const g of getters) {
+          if (typeof o[g] === 'function') { try { const v = o[g](); if (v) queue.push([v, d + 1]); } catch (e) { /* */ } }
+        }
+      }
+      return null;
+    }
+
+    function slotList(squad) {
+      if (!squad) return [];
+      let arr = null;
+      for (const fn of ['getPlayers', 'getFieldPlayers', 'getSlots']) {
+        if (typeof squad[fn] === 'function') { try { arr = squad[fn](); } catch (e) { /* */ } if (Array.isArray(arr) && arr.length) break; }
+      }
+      if (!Array.isArray(arr)) arr = squad._players || squad.players || [];
+      return arr;
+    }
+    const slotItem = (s) => (s && (typeof s.getItem === 'function' ? s.getItem() : s.item || s._item)) || null;
+    function slotPos(s) {
+      if (!s) return null;
+      const p = typeof s.getPosition === 'function' ? s.getPosition() : s.position || s._position;
+      if (p == null) return null;
+      if (typeof p === 'object') return SBC.normPos(p.typeName || p.typeId);
+      return SBC.normPos(p);
+    }
+    const slotBlocked = (s) => { try { return !!(s && ((typeof s.isBrick === 'function' && s.isBrick()) || s.isLocked === true || s.locked === true)); } catch (e) { return false; } };
+
+    // ---------- 3) Verein laden ----------
+    let club = null; // { at, players: [], ents: Map }
+
+    const PRICE_EST = { 83: 1800, 84: 3200, 85: 5500, 86: 9500, 87: 14000, 88: 20000, 89: 30000, 90: 45000 };
+    function estValue(rating, rarity) {
+      if (rating < 65) return 150;
+      if (rating < 75) return 250;
+      if (rating < 80) return 350 + (rating - 75) * 80 + (rarity ? 100 : 0);
+      if (rating < 83) return 700 + (rating - 80) * 200 + (rarity ? 150 : 0);
+      if (PRICE_EST[rating]) return PRICE_EST[rating];
+      return Math.round(45000 * Math.pow(1.45, rating - 90));
+    }
+
+    function toPlayer(ent, extra) {
+      const raw = CAP.raw.get(ent.id) || {};
+      const g = (...v) => v.find((x) => x !== undefined && x !== null);
+      const isPl = typeof ent.isPlayer === 'function' ? ent.isPlayer() : (raw.itemType || ent.type) === 'player';
+      if (!isPl) return null;
+      const rating = g(raw.rating, ent.rating);
+      const rarity = g(raw.rareflag, ent.rareflag, 0);
+      const def = g(ent.definitionId, raw.resourceId, ent.resourceId);
+      let posList = g(raw.possiblePositions, ent.possiblePositions, []);
+      if (!Array.isArray(posList) || !posList.length) posList = [g(raw.preferredPosition, ent.preferredPosition)];
+      const positions = [...new Set(posList.map(SBC.normPos).filter(Boolean))];
+      const sd = typeof ent.getStaticData === 'function' ? ent.getStaticData() : ent._staticData || {};
+      const untradeable = !!g(raw.untradeable, ent.untradeable, false);
+      const loans = g(raw.loans, ent.loans, 0);
+      const resId = g(ent.resourceId, raw.resourceId, def);
+      const futbin = cacheGet(`futbin:${settings.platform}:${resId}`);
+      const value = g(futbin, raw.marketAverage, estValue(rating, rarity));
+      const dup = !!(extra && extra.dup) || !!raw.__unassigned || (typeof ent.isDuplicate === 'function' && (() => { try { return ent.isDuplicate(); } catch (e) { return false; } })());
+      const mult = untradeable ? (dup ? 0.1 : settings.sbcPreferUntradeable ? 0.6 : 1) : 1;
+      return {
+        id: ent.id, assetId: g(raw.assetId, ent.assetId, def != null ? def % 16777216 : ent.id),
+        name: sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${def}`,
+        rating, rarity, nationId: g(raw.nation, ent.nationId, ent.nation), leagueId: g(raw.leagueId, ent.leagueId),
+        clubId: g(raw.teamid, ent.teamId, ent.teamid), positions, untradeable, loans, owners: g(raw.owners, ent.owners, 1),
+        dup, value, priceSrc: futbin != null ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung',
+        cost: Math.round(value * mult) + rating * 0.01,
+        special: rarity > 1,
+      };
+    }
+
+    async function pagedSearch(fnName, service, label, setStatus, extra) {
+      const VM = W.UTBucketedItemSearchViewModel;
+      const crit = VM ? new VM().searchCriteria : null;
+      if (!crit) throw new Error('EA-Suchobjekt nicht gefunden (UTBucketedItemSearchViewModel)');
+      try { if (W.SearchType && W.SearchType.PLAYER) crit.type = W.SearchType.PLAYER; } catch (e) { /* */ }
+      crit.count = 91;
+      const ents = [];
+      for (let page = 0, offset = 0; page < 50; page++, offset += 91) {
+        crit.offset = offset;
+        setStatus(`${label}: Seite ${page + 1} … (${ents.length} Karten)`);
+        const ev = await observeOnce(service[fnName](crit));
+        const payload = ev.response || ev.data || {};
+        const items = payload.items || payload.itemData || [];
+        items.forEach((it) => ents.push([it, extra]));
+        if (!items.length || payload.retrievedAll === true || payload.endOfList === true) break;
+        await sleep(300 + Math.random() * 300);
+      }
+      return ents;
+    }
+
+    async function loadClub(setStatus, force) {
+      if (club && !force && Date.now() - club.at < 10 * 60000) return club;
+      const S = W.services;
+      if (!S || !S.Club || typeof S.Club.search !== 'function') throw new Error('EA-Vereinssuche nicht gefunden');
+      const all = await pagedSearch('search', S.Club, 'Verein', setStatus);
+      if (S.Item && typeof S.Item.searchStorageItems === 'function') {
+        try { (await pagedSearch('searchStorageItems', S.Item, 'SBC-Lager', setStatus, { dup: true })).forEach((x) => all.push(x)); } catch (e) { log('Lager', e); }
+      }
+      if (S.Item && typeof S.Item.requestUnassignedItems === 'function') {
+        try {
+          setStatus('Nicht zugewiesene Karten …');
+          const ev = await observeOnce(S.Item.requestUnassignedItems());
+          const items = (ev.response || ev.data || {}).items || [];
+          items.forEach((it) => all.push([it, { dup: true }]));
+        } catch (e) { log('Unzugewiesen', e); }
+      }
+      const ents = new Map();
+      const players = [];
+      for (const [ent, extra] of all) {
+        if (!ent || ents.has(ent.id)) continue;
+        const p = toPlayer(ent, extra);
+        if (!p) continue;
+        ents.set(ent.id, ent);
+        players.push(p);
+      }
+      club = { at: Date.now(), players, ents };
+      return club;
+    }
+
+    // ---------- 4) Challenge lesen ----------
+    function readChallenge() {
+      const ctx = findSbcContext();
+      const ch = ctx && ctx.challenge;
+      const id = (ch && (ch.id ?? ch.challengeId)) ?? CAP.currentId;
+      const cap = id != null ? CAP.challenges.get(id) : null;
+      const elgReq = (cap && cap.elgReq) || (ch && Array.isArray(ch.elgReq) && ch.elgReq) || null;
+      const formation = (cap && cap.formation) || (ch && ch.formation) || null;
+      const name = (cap && cap.name) || (ch && (ch.name || ch.title)) || 'SBC';
+      const squadEnt = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
+      const slots = slotList(squadEnt);
+      let positions = slots.slice(0, 11).map(slotPos);
+      if (!positions.length || positions.some((p) => !p)) {
+        const f = formation && SBC.FORMATIONS[formation];
+        positions = f ? f.slice() : null;
+      }
+      const liveEnum = W.SBCEligibilityKey;
+      const decoded = elgReq ? SBC.decodeRequirements(elgReq, liveEnum) : null;
+      return { ctx, id, name, formation, elgReq, decoded, slots, positions };
+    }
+
+    // ---------- 5) Einsetzen ----------
+    async function apply(info, sol) {
+      const ctx = findSbcContext() || info.ctx;
+      const squad = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
+      if (!squad) throw new Error('SBC-Aufstellung nicht gefunden – geh einmal zurück, öffne die Aufgabe neu und versuche es erneut.');
+      const slots = slotList(squad);
+      const arr = slots.map((s, i) => {
+        const p = sol.players[i];
+        if (p && club && club.ents.get(p.id)) return club.ents.get(p.id);
+        return slotItem(s);
+      });
+      let done = false;
+      if (typeof squad.setPlayers === 'function') { squad.setPlayers(arr, true); done = true; }
+      else {
+        slots.forEach((s, i) => {
+          for (const fn of ['setItem', 'setItemData', 'setPlayer']) if (typeof s[fn] === 'function' && arr[i]) { s[fn](arr[i]); done = true; break; }
+        });
+      }
+      if (!done) throw new Error('EA-Funktion zum Setzen der Spieler nicht gefunden');
+      const S = W.services && W.services.SBC;
+      if (S && typeof S.saveChallenge === 'function' && ctx.challenge) {
+        const ev = await observeOnce(S.saveChallenge(ctx.challenge));
+        if (ev && ev.success === false) throw new Error('EA hat das Speichern abgelehnt' + (ev.status ? ` (${ev.status})` : ''));
+      }
+      const c = ctx.controller;
+      for (const fn of ['_pushSquadToView', 'refreshSquad', '_updateSquad', 'onDataChange', 'render']) {
+        try { if (c && typeof c[fn] === 'function') c[fn](squad); } catch (e) { /* */ }
+      }
+      try { if (squad.onDataUpdated && typeof squad.onDataUpdated.notify === 'function') squad.onDataUpdated.notify(); } catch (e) { /* */ }
+      return true;
+    }
+
+    // ---------- 6) Oberfläche ----------
+    if (settings.sbcSpecials === undefined) settings.sbcSpecials = false;
+    if (settings.sbcMaxRating === undefined) settings.sbcMaxRating = 0;
+    if (settings.sbcPreferUntradeable === undefined) settings.sbcPreferUntradeable = true;
+    if (settings.sbcKeep === undefined) settings.sbcKeep = false;
+    if (settings.sbcTime === undefined) settings.sbcTime = 4;
+    if (settings.sbcProtectActive === undefined) settings.sbcProtectActive = true;
+    if (!Array.isArray(settings.sbcLocked)) settings.sbcLocked = [];   // [{id, name, rating}]
+    const lockedIds = () => new Set(settings.sbcLocked.map((x) => x.id));
+
+    async function activeSquadIds() {
+      const ids = new Set(CAP.activeIds || []);
+      try {
+        const S = W.services && W.services.Squad;
+        if (S && typeof S.getActiveSquad === 'function') {
+          const ev = await observeOnce(S.getActiveSquad(), 6000);
+          const pay = ev.response || ev.data || {};
+          const sq = pay.squad || pay;
+          slotList(sq).forEach((s2) => { const it = slotItem(s2); if (it && it.id) ids.add(it.id); });
+        }
+      } catch (e) { log('Aktive Mannschaft', e); }
+      return ids;
+    }
+
+    GM_addStyle(`
+      #fcpt-sbcbtn{position:fixed;right:24px;bottom:84px;z-index:100000;display:none;background:linear-gradient(135deg,#60a5fa,#2563eb);color:#fff;border:0;border-radius:999px;padding:11px 18px;font:700 14px system-ui,sans-serif;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.45)}
+      #fcpt-sbcbtn.show{display:block}
+      #fcpt-sbc{--bg:#0b111c;--bg2:#121a28;--bg3:#1a2436;--line:#243149;--ink:#eef2f8;--ink2:#a7b3c6;--ink3:#7d8aa0;--gold:#f5c518;--pos:#22c55e;--neg:#ef4444;
+        position:fixed;top:0;right:0;width:480px;max-width:100vw;height:100vh;z-index:100002;background:var(--bg);color:var(--ink);font:14px system-ui,-apple-system,Segoe UI,sans-serif;box-shadow:-10px 0 30px rgba(0,0,0,.55);display:none;flex-direction:column;border-left:1px solid var(--line)}
+      #fcpt-sbc.open{display:flex}
+      #fcpt-sbc *{box-sizing:border-box}
+      #fcpt-sbc .hd{padding:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+      #fcpt-sbc .hd .lg{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:linear-gradient(135deg,#60a5fa,#2563eb);font-size:18px}
+      #fcpt-sbc .hd .t{font-weight:800;font-size:15px}#fcpt-sbc .hd .s{font-size:12px;color:var(--ink3)}
+      #fcpt-sbc .hd .x{margin-left:auto;width:34px;height:34px;border-radius:10px;background:var(--bg3);border:1px solid var(--line);color:var(--ink);cursor:pointer}
+      #fcpt-sbc .bd{overflow:auto;padding:12px 14px 40px;display:flex;flex-direction:column;gap:12px;flex:1}
+      #fcpt-sbc .grp{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+      #fcpt-sbc h4{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink3)}
+      #fcpt-sbc .req{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+      #fcpt-sbc .req .ic{width:18px;flex:none;text-align:center}
+      #fcpt-sbc .req.ok .ic{color:var(--pos)}#fcpt-sbc .req.bad .ic{color:var(--neg)}#fcpt-sbc .req.na .ic{color:#f59e0b}
+      #fcpt-sbc .req .v{margin-left:auto;color:var(--ink3);font-variant-numeric:tabular-nums}
+      #fcpt-sbc .opt{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}
+      #fcpt-sbc .opt small{display:block;color:var(--ink3);font-size:11px}
+      #fcpt-sbc input[type=number]{width:80px;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;text-align:right}
+      #fcpt-sbc .btns{display:flex;gap:8px;flex-wrap:wrap}
+      #fcpt-sbc .btn{flex:1;border:0;border-radius:10px;padding:11px 12px;font:700 14px system-ui,sans-serif;cursor:pointer;background:var(--bg3);color:var(--ink);border:1px solid var(--line)}
+      #fcpt-sbc .btn.pri{background:linear-gradient(135deg,#60a5fa,#2563eb);border:0;color:#fff}
+      #fcpt-sbc .btn.go{background:linear-gradient(135deg,#4ade80,#16a34a);border:0;color:#04120a}
+      #fcpt-sbc .btn[disabled]{opacity:.5;cursor:default}
+      #fcpt-sbc .st{font-size:12px;color:var(--ink2);min-height:16px}
+      #fcpt-sbc .st.err{color:#fca5a5}
+      #fcpt-sbc .sum{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+      #fcpt-sbc .sum>div{background:var(--bg3);border-radius:10px;padding:7px 9px}
+      #fcpt-sbc .sum .l{font-size:11px;color:var(--ink3)}#fcpt-sbc .sum .v{font-size:17px;font-weight:800}
+      #fcpt-sbc table{width:100%;border-collapse:collapse;font-size:12.5px}
+      #fcpt-sbc th{text-align:left;color:var(--ink3);font-weight:500;padding:5px 4px;border-bottom:1px solid var(--line)}
+      #fcpt-sbc td{padding:6px 4px;border-bottom:1px solid #1a2436}
+      #fcpt-sbc td.n{text-align:right;font-variant-numeric:tabular-nums}
+      #fcpt-sbc .tag{font-size:10px;font-weight:700;border-radius:4px;padding:1px 4px;margin-left:4px;background:#1f2b3d;color:#a7b3c6}
+      #fcpt-sbc .tag.nh{background:rgba(34,197,94,.15);color:#86efac}#fcpt-sbc .tag.dup{background:rgba(245,197,24,.15);color:#fde68a}
+      #fcpt-sbc .ch{display:inline-block;min-width:18px;text-align:center;border-radius:4px;font-weight:700}
+      #fcpt-sbc .ch0{background:#3a1515;color:#fca5a5}#fcpt-sbc .ch3{background:rgba(34,197,94,.18);color:#86efac}
+      #fcpt-sbc .note{font-size:12px;color:var(--ink3)}
+      #fcpt-sbc .lk{background:none;border:1px solid var(--line);border-radius:6px;color:var(--ink2);cursor:pointer;padding:1px 6px;font-size:12px}
+      #fcpt-sbc .lk:hover{border-color:#ef4444;color:#fca5a5}
+      #fcpt-sbc tr.locked td{opacity:.45;text-decoration:line-through}
+      #fcpt-sbc .lockrow{display:flex;align-items:center;gap:8px;font-size:13px}
+      #fcpt-sbc .lockrow button{margin-left:auto}
+    `);
+
+    const sbcBtn = document.createElement('button');
+    sbcBtn.id = 'fcpt-sbcbtn';
+    sbcBtn.textContent = '🧩 SBC lösen';
+    document.body.appendChild(sbcBtn);
+
+    const pane = document.createElement('div');
+    pane.id = 'fcpt-sbc';
+    pane.innerHTML = `
+      <div class="hd"><span class="lg">🧩</span><div><div class="t">SBC-Solver <span class="fcpt-ver">v${TOOL_VERSION}</span></div><div class="s" data-el="name">–</div></div><button class="x" data-a="close">✕</button></div>
+      <div class="bd">
+        <div class="grp"><h4>Anforderungen</h4><div data-el="reqs"><div class="note">Öffne eine SBC-Aufgabe.</div></div></div>
+        <div class="grp"><h4>Optionen</h4>
+          <div class="opt"><span>Sonderkarten erlauben<small>TOTW, Promos usw. – aus = nur normale Karten</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcSpecials"></div>
+          <div class="opt"><span>Nicht handelbare bevorzugen<small>Doppelte/Lager-Karten werden immer zuerst genommen</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcPreferUntradeable"></div>
+          <div class="opt"><span>Aktive Mannschaft schützen<small>Spieler aus deiner aktiven Mannschaft werden nie verwendet</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcProtectActive"></div>
+          <div class="opt"><span>Bereits eingesetzte Spieler behalten</span><input type="checkbox" class="fcpt-sw" data-o="sbcKeep"></div>
+          <div class="opt"><span>Max. Rating pro Spieler<small>0 = keine Grenze · schützt deine Top-Spieler</small></span><input type="number" min="0" max="99" data-n="sbcMaxRating"></div>
+          <div class="opt"><span>Rechenzeit (Sekunden)<small>Länger = oft günstigere Lösung</small></span><input type="number" min="1" max="30" data-n="sbcTime"></div>
+        </div>
+        <div class="grp" data-el="lockgrp"><h4>Gesperrte Spieler</h4><div data-el="locks"></div></div>
+        <div class="btns"><button class="btn pri" data-a="solve">Verein laden &amp; lösen</button></div>
+        <div class="st" data-el="status"></div>
+        <div data-el="result"></div>
+        <div class="btns"><button class="btn" data-a="reload">↻ Verein neu laden</button><button class="btn" data-a="diag">Diagnose kopieren</button></div>
+        <div class="note">Der Solver setzt die Spieler nur ein – einreichen musst du selbst. Prüfe die Aufstellung vor dem Einreichen.</div>
+      </div>`;
+    document.body.appendChild(pane);
+    const el = (n) => pane.querySelector(`[data-el="${n}"]`);
+    pane.querySelectorAll('[data-o]').forEach((i) => { i.checked = !!settings[i.dataset.o]; });
+    pane.querySelectorAll('[data-n]').forEach((i) => { i.value = settings[i.dataset.n]; });
+    pane.addEventListener('change', (e) => {
+      const t = e.target;
+      if (t.dataset.o) { settings[t.dataset.o] = t.checked; saveSettings(); }
+      if (t.dataset.n) { settings[t.dataset.n] = Math.max(0, parseInt(t.value, 10) || 0); saveSettings(); }
+      if (t.dataset.o === 'sbcPreferUntradeable') club = null;
+    });
+
+    let info = null, lastSol = null;
+    const setStatus = (m, err) => { const s = el('status'); s.textContent = m || ''; s.classList.toggle('err', !!err); };
+
+    function renderReqs(results) {
+      if (!info || !info.decoded) {
+        el('reqs').innerHTML = `<div class="note">Anforderungen noch nicht erkannt. Gehe einmal zurück zur SBC-Übersicht und öffne die Aufgabe erneut – das Tool liest die Anforderungen mit, wenn EA sie lädt.</div>`;
+        return;
+      }
+      const res = results || info.decoded.constraints.map((c) => ({ c, ok: c.unsupported ? null : undefined }));
+      el('reqs').innerHTML = res.map((r) => {
+        const cls = r.ok === true ? 'ok' : r.ok === false ? 'bad' : r.c.unsupported ? 'na' : '';
+        const ic = r.ok === true ? '✓' : r.ok === false ? '✕' : r.c.unsupported ? '!' : '•';
+        const extra = r.c.unsupported ? ' <span class="tag">nicht unterstützt – selbst prüfen</span>' : '';
+        return `<div class="req ${cls}"><span class="ic">${ic}</span><span>${esc(SBC.describe(r.c))}${extra}</span>${r.val != null ? `<span class="v">${esc(r.val)}</span>` : ''}</div>`;
+      }).join('') + (info.positions ? '' : '<div class="note">⚠ Positionen der Formation unbekannt – Chemie wird ohne Positionsprüfung berechnet.</div>');
+    }
+
+    function renderLocks() {
+      const L = settings.sbcLocked;
+      el('locks').innerHTML = L.length
+        ? L.map((x) => `<div class="lockrow">🔒 <span>${esc(x.rating ?? '')} ${esc(x.name)}</span><button class="lk" data-a="unlock" data-id="${x.id}" title="Wieder freigeben">✕ freigeben</button></div>`).join('')
+        : '<div class="note">Keine. Klicke in einer Lösung auf 🔒, um einen Spieler dauerhaft für SBCs zu sperren.</div>';
+    }
+    renderLocks();
+
+    function renderResult(sol) {
+      if (!sol) { el('result').innerHTML = ''; return; }
+      const ev = sol.ev;
+      const okCount = ev.results.filter((r) => r.ok === true).length;
+      const total = ev.results.filter((r) => r.ok !== null).length;
+      const rows = sol.players.map((p, i) => {
+        const pos = (info.positions && info.positions[i]) || '–';
+        if (!p) return `<tr><td>${pos}</td><td colspan="4" class="note">leer</td></tr>`;
+        const ch = ev.chem.per[i];
+        const isLocked = lockedIds().has(p.id);
+        return `<tr class="${isLocked ? 'locked' : ''}"><td>${esc(pos)}</td><td><button class="lk" data-a="lock" data-i="${i}" title="Diesen Spieler nie für SBCs verwenden">🔒</button> ${esc(p.name)}${p.untradeable ? '<span class="tag nh">NH</span>' : ''}${p.dup ? '<span class="tag dup">Dup</span>' : ''}</td>
+          <td class="n">${p.rating}</td><td class="n"><span class="ch ch${ch}">${ch}</span></td><td class="n" title="${esc(p.priceSrc)}">${fmt(Math.round(p.value))}</td></tr>`;
+      }).join('');
+      const value = sol.players.reduce((a, p) => a + (p ? p.value : 0), 0);
+      const anyLocked = sol.players.some((p) => p && lockedIds().has(p.id));
+      el('result').innerHTML = `
+        <div class="grp"><h4>${sol.feasible ? 'Lösung' : 'Keine vollständige Lösung gefunden'}</h4>
+          <div class="sum">
+            <div><div class="l">Teambewertung</div><div class="v">${ev.rating}</div></div>
+            <div><div class="l">Chemie</div><div class="v">${ev.chem.total}</div></div>
+            <div><div class="l">Wert der Karten</div><div class="v">${fmt(Math.round(value))}</div></div>
+          </div>
+          <div class="note">${okCount} von ${total} Anforderungen erfüllt · ${fmt(sol.iters || 0)} Kombinationen geprüft</div>
+          <table><thead><tr><th>Pos</th><th>Spieler</th><th style="text-align:right">OVR</th><th style="text-align:right">Chem</th><th style="text-align:right">Wert</th></tr></thead><tbody>${rows}</tbody></table>
+          ${anyLocked ? '<div class="note" style="color:#fcd34d">🔒 Gesperrte Spieler in der Lösung – bitte „Nochmal lösen“.</div>' : ''}
+          <div class="btns"><button class="btn go" data-a="apply" ${sol.feasible && !anyLocked ? '' : 'disabled'}>✓ In SBC einsetzen</button><button class="btn" data-a="solve">Nochmal lösen</button></div>
+        </div>`;
+    }
+
+    function refreshInfo() {
+      info = readChallenge();
+      el('name').textContent = info.name + (info.formation ? ` · ${info.formation.replace(/^f/, '')}` : '');
+      renderReqs(lastSol && lastSol.challengeId === info.id ? lastSol.ev.results : null);
+      if (!lastSol || lastSol.challengeId !== info.id) renderResult(null);
+    }
+
+    async function runSolve(force) {
+      refreshInfo();
+      if (!info.decoded) { setStatus('Anforderungen nicht erkannt – Aufgabe neu öffnen.', true); return; }
+      pane.querySelectorAll('[data-a="solve"]').forEach((b) => { b.disabled = true; });
+      try {
+        const c = await loadClub(setStatus, force);
+        const locked = lockedIds();
+        let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id));
+        let protectedN = 0, activeWarn = false;
+        if (settings.sbcProtectActive) {
+          setStatus('Lese aktive Mannschaft …');
+          const act = await activeSquadIds();
+          if (!act.size) activeWarn = true;
+          const before = pool.length;
+          pool = pool.filter((p) => !act.has(p.id));
+          protectedN = before - pool.length;
+          if (act.size) await sleep(10);
+        }
+        if (!settings.sbcSpecials) pool = pool.filter((p) => !p.special);
+        if (settings.sbcMaxRating > 0) pool = pool.filter((p) => p.rating <= settings.sbcMaxRating);
+        const n = Math.max(info.slots.length ? Math.min(11, info.slots.length) : 11, 11);
+        const slots = [];
+        for (let i = 0; i < n; i++) {
+          const s = info.slots[i];
+          const it = slotItem(s);
+          const keep = settings.sbcKeep && it && it.id && c.ents.has(it.id) ? c.players.find((p) => p.id === it.id) : null;
+          slots.push({ position: info.positions ? info.positions[i] : null, fixed: keep || null, blocked: slotBlocked(s) });
+        }
+        setStatus(`Suche Lösung aus ${fmt(pool.length)} Spielern …`);
+        await sleep(30);
+        const sol = SBC.solve(pool, slots, info.decoded.constraints, { timeMs: Math.min(30, Math.max(1, settings.sbcTime)) * 1000 });
+        if (sol.error) { setStatus(sol.error, true); return; }
+        sol.challengeId = info.id;
+        lastSol = sol;
+        renderReqs(sol.ev.results);
+        renderResult(sol);
+        const prot = activeWarn ? ' ⚠ Aktive Mannschaft konnte nicht gelesen werden – prüfe selbst, ob Stammspieler dabei sind.' : settings.sbcProtectActive ? ` (${protectedN} Spieler der aktiven Mannschaft geschützt${locked.size ? `, ${locked.size} gesperrt` : ''})` : (locked.size ? ` (${locked.size} gesperrt)` : '');
+        setStatus(sol.feasible ? '✓ Lösung gefunden – prüfen und einsetzen.' + prot : 'Keine Lösung mit deinem Verein gefunden. Mehr Rechenzeit, Sonderkarten erlauben oder Max. Rating erhöhen.', !sol.feasible);
+      } catch (e) {
+        setStatus('Fehler: ' + e.message, true);
+        log('SBC', e);
+      } finally {
+        pane.querySelectorAll('[data-a="solve"]').forEach((b) => { b.disabled = false; });
+      }
+    }
+
+    async function runApply() {
+      if (!lastSol || !lastSol.feasible) return;
+      if (lastSol.players.some((p) => p && lockedIds().has(p.id))) { setStatus('Lösung enthält gesperrte Spieler – bitte neu lösen.', true); return; }
+      try {
+        setStatus('Setze Spieler ein …');
+        await apply(info, lastSol);
+        setStatus('✓ Eingesetzt. Falls die Aufstellung nicht sofort erscheint: einmal zurück und die Aufgabe neu öffnen. Dann prüfen und selbst einreichen.');
+        // Fenster schließen, damit „Absenden“ und EAs Bestätigung nicht verdeckt werden
+        setTimeout(() => { pane.classList.remove('open'); showToast('✓ Spieler eingesetzt – prüfen und selbst „Absenden“'); }, 700);
+      } catch (e) {
+        setStatus('Einsetzen fehlgeschlagen: ' + e.message + ' – bitte „Diagnose kopieren“ und mir schicken.', true);
+        log('SBC apply', e);
+      }
+    }
+
+    function diagnose() {
+      const ctx = findSbcContext();
+      const sl = ctx ? slotList(ctx.squad || (ctx.challenge && ctx.challenge.squad)) : [];
+      if (ctx && !ctx.squad && ctx.challenge) ctx.squad = ctx.challenge.squad;
+      const methods = (o) => { const s = new Set(); let p = o; for (let d = 0; p && d < 4; d++, p = Object.getPrototypeOf(p)) Object.getOwnPropertyNames(p).forEach((k) => s.add(k)); return [...s].filter((k) => !k.startsWith('__')).slice(0, 120); };
+      const sampleEnt = club && club.ents.size ? club.ents.values().next().value : null;
+      const d = {
+        version: GM_info && GM_info.script && GM_info.script.version,
+        capturedChallenges: CAP.challenges.size, currentId: CAP.currentId, recentUrls: CAP.urls.slice(-15),
+        info: info && { id: info.id, name: info.name, formation: info.formation, positions: info.positions, elgReq: info.elgReq },
+        classes: ['UTSBCChallengeEntity', 'UTSquadEntity', 'UTSBCSquadOverviewViewController'].map((n) => ({ n, exists: !!W[n] })),
+        repoKeys: (() => { try { const r = W.services.SBC.repository; return r ? Object.keys(r).slice(0, 30) : null; } catch (e) { return String(e); } })(),
+        context: ctx ? { via: ctx.via, controllerKeys: ctx.controller ? Object.keys(ctx.controller).slice(0, 60) : null, challengeKeys: Object.keys(ctx.challenge || {}).slice(0, 60), squadMethods: ctx.squad ? methods(ctx.squad) : null, slots: sl.length, slot0Keys: sl[0] ? Object.keys(sl[0]).slice(0, 30) : null, slot0Pos: sl[0] ? slotPos(sl[0]) : null, slot0PosRaw: sl[0] ? (() => { try { const p = typeof sl[0].getPosition === 'function' ? sl[0].getPosition() : sl[0].position || sl[0]._position; return p && typeof p === 'object' ? Object.keys(p).slice(0, 15).reduce((a, k) => { const v = p[k]; if (typeof v !== 'object' && typeof v !== 'function') a[k] = v; return a; }, {}) : p; } catch (e) { return String(e); } })() : null } : null,
+        sbcService: W.services && W.services.SBC ? methods(W.services.SBC) : null,
+        club: club ? { players: club.players.length, sample: club.players.slice(0, 2) } : null,
+        rawCaptured: CAP.raw.size, sampleRawKeys: CAP.raw.size ? Object.keys(CAP.raw.values().next().value).slice(0, 60) : null,
+        sampleEntityKeys: sampleEnt ? Object.keys(sampleEnt).slice(0, 60) : null,
+        lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
+      };
+      const text = JSON.stringify(d, null, 1);
+      const done = () => setStatus('Diagnose kopiert – füge sie im Chat ein (Strg + V).');
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+      else fallbackCopy(text, done);
+    }
+    function fallbackCopy(text, done) {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { setStatus('Kopieren nicht möglich', true); }
+      ta.remove();
+    }
+
+    pane.addEventListener('click', (e) => {
+      const a = e.target.closest && e.target.closest('[data-a]');
+      if (!a) return;
+      const act = a.dataset.a;
+      if (act === 'close') pane.classList.remove('open');
+      if (act === 'solve') runSolve(false);
+      if (act === 'reload') { club = null; runSolve(true); }
+      if (act === 'apply') runApply();
+      if (act === 'diag') diagnose();
+      if (act === 'lock' && lastSol) {
+        const p = lastSol.players[+a.dataset.i];
+        if (p && !lockedIds().has(p.id)) { settings.sbcLocked.push({ id: p.id, name: p.name, rating: p.rating }); saveSettings(); }
+        renderLocks(); renderResult(lastSol);
+      }
+      if (act === 'unlock') {
+        settings.sbcLocked = settings.sbcLocked.filter((x) => String(x.id) !== a.dataset.id); saveSettings();
+        renderLocks(); if (lastSol) renderResult(lastSol);
+      }
+    });
+    sbcBtn.addEventListener('click', () => {
+      const open = pane.classList.toggle('open');
+      if (open) { panel.classList.remove('open'); refreshInfo(); setStatus(''); }
+    });
+
+    // Button nur auf SBC-Aufgaben zeigen
+    setInterval(() => {
+      let on = false;
+      on = CAP.currentId != null && Date.now() - CAP.currentAt < 30 * 60000;
+      sbcBtn.classList.toggle('show', on || pane.classList.contains('open'));
+    }, 1500);
+
+    return { CAP, readChallenge, findSbcContext, loadClub, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+  })();
+
+
+  // ==================================================================
+  // TRADING-FINDER: Spieler mit lohnender Tages-Preisspanne (Futbin-Stundenpreise)
+  // Liest nur Futbin – kauft oder bietet nichts.
+  // ==================================================================
+  const TRADE = (() => {
+    if (settings.tradeMin === undefined) settings.tradeMin = 5000;
+    if (settings.tradeMax === undefined) settings.tradeMax = 30000;
+    if (settings.tradeMinProfit === undefined) settings.tradeMinProfit = 500;
+    if (settings.tradeCount === undefined || settings.tradeCount > 60) settings.tradeCount = 25;
+    if (settings.tradeHideFalling === undefined) settings.tradeHideFalling = true;
+    if (settings.tradeSort === undefined) settings.tradeSort = 'profit';
+
+    // Ergebnisse 60 Min. dauerhaft merken (auch nach Neuladen) -> weniger Futbin-Abrufe
+    const TC_KEY = 'fcpt_trade_cache';
+    const TCACHE = GM_getValue(TC_KEY, {});
+    for (const k of Object.keys(TCACHE)) if (Date.now() - TCACHE[k].t > 60 * 60000) delete TCACHE[k];
+    const saveTC = () => GM_setValue(TC_KEY, TCACHE);
+    let running = false, stopFlag = false, results = [];
+
+    const pct = (arr, q) => {
+      const a = [...arr].sort((x, y) => x - y);
+      if (!a.length) return null;
+      const i = Math.min(a.length - 1, Math.max(0, Math.round(q * (a.length - 1))));
+      return a[i];
+    };
+    const stepDown = (v) => { const st = stepFor(v); return Math.floor(v / st) * st; };
+    const stepUp = (v) => { const st = stepFor(v); return Math.ceil(v / st) * st; };
+
+    async function candidates(min, max, want) {
+      const plat = settings.platform === 'pc' ? 'pc' : 'ps';
+      const out = [];
+      for (let page = 1; page <= 3 && out.length < want; page++) {
+        const url = `https://www.futbin.com/27/players?${plat}_price=${min}-${max}&sort=${plat}_price&order=desc&page=${page}`;
+        const html = await gmGet(url, 'text');
+        if (isCfPage(html)) throw new Error('Futbin-Schutzseite – öffne futbin.com einmal in einem Tab');
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const rows = [...doc.querySelectorAll('tbody tr')];
+        if (!rows.length) break;
+        for (const r of rows) {
+          const a = r.querySelector('a[href*="/player/"]');
+          if (!a) continue;
+          const path = a.getAttribute('href').split('?')[0];
+          if (out.some((x) => x.path === path)) continue;
+          const nameEl = r.querySelector('.table-player-name, .player-name') || a;
+          out.push({
+            path,
+            name: (nameEl.textContent || '').replace(/\s+/g, ' ').trim().replace(/\s+(Normal|Rare).*$/i, ''),
+            rating: toNum((r.querySelector('.table-rating') || {}).textContent),
+          });
+          if (out.length >= want) break;
+        }
+        await sleep(600);
+      }
+      return out;
+    }
+
+    async function analyse(c, maxAge = 60 * 60000) {
+      const hit = TCACHE[c.path];
+      if (hit && Date.now() - hit.t < maxAge) return hit.data;
+      const html = await gmGet(`https://www.futbin.com${c.path}/market`, 'text');
+      if (isCfPage(html)) throw new Error('Futbin-Schutzseite');
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const plat = settings.platform === 'pc' ? 'pc' : 'ps';
+      const series = [...doc.querySelectorAll(`[data-${plat}-data]`)].map((e) => {
+        try { return JSON.parse(e.getAttribute(`data-${plat}-data`)); } catch (err) { return []; }
+      }).filter((a) => Array.isArray(a) && a.length > 1);
+      const hourly = series.filter((a) => a[1][0] - a[0][0] <= 3600000 * 1.5).sort((a, b) => b.length - a.length)[0];
+      const daily = series.find((a) => a[1][0] - a[0][0] >= 3600000 * 20);
+      if (!hourly || hourly.length < 24) return null;
+      const last72 = hourly.slice(-72).map((x) => x[1]).filter((v) => v > 0);
+      const current = hourly[hourly.length - 1][1];
+      // Tages-Schwankung statt Gesamtspanne: je 24-Std.-Fenster Tief (P10) und Hoch (P90), davon der Median.
+      // So zählt ein fallender Preis nicht als "Spanne".
+      const days = [];
+      for (let end = last72.length; end >= 12; end -= 24) days.push(last72.slice(Math.max(0, end - 24), end));
+      const med = (a) => pct(a, 0.5);
+      const buy = stepDown(med(days.map((d) => pct(d, 0.1))));
+      const sell = stepUp(med(days.map((d) => pct(d, 0.9))));
+      const profit = afterTax(sell) - buy;
+      let trend = null;
+      if (daily && daily.length >= 4) {
+        const d = daily.map((x) => x[1]);
+        const ref = d[d.length - 4];
+        if (ref > 0) trend = (current - ref) / ref;
+      }
+      const data = { current, buy, sell, profit, margin: buy ? profit / buy : 0, trend, low: Math.min(...last72), high: Math.max(...last72), spark: last72 };
+      TCACHE[c.path] = { t: Date.now(), data }; saveTC();
+      return data;
+    }
+
+    const falling = (r) => r.trend != null && r.trend < -0.15;
+    function signal(r) {
+      if (falling(r)) return '<span class="tsig bad" title="Preis ist in 3 Tagen um mehr als 15 % gefallen">⚠ Fällt stark</span>';
+      if (r.current <= r.buy * 1.02) return '<span class="tsig good" title="Aktueller Preis liegt im Tagestief">● Jetzt kaufen</span>';
+      if (r.current >= r.sell * 0.98) return '<span class="tsig hot" title="Aktueller Preis liegt im Tageshoch">● Jetzt verkaufen</span>';
+      return '<span class="tsig" title="Preis liegt zwischen Tief und Hoch">○ Abwarten</span>';
+    }
+
+    // Mini-Preisverlauf (72 Std.) mit Kauf- und Verkaufslinie
+    function spark(r) {
+      const d = r.spark || [];
+      if (d.length < 2) return '';
+      const W2 = 300, H2 = 46, pad = 3;
+      const lo = Math.min(...d, r.buy), hi = Math.max(...d, r.sell);
+      const y = (v) => pad + (hi - v) / Math.max(1, hi - lo) * (H2 - 2 * pad);
+      const x = (i) => (i / (d.length - 1)) * W2;
+      const pts = d.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      return `<svg class="tspark" viewBox="0 0 ${W2} ${H2}" preserveAspectRatio="none" aria-label="Preisverlauf 72 Stunden">
+        <line x1="0" x2="${W2}" y1="${y(r.sell)}" y2="${y(r.sell)}" class="ls"/>
+        <line x1="0" x2="${W2}" y1="${y(r.buy)}" y2="${y(r.buy)}" class="lb"/>
+        <polyline points="${pts}" class="pl"/>
+        <circle cx="${x(d.length - 1)}" cy="${y(d[d.length - 1])}" r="3" class="pt"/></svg>`;
+    }
+
+    function renderRows(box) {
+      let list = results.filter((r) => r.profit >= settings.tradeMinProfit);
+      const hidden = settings.tradeHideFalling ? list.filter(falling).length : 0;
+      if (settings.tradeHideFalling) list = list.filter((r) => !falling(r));
+      const rank = (r) => (r.current <= r.buy * 1.02 ? 0 : r.current >= r.sell * 0.98 ? 2 : 1);
+      const sorters = {
+        profit: (a, b) => b.profit - a.profit,
+        margin: (a, b) => b.margin - a.margin,
+        now: (a, b) => rank(a) - rank(b) || b.profit - a.profit,
+      };
+      list.sort(sorters[settings.tradeSort] || sorters.profit);
+      const cards = list.map((r) => `
+        <div class="tcard">
+          <div class="tc-top">
+            <span class="tc-ovr">${esc(r.rating ?? '')}</span>
+            <a class="tc-name" href="https://www.futbin.com${r.path}/market" target="_blank" rel="noopener" title="Futbin-Preisverlauf öffnen">${esc(r.name)} ↗</a>
+            <div class="tc-profit"><b>${signed(r.profit)}</b><small>${Math.round(r.margin * 100)} % Profit</small></div>
+            <button class="tc-star ${WATCH.has(r.path) ? 'on' : ''}" data-star="${esc(r.path)}" title="${WATCH.has(r.path) ? 'Auf der Watchlist' : 'Beobachten – Alarm, sobald die Karte unter „Kaufen bis“ auftaucht'}">${WATCH.has(r.path) ? '★' : '☆'}</button>
+          </div>
+          <div class="tc-sig">${signal(r)}${r.trend == null ? '' : `<span class="tc-trend ${r.trend >= 0 ? 'up' : 'down'}">${r.trend >= 0 ? '↑' : '↓'} ${Math.abs(Math.round(r.trend * 100))} % in 3 Tagen</span>`}</div>
+          ${spark(r)}
+          <div class="tc-stats">
+            <div><span>Aktuell</span><b>${fmt(r.current)}</b></div>
+            <div class="buy"><span>Kaufen bis</span><b>${fmt(r.buy)}</b></div>
+            <div class="sell"><span>Verkaufen für</span><b>${fmt(r.sell)}</b></div>
+          </div>
+        </div>`).join('');
+      const head = `<div class="tbar">
+          <select data-ts="tradeSort">
+            <option value="profit">Sortieren: höchster Profit</option>
+            <option value="margin">Sortieren: höchster Profit in %</option>
+            <option value="now">Sortieren: jetzt kaufen zuerst</option>
+          </select>
+          <label class="tchk"><input type="checkbox" data-tc="tradeHideFalling"> Fallende ausblenden${hidden ? ` (${hidden})` : ''}</label>
+        </div>`;
+      box.innerHTML = results.length || running ? head + (list.length ? `<div class="tlist">${cards}</div>`
+        : `<div class="fcpt-msg">${running ? 'Suche läuft …' : `Keine passenden Spieler mit mind. ${fmt(settings.tradeMinProfit)} Profit – Budget oder Mindest-Profit ändern.`}</div>`)
+        : '<div class="fcpt-msg">Budget einstellen und „Spieler suchen“ klicken.</div>';
+      const sel = box.querySelector('[data-ts]');
+      if (sel) { sel.value = settings.tradeSort; sel.onchange = () => { settings.tradeSort = sel.value; saveSettings(); renderRows(box); }; }
+      box.querySelectorAll('[data-star]').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const r = results.find((x) => x.path === b.dataset.star);
+        if (!r) return;
+        if (WATCH.has(r.path)) WATCH.remove(r.path); else WATCH.add(r);
+        renderRows(box);
+      }));
+      const chk = box.querySelector('[data-tc]');
+      if (chk) { chk.checked = !!settings.tradeHideFalling; chk.onchange = () => { settings.tradeHideFalling = chk.checked; saveSettings(); renderRows(box); }; }
+    }
+
+    function html() {
+      return `
+        <div class="fcpt-sgroup"><h4>Trading-Finder</h4>
+          <div class="note" style="font-size:12px;color:#a7b3c6">Findet Spieler, deren Preis im Tagesverlauf schwankt: im Tagestief kaufen, im Tageshoch verkaufen. Profit nach 5 % Steuer, berechnet aus den Futbin-Stundenpreisen der letzten 3 Tage.</div>
+          <div class="fcpt-set"><span>Budget von</span><input type="number" step="500" min="0" data-t="tradeMin"></div>
+          <div class="fcpt-set"><span>Budget bis</span><input type="number" step="500" min="0" data-t="tradeMax"></div>
+          <div class="fcpt-set"><span>Mindest-Profit pro Karte</span><input type="number" step="100" min="0" data-t="tradeMinProfit"></div>
+          <div class="fcpt-set"><span>Spieler prüfen<small>~2 Sek. pro Spieler · max. 60, sonst blockt Futbin</small></span><input type="number" step="5" min="10" max="60" data-t="tradeCount"></div>
+          <button class="fcpt-bigbtn" data-act="tradeRun">📈 Spieler suchen</button>
+          <div class="fcpt-stand" data-el="tradeStatus"></div>
+        </div>
+        <div data-el="tradeRes"></div>
+        <div class="note" style="font-size:11px;color:#7d8aa0">Grafik: Preis der letzten 72 Std. · <span style="color:#86efac">grüne Linie</span> = Kaufen bis · <span style="color:#fca5a5">rote Linie</span> = Verkaufen für. Futbin-Werte sind Durchschnitte – keine Garantie. Nichts wird automatisch gekauft.</div>`;
+    }
+
+    async function run(root) {
+      const st = root.querySelector('[data-el="tradeStatus"]');
+      const box = root.querySelector('[data-el="tradeRes"]');
+      const btn = root.querySelector('[data-act="tradeRun"]');
+      if (running) { stopFlag = true; st.textContent = 'Wird gestoppt …'; return; }
+      running = true; stopFlag = false; results = [];
+      btn.textContent = '■ Stopp';
+      try {
+        st.textContent = 'Lade Spieler aus Futbin …';
+        const min = Math.min(settings.tradeMin, settings.tradeMax), max = Math.max(settings.tradeMin, settings.tradeMax);
+        const cands = await candidates(min, max, Math.max(10, Math.min(60, settings.tradeCount)));
+        let i = 0, blocked = null;
+        for (const c of cands) {
+          if (stopFlag) break;
+          i++;
+          st.textContent = `Prüfe ${i}/${cands.length}: ${c.name} …`;
+          try {
+            const d = await analyse(c);
+            if (d) { results.push(Object.assign({}, c, d)); renderRows(box); }
+          } catch (e) {
+            log('Trade', c.name, e);
+            if (e.message === BLOCK_MSG || /Schutzseite/.test(e.message)) { blocked = e.message; break; }
+          }
+          await sleep(1300 + Math.random() * 900);
+        }
+        const good = results.filter((r) => r.profit >= settings.tradeMinProfit).length;
+        st.textContent = blocked
+          ? `⚠ ${blocked} Bisher ${results.length} Spieler geprüft – die Ergebnisse bleiben stehen.`
+          : `${stopFlag ? 'Gestoppt' : 'Fertig'}: ${results.length} Spieler geprüft, ${good} mit mind. ${fmt(settings.tradeMinProfit)} Profit.`;
+      } catch (e) {
+        st.textContent = 'Fehler: ' + e.message;
+      } finally {
+        running = false; btn.textContent = '📈 Spieler suchen'; renderRows(box);
+      }
+    }
+
+    // ---------- Vereinswert (nur handelbare Karten) ----------
+    function clubValueHtml() {
+      return `<div class="fcpt-sgroup"><h4>💼 Vereinswert</h4>
+          <div class="note" style="font-size:12px;color:#a7b3c6">Wert aller <b>handelbaren</b> Spieler in deinem Verein, im SBC-Lager und in der Transferliste – nicht handelbare und Leihspieler zählen nicht. Bewertet mit Futbin (falls schon geladen), sonst EAs Durchschnittspreis.</div>
+          <button class="fcpt-bigbtn" data-act="clubValue">💼 Vereinswert berechnen</button>
+          <div class="fcpt-stand" data-el="cvStatus"></div>
+          <div data-el="cvRes"></div></div>`;
+    }
+
+    async function runClubValue(root) {
+      const st = root.querySelector('[data-el="cvStatus"]');
+      const box = root.querySelector('[data-el="cvRes"]');
+      const btn = root.querySelector('[data-act="clubValue"]');
+      btn.disabled = true;
+      try {
+        const c = await SBCUI.loadClub((m) => { st.textContent = m; }, false);
+        const seen = new Set();
+        const rows = [];
+        for (const p of c.players) {
+          if (p.untradeable || p.loans > 0 || seen.has(p.id)) continue;
+          seen.add(p.id);
+          const ent = c.ents.get(p.id);
+          const resId = ent && (ent.resourceId || ent.definitionId);
+          const fb = resId != null ? cacheGet(`futbin:${settings.platform}:${resId}`) : null;
+          const raw = SBCUI.CAP.raw.get(p.id) || {};
+          const val = fb || raw.marketAverage || null;
+          rows.push({ name: p.name, rating: p.rating, where: 'Verein', value: val || p.value, src: fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung' });
+        }
+        // Transferliste (nicht verkaufte, handelbare Karten) – falls geladen
+        for (const it of items || []) {
+          if (!it.isPlayer || it.sold || seen.has(it.itemId)) continue;
+          seen.add(it.itemId);
+          const fb = cacheGet(`futbin:${settings.platform}:${it.resourceId}`);
+          const raw = SBCUI.CAP.raw.get(it.itemId) || {};
+          const val = fb || raw.marketAverage;
+          if (!val) continue;
+          rows.push({ name: it.name, rating: it.rating, where: 'Transferliste', value: val, src: fb ? 'Futbin' : 'EA' });
+        }
+        const total = rows.reduce((a, r) => a + (r.value || 0), 0);
+        const net = rows.reduce((a, r) => a + afterTax(r.value || 0), 0);
+        const coins = SBCUI.userCoins();
+        const bySrc = (k) => rows.filter((r) => r.src === k).length;
+        const bands = [[90, 99, '90+'], [85, 89, '85–89'], [80, 84, '80–84'], [75, 79, '75–79'], [0, 74, 'unter 75']].map(([lo, hi, l]) => {
+          const b = rows.filter((r) => r.rating >= lo && r.rating <= hi);
+          return { l, n: b.length, v: b.reduce((a, r) => a + r.value, 0) };
+        }).filter((b) => b.n);
+        const top = [...rows].sort((a, b) => b.value - a.value).slice(0, 10);
+        const maxBand = Math.max(1, ...bands.map((b) => b.v));
+        box.innerHTML = `
+          <div class="fcpt-overview" style="margin-top:4px">
+            <div><div class="l">Marktwert (${rows.length} Karten)</div><div class="v">${fmt(Math.round(total))}</div></div>
+            <div><div class="l">Nach 5 % Steuer</div><div class="v fcpt-pos-v">${fmt(Math.round(net))}</div></div>
+            <div><div class="l">+ Münzen = Gesamt</div><div class="v">${coins != null ? fmt(Math.round(net + coins)) : '–'}</div></div>
+          </div>
+          <div class="cv-bands">${bands.map((b) => `<div class="cv-band"><span>${b.l}</span><div class="cv-bar"><i style="width:${Math.max(2, Math.round(b.v / maxBand * 100))}%"></i></div><b>${fmt(Math.round(b.v))}</b><small>${b.n}×</small></div>`).join('')}</div>
+          <div class="fcpt-mini"><div class="h">Wertvollste handelbare Karten</div>${top.map((r) => `<div class="r"><span>${esc(r.rating)} ${esc(r.name)}${r.where === 'Transferliste' ? ' <span class="fcpt-muted">(TL)</span>' : ''}</span><b>${fmt(Math.round(r.value))} <small class="fcpt-muted">${r.src}</small></b></div>`).join('')}</div>
+          <div class="fcpt-stand">Preisquellen: ${bySrc('Futbin')}× Futbin · ${bySrc('EA')}× EA-Durchschnitt · ${bySrc('Schätzung')}× geschätzt${coins != null ? ` · Münzen: ${fmt(coins)}` : ''}</div>`;
+        st.textContent = `Stand: ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} · Verein wird 10 Min. zwischengespeichert.`;
+      } catch (e) {
+        st.textContent = 'Fehler: ' + e.message;
+      } finally { btn.disabled = false; }
+    }
+
+    function mount(root) {
+      root.innerHTML = clubValueHtml() + '<div data-el="watch"></div>' + html();
+      WATCH.mount(root.querySelector('[data-el="watch"]'));
+      root.querySelector('[data-act="clubValue"]').addEventListener('click', (e) => { e.stopPropagation(); runClubValue(root); });
+      root.querySelectorAll('[data-t]').forEach((i) => {
+        i.value = settings[i.dataset.t];
+        i.addEventListener('change', () => {
+          settings[i.dataset.t] = Math.max(0, parseInt(i.value, 10) || 0); saveSettings();
+          renderRows(root.querySelector('[data-el="tradeRes"]'));
+        });
+      });
+      root.querySelector('[data-act="tradeRun"]').addEventListener('click', (e) => { e.stopPropagation(); run(root); });
+      renderRows(root.querySelector('[data-el="tradeRes"]'));
+    }
+    return { mount, analyse };
+  })();
+
+
+  // ==================================================================
+  // WATCHLIST + PREIS-ALARM
+  // Karten mit Wunsch-Kaufpreis merken. Alarm (Ton + Meldung), wenn
+  //  a) eine passende Karte in deinen Transfermarkt-Suchergebnissen darunter auftaucht
+  //  b) der Futbin-Preis auf/unter dein Ziel fällt (Prüfung alle 10 Min., schonend)
+  // Kauft nichts – du entscheidest.
+  // ==================================================================
+  const WATCH = (() => {
+    if (!Array.isArray(settings.watch)) settings.watch = [];
+    if (settings.watchCheck === undefined) settings.watchCheck = true;
+    if (settings.watchSound === undefined) settings.watchSound = true;
+    const alerted = {};
+    let box = null;
+
+    const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    function add(r) {
+      if (settings.watch.some((w) => w.path === r.path)) return false;
+      settings.watch.push({ path: r.path, name: r.name, rating: r.rating, target: r.buy, sell: r.sell, last: r.current, lastAt: Date.now() });
+      saveSettings(); render();
+      showToast(`⭐ ${r.name} beobachtet – Alarm ab ${fmt(r.buy)}`);
+      return true;
+    }
+    function remove(path) { settings.watch = settings.watch.filter((w) => w.path !== path); saveSettings(); render(); }
+    const has = (path) => settings.watch.some((w) => w.path === path);
+
+    function beep() {
+      if (!settings.watchSound) return;
+      try {
+        const Ctx = W.AudioContext || W.webkitAudioContext;
+        const ctx = new Ctx();
+        [0, 0.18].forEach((t, i) => {
+          const o = ctx.createOscillator(), g = ctx.createGain();
+          o.frequency.value = i ? 1320 : 880; o.type = 'sine';
+          g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+          g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + t + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.16);
+          o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.17);
+        });
+        setTimeout(() => ctx.close(), 800);
+      } catch (e) { /* kein Ton möglich */ }
+    }
+    function alarm(key, msg, minGapMs) {
+      if (alerted[key] && Date.now() - alerted[key] < minGapMs) return;
+      alerted[key] = Date.now();
+      showToast('⭐ ' + msg);
+      beep();
+      try { if (W.Notification && W.Notification.permission === 'granted') new W.Notification('FC27 Watchlist', { body: msg }); } catch (e) { /* */ }
+    }
+
+    // EA-Karte (aus mapItem) einer Watchlist-Karte zuordnen: gleiches Rating + Name passt
+    function match(p) {
+      if (!settings.watch.length || !p || !p.name) return null;
+      const en = norm(p.name);
+      const last = en.split(' ').pop();
+      return settings.watch.find((w) => {
+        if (w.rating != null && p.rating != null && w.rating !== p.rating) return false;
+        const wn = norm(w.name);
+        return wn === en || wn.includes(en) || (last.length > 2 && wn.split(' ').includes(last));
+      }) || null;
+    }
+
+    // Aufruf aus der Listen-Anzeige für fremde Angebote (Transfermarkt/Transferziele)
+    function marketChip(p, root) {
+      const w = match(p);
+      if (!w) return '';
+      const nb = p.currentBid ? p.currentBid + (p.currentBid < 1000 ? 50 : p.currentBid < 10000 ? 100 : p.currentBid < 50000 ? 250 : p.currentBid < 100000 ? 500 : 1000) : p.startPrice;
+      const binOk = p.buyNow && p.buyNow <= w.target;
+      const bidOk = nb && nb <= w.target;
+      if (binOk || bidOk) {
+        root.classList.add('fcpt-watchhit');
+        alarm(`m${p.tradeId}`, `${w.name}: ${binOk ? `Sofortkauf ${fmt(p.buyNow)}` : `Gebot ab ${fmt(nb)}`} – dein Ziel ${fmt(w.target)}`, 10 * 60000);
+        return `<span class="fcpt-chip watch">⭐ Unter deinem Ziel (${fmt(w.target)})</span>`;
+      }
+      return `<span class="fcpt-chip">⭐ Watchlist · Ziel ${fmt(w.target)}</span>`;
+    }
+
+    // Futbin-Prüfung: pro Minute höchstens EINE Karte, jede alle 10 Min. -> schonend
+    setInterval(async () => {
+      if (!settings.watchCheck || !settings.watch.length || document.visibilityState !== 'visible' || futbinBlocked()) return;
+      const due = settings.watch.filter((w) => Date.now() - (w.lastAt || 0) > 10 * 60000).sort((a, b) => (a.lastAt || 0) - (b.lastAt || 0))[0];
+      if (!due) return;
+      try {
+        const d = await TRADE.analyse(due, 9 * 60000);
+        if (!d) return;
+        due.last = d.current; due.lastAt = Date.now(); due.sell = d.sell; saveSettings(); render();
+        if (d.current <= due.target) alarm(`f${due.path}`, `${due.name} liegt bei ${fmt(d.current)} (Futbin) – dein Ziel ${fmt(due.target)}. Jetzt suchen!`, 60 * 60000);
+      } catch (e) { log('Watch', e); due.lastAt = Date.now(); }
+    }, 60000);
+
+    function render() {
+      if (!box) return;
+      const L = settings.watch;
+      box.innerHTML = `
+        <div class="fcpt-sgroup"><h4>⭐ Watchlist & Preis-Alarm</h4>
+          ${L.length ? L.map((w) => {
+            const hit = w.last != null && w.last <= w.target;
+            return `<div class="wl-row ${hit ? 'hit' : ''}">
+              <div class="wl-name"><b>${esc(w.rating ?? '')} ${esc(w.name)}</b><small>Futbin: ${w.last != null ? fmt(w.last) : '–'} · ${w.lastAt ? agoText(w.lastAt) : ''}</small></div>
+              <label class="wl-t">Ziel ≤<input type="number" step="50" min="0" data-wt="${esc(w.path)}" value="${w.target}"></label>
+              <button class="wl-x" data-wx="${esc(w.path)}" title="Entfernen">✕</button></div>`;
+          }).join('') : '<div class="note" style="font-size:12px;color:#7d8aa0">Noch leer. Im Trading-Finder bei einer Karte auf ☆ klicken – das Ziel wird auf „Kaufen bis“ gesetzt.</div>'}
+          <div class="fcpt-set"><span>Futbin-Preis alle 10 Min. prüfen<small>Nur solange die Web App offen ist · 1 Abruf pro Minute</small></span><input type="checkbox" class="fcpt-sw" data-wo="watchCheck"></div>
+          <div class="fcpt-set"><span>Ton bei Alarm</span><input type="checkbox" class="fcpt-sw" data-wo="watchSound"></div>
+          <button class="fcpt-smallbtn" data-wa="notify">🔔 Browser-Benachrichtigungen erlauben</button>
+        </div>`;
+      box.querySelectorAll('[data-wt]').forEach((i) => i.addEventListener('change', () => {
+        const w = settings.watch.find((x) => x.path === i.dataset.wt);
+        if (w) { w.target = Math.max(0, parseInt(i.value, 10) || 0); saveSettings(); }
+      }));
+      box.querySelectorAll('[data-wx]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); remove(b.dataset.wx); }));
+      box.querySelectorAll('[data-wo]').forEach((c) => { c.checked = !!settings[c.dataset.wo]; c.addEventListener('change', () => { settings[c.dataset.wo] = c.checked; saveSettings(); }); });
+      const nb = box.querySelector('[data-wa="notify"]');
+      if (nb) nb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try { W.Notification.requestPermission().then((r) => showToast(r === 'granted' ? '🔔 Benachrichtigungen erlaubt' : 'Benachrichtigungen nicht erlaubt')); } catch (err) { showToast('Dein Browser unterstützt das nicht', true); }
+      });
+    }
+    function mount(el) { box = el; render(); }
+    return { add, remove, has, match, marketChip, mount, render };
+  })();
+
+
+  function installHook() {
+    const V = W.UTItemTableCellView;
+    if (!V || !V.prototype || typeof V.prototype.render !== 'function') return false;
+    if (V.prototype.__fcpt) return true;
+    const orig = V.prototype.render;
+    V.prototype.render = function () {
+      const r = orig.apply(this, arguments);
+      try {
+        if (settings.inline) {
+          const item = arguments[0] || this.data || this._data;
+          const root = typeof this.getRootElement === 'function' ? this.getRootElement() : this.__root;
+          decorateRow(root, item);
+        }
+      } catch (e) { log('Anzeige in der Liste fehlgeschlagen', e); }
+      return r;
+    };
+    V.prototype.__fcpt = true;
+    log('Listen-Anzeige aktiv');
+    return true;
+  }
+
+  let hookTries = 0;
+  const hookTimer = setInterval(() => {
+    if (installHook()) return clearInterval(hookTimer);
+    if (++hookTries > 120) {
+      clearInterval(hookTimer);
+      log('UTItemTableCellView nicht gefunden – Anzeige in der Liste nicht möglich, Seitenleiste funktioniert trotzdem.');
+    }
+  }, 1000);
+})();
