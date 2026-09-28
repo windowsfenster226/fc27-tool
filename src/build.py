@@ -8,6 +8,7 @@ ui=open(os.path.join(D,'sbc-ui.js')).read()
 trade=open(os.path.join(D,'trade.js')).read()
 watch=open(os.path.join(D,'watch.js')).read()
 extras=open(os.path.join(D,'extras.js')).read()
+uib=open(os.path.join(D,'ui-b.js')).read()
 def rep(a,b):
     global s
     assert s.count(a)==1, a[:80]
@@ -15,7 +16,7 @@ def rep(a,b):
 rep("@version      1.9.0","@version      "+ver)
 rep("// @description  Zeigt für deine Transferliste","// @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste")
 rep("  const W = unsafeWindow;\n","  const W = unsafeWindow;\n\n"+core+"\n")
-rep("  function installHook() {", ui+"\n"+trade+"\n"+watch+"\n"+extras+"\n  function installHook() {")
+rep("  function installHook() {", ui+"\n"+trade+"\n"+watch+"\n"+extras+"\n"+uib+"\n  function installHook() {")
 # Trading-Tab
 rep("""<div class="fcpt-tabs"><button data-tab="list" class="on">Transferliste</button><button data-tab="hist">Historie</button><button data-tab="settings">⚙ Einstellungen</button></div>""",
     """<div class="fcpt-tabs"><button data-tab="list" class="on">Transferliste</button><button data-tab="hist">Historie</button><button data-tab="trade">📈 Trading</button><button data-tab="settings" title="Einstellungen">⚙</button></div>""")
@@ -275,5 +276,19 @@ rep("""    if (act === 'editBought') {""","""    if (act === 'target') {
     }
     if (act === 'editBought') {""")
 
+# --- Oberfläche Variante B: dichte Liste + Übersicht ---
+rep("""<div class="l">Wert der Liste (Markt)</div>""","""<div class="l">Listenwert</div>""")
+rep("""<div class="l">Profit bei Verkauf zum Markt</div>""","""<div class="l">Möglicher Profit</div>""")
+rep("""    listEl.innerHTML = sorted.map(cardHtml).join('');
+    sumEl.innerHTML = overviewHtml();
+    updateStand();""","""    listEl.innerHTML = UIB.headHtml() + sorted.map(UIB.rowHtml).join('');
+    sumEl.innerHTML = overviewHtml();
+    updateStand();
+    UIB.after();""")
+rep("""  function updatePrices(rid) {
+""","""  function updatePrices(rid) {
+    UIB.updateRow(rid);
+    if (view === 'home') UIB.after();
+""")
 open(os.path.join(D,'..','fc27-preis-tool.user.js'),'w').write(s)
 print('built', ver)
