@@ -150,6 +150,16 @@ rep("""    .fcpt-inline .fcpt-chip.deal{""","""    .fcpt-chip.be{background:#1d2
     .tc-star:not(.on){color:#7d8aa0}.tc-star:hover{color:#f5c518}
     .wl-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;background:var(--bg3);border-radius:8px;padding:6px 8px;border-left:3px solid transparent}
     .wl-row.hit{border-left-color:#a855f7;background:rgba(168,85,247,.12)}
+    .pg-list{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+    .pg-item{display:flex;gap:6px;align-items:center;text-align:left;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:13px system-ui,sans-serif;cursor:pointer}
+    .pg-item small{color:var(--ink3)}.pg-item span{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
+    .pg-res{margin-top:8px;border-radius:10px;padding:10px 12px;background:var(--bg3);border-left:4px solid var(--ink3)}
+    .pg-res.up{border-left-color:var(--pos)}.pg-res.down{border-left-color:var(--neg)}.pg-res.flat{border-left-color:var(--warn)}
+    .pg-h{display:flex;gap:6px;align-items:baseline;font-size:13px}.pg-h small{color:var(--ink3)}.pg-h span{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--ink2)}
+    .pg-v{font-size:19px;font-weight:800;margin:6px 0 2px}.pg-res.up .pg-v{color:var(--pos)}.pg-res.down .pg-v{color:var(--neg)}.pg-res.flat .pg-v{color:var(--warn)}
+    .pg-c{font-size:11.5px;color:var(--ink2)}
+    .pg-w{list-style:none;margin:8px 0;padding:0;font-size:12px;display:flex;flex-direction:column;gap:3px}.pg-w li.p{color:#86efac}.pg-w li.n{color:#fca5a5}.pg-w li{color:var(--ink2)}
+    .pg-tip{font-size:12.5px;background:rgba(245,197,24,.08);border-radius:8px;padding:6px 8px;margin-bottom:6px}
     .fcpt-subtabs{display:flex;gap:4px;margin:0 0 8px;position:sticky;top:0;z-index:2;background:var(--bg);padding:2px 0}
     .fcpt-subtabs button{flex:1;background:var(--bg3);color:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:6px 4px;font:600 12px system-ui,sans-serif;cursor:pointer}
     .fcpt-subtabs button.on{background:#f5c518;color:#111;border-color:#f5c518}

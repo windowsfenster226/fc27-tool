@@ -227,3 +227,204 @@
     function mount(el) { box = el; render(); }
     return { has, get, toggle, remove, sold, mount };
   })();
+
+  // ---------- Preis-Einschätzung: steigt / fällt? ----------
+  // Regeln aus Futbin-Verlauf (Trend, Lage in der Spanne, Kartenalter, Futter-Boden, Wochentag).
+  // Keine Garantie – die Trefferquote der Regeln für genau diese Karte wird mit angezeigt.
+  const PROGNOSE = (() => {
+    let box = null, state = { q: '', list: null, pick: null, res: null, msg: '' };
+    const DAY = 86400000;
+    const slope = (a) => {   // Steigung von log(Preis) pro Tag
+      const n = a.length; if (n < 2) return 0;
+      const ys = a.map((v) => Math.log(Math.max(1, v)));
+      const mx = (n - 1) / 2, my = ys.reduce((s, v) => s + v, 0) / n;
+      let num = 0, den = 0;
+      ys.forEach((y, i) => { num += (i - mx) * (y - my); den += (i - mx) * (i - mx); });
+      return den ? num / den : 0;
+    };
+    const P = (x) => `${x > 0 ? '+' : ''}${Math.round(x * 100)} %`;
+
+    // Bewertung nur aus Tageswerten (für den Rückblick-Test wiederverwendbar)
+    function dailyScore(d) {
+      const n = d.length, cur = d[n - 1];
+      const out = { s: 0, why: [] };
+      const add = (v, t) => { out.s += v; out.why.push({ v, t }); };
+      if (n < 7) add(-2, `Neue Karte (erst ${n} Tage auf dem Markt) – neue Karten fallen meist in den ersten 1–2 Wochen`);
+      else if (n < 14) add(-1, `Noch recht neue Karte (${n} Tage) – oft noch leicht fallend`);
+      const w = d.slice(-7), sl = slope(w);
+      const wk = Math.exp(sl * (w.length - 1)) - 1;
+      if (sl > 0.02) add(1, `Trend 7 Tage steigend (${P(wk)})`);
+      else if (sl < -0.02) add(-1, `Trend 7 Tage fallend (${P(wk)})`);
+      else out.why.push({ v: 0, t: `Trend 7 Tage flach (${P(wk)})` });
+      const r = d.slice(-30), lo = Math.min(...r), hi = Math.max(...r);
+      if (hi > lo * 1.08 && n >= 10) {
+        const pos = (cur - lo) / (hi - lo);
+        if (pos <= 0.2) add(1, `Liegt nahe am ${r.length}-Tage-Tief (${fmt(lo)}) – Luft nach oben`);
+        else if (pos >= 0.85) add(-1, `Liegt nahe am ${r.length}-Tage-Hoch (${fmt(hi)}) – Rücksetzer wahrscheinlich`);
+      }
+      if (n >= 3) {
+        const d3 = cur / d[n - 3] - 1;
+        if (d3 < -0.2) add(1, `In 2 Tagen um ${P(d3)} gefallen – nach starkem Absturz oft Gegenbewegung`);
+        if (d3 > 0.25) add(-1, `In 2 Tagen um ${P(d3)} gestiegen – nach Sprüngen oft Gewinnmitnahmen`);
+      }
+      return out;
+    }
+
+    function forecast(daily, hourly, rating, floor, now = new Date()) {
+      const d = daily.map((x) => x[1]).filter((v) => v > 0);
+      const h = (hourly || []).map((x) => x[1]).filter((v) => v > 0);
+      const cur = h.length ? h[h.length - 1] : d[d.length - 1];
+      if (d.length) d[d.length - 1] = cur;
+      const base = dailyScore(d);
+      let s = base.s; const why = base.why.slice();
+      const add = (v, t) => { s += v; why.push({ v, t }); };
+      if (h.length >= 30) {
+        const ch = cur / h[Math.max(0, h.length - 25)] - 1;
+        if (ch > 0.05) add(0.5, `Letzte 24 Std. ${P(ch)} – Schwung nach oben`);
+        else if (ch < -0.05) add(-0.5, `Letzte 24 Std. ${P(ch)} – Schwung nach unten`);
+      }
+      if (floor && rating >= 82) {
+        if (cur <= floor * 1.15) add(1, `Kostet kaum mehr als die günstigste ${rating}er (${fmt(floor)}) – SBC-Futter, viel tiefer geht es kaum`);
+        const dow = now.getDay(), hr = now.getHours();
+        if ((dow === 3 && hr >= 19) || dow === 4 || (dow === 5 && hr < 19)) add(0.5, 'Vor neuen SBCs/Promo (Do/Fr) steigen Futter-Preise oft');
+      }
+      const dow = now.getDay(), hr = now.getHours();
+      if (dow === 5 && hr >= 12 && hr < 19) add(-1, 'Freitag vor 19 Uhr: neue Promo-Karten drücken die Preise oft');
+      else if ((dow === 4 || dow === 5) && hr >= 19 || dow === 6 || dow === 0) {
+        if (!floor || rating < 82) add(0.5, 'Weekend League (Do–So): mehr Nachfrage nach guten Spielern');
+      }
+      // Rückblick: Wie oft lagen die Tagesregeln bei DIESER Karte richtig (3 Tage später)?
+      let bt = null;
+      if (d.length >= 20) {
+        let ok = 0, tot = 0;
+        for (let i = 14; i < d.length - 3; i++) {
+          const sc = dailyScore(d.slice(0, i + 1)).s;
+          if (Math.abs(sc) < 1) continue;
+          const fut = d[i + 3] / d[i] - 1;
+          if (Math.abs(fut) < 0.02) continue;
+          tot++; if (Math.sign(fut) === Math.sign(sc)) ok++;
+        }
+        if (tot >= 5) bt = { ok, tot };
+      }
+      const rets = []; for (let i = Math.max(1, d.length - 14); i < d.length; i++) rets.push(d[i] / d[i - 1] - 1);
+      const vol = rets.length ? Math.sqrt(rets.reduce((a, r) => a + r * r, 0) / rets.length) : 0;
+      const verdict = s >= 1.5 ? 'up' : s <= -1.5 ? 'down' : 'flat';
+      let conf = Math.abs(s) >= 3 ? 'mittel' : 'niedrig';
+      if (bt && bt.ok / bt.tot >= 0.62 && Math.abs(s) >= 1.5) conf = Math.abs(s) >= 3 ? 'hoch' : 'mittel';
+      if (bt && bt.ok / bt.tot < 0.5) conf = 'niedrig';
+      const last3 = h.slice(-72);
+      return { cur, s, verdict, conf, why, bt, vol, lo3: last3.length ? roundPrice(Math.min(...last3)) : null, hi3: last3.length ? roundPrice(Math.max(...last3)) : null, days: d.length };
+    }
+
+    async function search(q) {
+      const html = await gmGet('https://www.futbin.com/players?search=' + encodeURIComponent(q), 'text');
+      if (isCfPage(html)) throw new Error(CHECK_MSG);
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const out = [];
+      for (const tr of doc.querySelectorAll('tbody tr')) {
+        const a = tr.querySelector('a[href*="/player/"]');
+        if (!a) continue;
+        const path = a.getAttribute('href').split('?')[0];
+        if (!/^\/27\/player\//.test(path) || out.some((x) => x.path === path)) continue;
+        const nameEl = tr.querySelector('.table-player-name, .player-name') || a;
+        const name = (nameEl.textContent || '').replace(/\s+/g, ' ').trim();
+        const rating = toNum((tr.querySelector('.table-rating, .rating') || {}).textContent) || toNum((tr.textContent.match(/\b([4-9]\d)\b/) || [])[1]);
+        const ver = ((tr.querySelector('.table-player-revision, .player-revision, .revision') || {}).textContent || '').replace(/\s+/g, ' ').trim();
+        const plat = settings.platform === 'pc' ? 'pc' : 'ps';
+        const pt = String((tr.querySelector(`.platform-${plat}-only`) || {}).textContent || '').replace(/\s/g, '');
+        const pm = pt.match(/([\d.,]+)([KkMm])?/);
+        const price = pm ? Math.round(parseFloat(pm[2] ? pm[1].replace(',', '.') : pm[1].replace(/[.,]/g, '')) * (pm[2] ? (/k/i.test(pm[2]) ? 1000 : 1e6) : 1)) : null;
+        out.push({ path, name: name || path.split('/').pop(), rating, ver, price });
+        if (out.length >= 10) break;
+      }
+      return out;
+    }
+
+    async function market(path) {
+      const html = await gmGet(`https://www.futbin.com${path}/market`, 'text');
+      if (isCfPage(html)) throw new Error(CHECK_MSG);
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const plat = settings.platform === 'pc' ? 'pc' : 'ps';
+      const series = [...doc.querySelectorAll(`[data-${plat}-data]`)].map((e) => {
+        try { return JSON.parse(e.getAttribute(`data-${plat}-data`)); } catch (err) { return []; }
+      }).filter((a) => Array.isArray(a) && a.length > 1);
+      const hourly = series.filter((a) => a[1][0] - a[0][0] <= 3600000 * 1.5).sort((a, b) => b.length - a.length)[0] || [];
+      const daily = series.find((a) => a[1][0] - a[0][0] >= 3600000 * 20) || [];
+      if (!daily.length && !hourly.length) throw new Error('Kein Preisverlauf bei Futbin gefunden');
+      return { daily, hourly };
+    }
+
+    async function pick(c) {
+      state.pick = c; state.res = null; state.msg = `Lade Preisverlauf von ${c.name} …`; render();
+      try {
+        const m = await market(c.path);
+        let floor = null;
+        try { const rp = RATINGS.get() || (c.rating >= 82 ? await RATINGS.load() : null); floor = rp && rp.prices[c.rating]; } catch (e) { /* ohne Futter-Boden */ }
+        const daily = m.daily.length ? m.daily : [];
+        state.res = forecast(daily.length ? daily : m.hourly.filter((x, i) => i % 24 === 0), m.hourly, c.rating, floor);
+        state.msg = '';
+      } catch (e) { state.msg = 'Fehler: ' + e.message; }
+      render();
+    }
+
+    async function doSearch() {
+      const q = state.q.trim();
+      if (q.length < 3) { state.msg = 'Mindestens 3 Buchstaben eingeben'; render(); return; }
+      state.list = null; state.pick = null; state.res = null; state.msg = 'Suche bei Futbin …'; render();
+      try {
+        state.list = await search(q);
+        state.msg = state.list.length ? '' : 'Nichts gefunden – Schreibweise prüfen (z. B. „Mbappe“)';
+        if (state.list.length === 1) { render(); return pick(state.list[0]); }
+      } catch (e) { state.msg = 'Fehler: ' + e.message; }
+      render();
+    }
+
+    function resHtml() {
+      const r = state.res, c = state.pick;
+      if (!r || !c) return '';
+      const V = { up: ['up', '📈 Wird eher steigen'], down: ['down', '📉 Wird eher fallen'], flat: ['flat', '➡️ Eher seitwärts'] }[r.verdict];
+      const tip = r.verdict === 'up' ? `Kaufen lohnt eher jetzt${r.lo3 ? ` (Tief der letzten 3 Tage: ${fmt(r.lo3)})` : ''}. Besitzt du sie: noch halten.`
+        : r.verdict === 'down' ? `Nicht kaufen – abwarten. Besitzt du sie: eher bald verkaufen${r.hi3 ? ` (Hoch der letzten 3 Tage: ${fmt(r.hi3)})` : ''}.`
+          : `Kein klarer Trend. Nur mit Spanne handeln: unter ${r.lo3 ? fmt(r.lo3) : '–'} kaufen, bei ${r.hi3 ? fmt(r.hi3) : '–'} verkaufen.`;
+      return `<div class="pg-res ${V[0]}">
+          <div class="pg-h"><b>${esc(c.rating ?? '')} ${esc(c.name)}</b>${c.ver ? ` <small>${esc(c.ver)}</small>` : ''}<span>jetzt ${fmt(r.cur)}</span></div>
+          <div class="pg-v">${V[1]}</div>
+          <div class="pg-c">Sicherheit: <b>${r.conf}</b> · Zeitraum: nächste 1–3 Tage${r.bt ? ` · Diese Regeln lagen bei der Karte ${r.bt.ok} von ${r.bt.tot} Mal richtig` : ''}</div>
+          <ul class="pg-w">${r.why.map((w) => `<li class="${w.v > 0 ? 'p' : w.v < 0 ? 'n' : ''}">${w.v > 0 ? '▲' : w.v < 0 ? '▼' : '•'} ${esc(w.t)}</li>`).join('')}</ul>
+          <div class="pg-tip">💡 ${esc(tip)}</div>
+          <div class="btns"><button class="fcpt-smallbtn" data-pg="watch">${WATCH.has(c.path) ? '⭐ Auf der Watchlist' : '☆ Auf Watchlist (Alarm)'}</button></div>
+          <div class="note" style="font-size:11px;color:#7d8aa0">Schätzung aus dem Futbin-Verlauf – keine Garantie. Promos, neue SBCs oder Content können alles schnell drehen.</div>
+        </div>`;
+    }
+
+    function render() {
+      if (!box) return;
+      const L = state.list;
+      box.innerHTML = `
+        <div class="fcpt-sgroup"><h4>🔮 Preis-Einschätzung</h4>
+          <div class="note" style="font-size:12px;color:#a7b3c6">Spielername eingeben – das Tool sagt, ob der Preis eher steigt oder fällt, und warum.</div>
+          <div class="ntfy-row"><input type="text" data-pg="q" placeholder="z. B. Wirtz" value="${esc(state.q)}"><button class="fcpt-smallbtn" data-pg="go">🔮 Einschätzen</button></div>
+          ${state.msg ? `<div class="fcpt-stand">${esc(state.msg)}</div>` : ''}
+          ${L && L.length > 1 && !state.res ? `<div class="pg-list">${L.map((c, i) => `<button class="pg-item${state.pick === c ? ' on' : ''}" data-pi="${i}"><b>${esc(c.rating ?? '')}</b> ${esc(c.name)}${c.ver ? ` <small>${esc(c.ver)}</small>` : ''}${c.price ? `<span>${fmt(c.price)}</span>` : ''}</button>`).join('')}</div>` : ''}
+          ${resHtml()}
+          ${state.res && L && L.length > 1 ? '<button class="fcpt-smallbtn" data-pg="back">← andere Version wählen</button>' : ''}
+        </div>`;
+      const q = box.querySelector('[data-pg="q"]');
+      q.addEventListener('input', () => { state.q = q.value; });
+      q.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') doSearch(); });
+      box.querySelector('[data-pg="go"]').addEventListener('click', (e) => { e.stopPropagation(); doSearch(); });
+      box.querySelectorAll('[data-pi]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); pick(state.list[+b.dataset.pi]); }));
+      const bk = box.querySelector('[data-pg="back"]');
+      if (bk) bk.addEventListener('click', (e) => { e.stopPropagation(); state.res = null; state.pick = null; render(); });
+      const wb = box.querySelector('[data-pg="watch"]');
+      if (wb) wb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const c = state.pick, r = state.res;
+        if (WATCH.has(c.path)) return;
+        WATCH.add({ path: c.path, name: c.name, rating: c.rating, buy: roundPrice(r.lo3 || r.cur * 0.95), sell: r.hi3 || r.cur, current: r.cur });
+        render();
+      });
+    }
+    function mount(el) { box = el; render(); }
+    return { mount, forecast };
+  })();
