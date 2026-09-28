@@ -5,6 +5,8 @@
   // eslint-disable-next-line no-var
   var UIB = (() => {
     if (settings.uiMini === undefined) settings.uiMini = false;
+    if (settings.iosBottom === undefined) settings.iosBottom = 80;   // Platz für Safaris untere Leiste (iPhone)
+    const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const I = {
       home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
       list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
@@ -43,7 +45,7 @@
       .fcpt-rail{width:64px;flex:none;display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 0;background:#0e131e}
       .fcpt-rail .lg{width:40px;height:40px;border-radius:11px;background:var(--gold);color:#15120a;display:flex;align-items:center;justify-content:center;font:700 15px 'IBM Plex Sans',system-ui,sans-serif;margin-bottom:10px;letter-spacing:.02em}
       .fcpt-rail button{width:48px;height:48px;border-radius:12px;border:0;background:transparent;color:#8b96ab;display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;padding:0;transition:background .12s,color .12s}
-      .fcpt-rail button:hover{background:#151c2b;color:var(--ink)}
+      @media (hover:hover){.fcpt-rail button:hover{background:#151c2b;color:var(--ink)}}
       .fcpt-rail button.on{background:#1b2336;color:var(--gold)}
       .fcpt-rail button .bd{position:absolute;top:6px;right:5px;min-width:16px;height:16px;border-radius:8px;background:var(--neg);color:#fff;font:700 10px system-ui,sans-serif;display:none;align-items:center;justify-content:center;padding:0 4px;box-sizing:border-box;pointer-events:none}
       .fcpt-rail button .bd.show{display:flex}
@@ -114,7 +116,8 @@
       #fcpt-panel .fcpt-overview .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
       #fcpt-btn{width:52px;height:52px;padding:0;border-radius:15px;background:#f2c14e;color:#15120a;font:700 16px 'IBM Plex Sans',system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)}
       @media (max-width: 700px){
-        #fcpt-panel{width:100vw;flex-direction:column !important}
+        #fcpt-panel{width:100vw;flex-direction:column !important;height:100vh;height:100dvh}
+        #fcpt-panel.fcpt-ios .fcpt-rail{padding-bottom:calc(env(safe-area-inset-bottom, 0px) + var(--fcpt-iosb, 80px))}
         #fcpt-panel.mini{width:100vw}
         #fcpt-panel.mini .fcpt-body{display:flex}
         .fcpt-body{border-right:0;min-height:0}
@@ -334,6 +337,21 @@
     });
     btn.addEventListener('click', () => { if (panel.classList.contains('open')) { quick(); badge(); if (cur === 'home') renderHome(); } });
     setInterval(() => { if (panel.classList.contains('open')) { quick(); badge(); } }, 30000);
+
+    // iPhone: Menüleiste über Safaris untere Leiste heben (Abstand einstellbar)
+    const applyIos = () => { panel.classList.toggle('fcpt-ios', isIOS); panel.style.setProperty('--fcpt-iosb', `${settings.iosBottom}px`); };
+    applyIos();
+    const setG = panel.querySelector('[data-opt="inline"]');
+    const grp = setG && setG.closest('.fcpt-sgroup');
+    if (grp) {
+      const row = document.createElement('div');
+      row.className = 'fcpt-set';
+      row.innerHTML = '<span>Abstand unten (iPhone)<small>Falls die Menüleiste unten von Safari verdeckt wird: größer machen</small></span><input type="number" min="0" max="200" step="10" data-uib="iosb">';
+      grp.appendChild(row);
+      const inp = row.querySelector('input');
+      inp.value = settings.iosBottom;
+      inp.addEventListener('change', (e) => { e.stopPropagation(); settings.iosBottom = Math.max(0, Math.min(200, parseInt(inp.value, 10) || 0)); saveSettings(); applyIos(); });
+    }
 
     // Schwebende Knöpfe ausblenden, solange das Panel offen ist (sie lagen über der Leiste)
     const syncBtns = () => {
