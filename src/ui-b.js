@@ -123,6 +123,8 @@
       .fcpt-toolbar{flex-wrap:wrap}
       .fcpt-listall{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
       .fcpt-listall button{height:34px;padding:0 12px;border-radius:9px;border:1px solid #2a3652;background:var(--bg3);color:var(--ink);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}
+      .fcpt-listall select{max-width:220px;height:34px}
+      .tr-fix button.go{background:var(--gold);border-color:var(--gold);color:#15120a}
       .fcpt-listall button.go{background:var(--gold);border-color:var(--gold);color:#15120a}
       .fcpt-listall button.stop{background:#3a1515;border-color:#7f1d1d;color:#fecaca}
       .fcpt-listall button[disabled]{opacity:.45;cursor:default}
@@ -385,6 +387,7 @@
       if (settings.listAllowLoss === undefined) settings.listAllowLoss = false;
       const DUR = [[3600, '1 Std.'], [10800, '3 Std.'], [21600, '6 Std.'], [43200, '12 Std.'], [86400, '1 Tag'], [259200, '3 Tage']];
       let running = false, stop = false, confirmN = 0;
+      let group = null;   // resourceId der gewählten Kartenversion (nur gleiche Karten einstellen) oder 'all'
       const preset = (p) => settings.listPresets[p.resourceId] || null;
       function priceFor(p) {
         const ps = preset(p);
@@ -396,10 +399,11 @@
         return { bin, start: lowerStep(bin), src: 'Futbin-Vorschlag' };
       }
       // Karten, die gerade eingestellt werden können: in der Transferliste, nicht aktiv, nicht verkauft
-      function candidates() {
+      function candidates(only) {
         const out = [], skipped = [];
         for (const p of items) {
           if (p.sold || p.active || !p.__raw) continue;
+          if (only != null && only !== 'all' && String(p.resourceId) !== String(only)) continue;
           const pr = priceFor(p);
           if (!pr) continue;
           if (!settings.listAllowLoss && p.bought && pr.bin < breakEven(p.bought)) { skipped.push(p); continue; }
@@ -416,23 +420,38 @@
           <input type="number" min="200" step="50" inputmode="numeric" data-fixin="${p.resourceId}" value="${ps ? ps.bin : ''}" placeholder="${sug ? fmt(sug) : 'Sofortkauf'}" aria-label="Festpreis Sofortkauf">
           <button data-fixsave="${p.resourceId}">${ps ? 'Ändern' : 'Festlegen'}</button>
           ${ps ? `<button data-fixdel="${p.resourceId}" aria-label="Festpreis entfernen">✕</button>` : ''}
-          <small>${ps ? `Start ${fmt(ps.start)} · gilt für alle Karten dieser Version` : 'Wird bei „Alle einstellen“ verwendet'}</small></div>`;
+          ${ps && candidates(p.resourceId).out.length ? `<button data-fixlist="${p.resourceId}" class="go">▶ Alle gleichen einstellen (${candidates(p.resourceId).out.length})</button>` : ''}
+          <small>${ps ? `Start ${fmt(ps.start)} · gilt für alle Karten dieser Version` : 'Wird bei „Einstellen“ verwendet'}</small></div>`;
       }
       const bar = document.createElement('div');
       bar.className = 'fcpt-listall';
       const tb = panel.querySelector('.fcpt-toolbar');
       if (tb) tb.appendChild(bar);
+      // Gruppen = gleiche Karten (gleiche Spielerversion)
+      function groups() {
+        const G = new Map();
+        for (const c of candidates('all').out) {
+          const k = String(c.p.resourceId);
+          const g = G.get(k) || { k, name: c.p.name, rating: c.p.rating, bin: c.pr.bin, n: 0 };
+          g.n++; G.set(k, g);
+        }
+        return [...G.values()].sort((a, b) => b.n - a.n || String(a.name).localeCompare(String(b.name), 'de'));
+      }
       function drawBar(msg) {
-        const { out, skipped } = candidates();
+        const G = groups();
+        if (group !== 'all' && !G.some((g) => g.k === String(group))) group = G.length ? G[0].k : null;
+        const { out, skipped } = candidates(group);
+        const gName = group === 'all' ? 'alle Karten mit Festpreis' : (() => { const g = G.find((x) => x.k === String(group)); return g ? `${g.rating ?? ''} ${g.name}` : ''; })();
         if (running) { bar.innerHTML = `<span class="st">${esc(msg || 'Stelle ein …')}</span><button data-la="stop" class="stop">Stopp</button>`; return; }
         if (confirmN) {
-          bar.innerHTML = `<span class="st">${confirmN} Karte(n) für ${esc(DUR.find((d) => d[0] === settings.listDuration)?.[1] || '')} einstellen?</span><button data-la="yes" class="go">Ja, einstellen</button><button data-la="no">Nein</button>`;
+          bar.innerHTML = `<span class="st">${confirmN}× ${esc(gName)} für ${esc(DUR.find((d) => d[0] === settings.listDuration)?.[1] || '')} einstellen?</span><button data-la="yes" class="go">Ja, einstellen</button><button data-la="no">Nein</button>`;
           return;
         }
-        bar.innerHTML = `<button data-la="ask" class="go" ${out.length ? '' : 'disabled'} title="${skipped.length ? `${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“` : 'Stellt alle Karten mit Festpreis nacheinander ein'}">▶ Alle einstellen (${out.length})</button>${msg ? `<span class="st">${esc(msg)}</span>` : ''}`;
+        const sel = G.length ? `<select data-la="grp" aria-label="Welche Karten einstellen">${G.map((g) => `<option value="${g.k}" ${String(group) === g.k ? 'selected' : ''}>${g.n}× ${esc(g.rating ?? '')} ${esc(g.name)} · ${fmt(g.bin)}</option>`).join('')}${G.length > 1 ? `<option value="all" ${group === 'all' ? 'selected' : ''}>Alle mit Festpreis (${G.reduce((a, g) => a + g.n, 0)})</option>` : ''}</select>` : '';
+        bar.innerHTML = `${sel}<button data-la="ask" class="go" ${out.length ? '' : 'disabled'} title="${skipped.length ? `${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“` : 'Stellt die gewählten gleichen Karten nacheinander ein'}">▶ Einstellen (${out.length})</button>${msg ? `<span class="st">${esc(msg)}</span>` : (G.length ? '' : '<span class="st">Festpreis in einer Zeile festlegen, dann hier einstellen</span>')}`;
       }
       async function runAll() {
-        const { out } = candidates();
+        const { out } = candidates(group);
         const S = W.services && W.services.Item;
         if (!S || typeof S.list !== 'function') { drawBar('EA-Funktion zum Einstellen nicht gefunden'); return; }
         running = true; stop = false;
@@ -456,17 +475,28 @@
         drawBar(`${ok} eingestellt${fail ? `, ${fail} Fehler` : ''}`);
         refresh();
       }
+      bar.addEventListener('change', (e) => {
+        if (e.target.dataset.la === 'grp') { e.stopPropagation(); group = e.target.value; confirmN = 0; drawBar(); }
+      });
       bar.addEventListener('click', (e) => {
         const b = e.target.closest('[data-la]');
         if (!b) return;
         e.stopPropagation();
         const a = b.dataset.la;
-        if (a === 'ask') { confirmN = candidates().out.length; drawBar(); }
+        if (a === 'ask') { confirmN = candidates(group).out.length; drawBar(); }
         if (a === 'no') { confirmN = 0; drawBar(); }
         if (a === 'yes') { confirmN = 0; runAll(); }
         if (a === 'stop') { stop = true; drawBar('Stoppe nach dieser Karte …'); }
       });
       panel.addEventListener('click', (e) => {
+        const fl = e.target.closest && e.target.closest('[data-fixlist]');
+        if (fl) {
+          e.stopPropagation();
+          group = fl.dataset.fixlist; confirmN = candidates(group).out.length; drawBar();
+          const lst = panel.querySelector('.fcpt-list'); if (lst) lst.scrollTop = 0;
+          bar.scrollIntoView({ block: 'nearest' });
+          return;
+        }
         const sv = e.target.closest && e.target.closest('[data-fixsave]');
         const dl = e.target.closest && e.target.closest('[data-fixdel]');
         if (!sv && !dl) return;
