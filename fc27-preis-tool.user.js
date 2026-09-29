@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.14.1
+// @version      2.14.2
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -4271,7 +4271,8 @@ const SBC = (function () {
         e.stopPropagation();
         const rid = (sv || dl).dataset[sv ? 'fixsave' : 'fixdel'];
         if (dl) { delete settings.listPresets[rid]; saveSettings(); showToast('Festpreis entfernt'); render(); return; }
-        const inp = panel.querySelector(`[data-fixin="${rid}"]`);
+        // Mehrere gleiche Karten = mehrere Felder mit derselben ID -> das Feld neben DIESEM Knopf nehmen
+        const inp = (sv.closest('.tr-fix') || panel).querySelector('[data-fixin]');
         let v = parseInt(inp && (inp.value || inp.placeholder.replace(/\D/g, '')), 10) || 0;
         if (v < 200) { showToast('Bitte einen Preis ab 200 eingeben', true); return; }
         v = roundPrice(v);
@@ -4281,7 +4282,7 @@ const SBC = (function () {
       // Eingabe im Festpreis-Feld darf nicht den allgemeinen „Einstellung geändert → neu laden“-Code auslösen
       panel.addEventListener('change', (e) => { if (e.target.dataset && e.target.dataset.fixin) e.stopPropagation(); }, true);
       panel.addEventListener('keydown', (e) => {
-        if (e.target.dataset && e.target.dataset.fixin && e.key === 'Enter') { e.stopPropagation(); panel.querySelector(`[data-fixsave="${e.target.dataset.fixin}"]`).click(); }
+        if (e.target.dataset && e.target.dataset.fixin && e.key === 'Enter') { e.stopPropagation(); const b2 = e.target.closest('.tr-fix') && e.target.closest('.tr-fix').querySelector('[data-fixsave]'); if (b2) b2.click(); }
       });
       // Einstellungen: Dauer, Fallback, Verlustschutz
       const g = panel.querySelector('[data-opt="inline"]');
