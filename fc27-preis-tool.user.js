@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.13.1
+// @version      2.14.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -3847,6 +3847,7 @@ const SBC = (function () {
       .tr .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .tr .st{font-style:normal;font-size:11.5px;margin-left:6px;color:var(--ink3)}
       .tr.sold .st{color:var(--pos)}.tr.expired .st{color:var(--warn)}.tr.active .st{color:#7fb0ff}
+      .tr .st.fx{color:var(--gold)}
       .tr.lieg>.tr-row{background:rgba(255,174,92,.06)}
       .tr .mk{color:var(--ink2)}
       .tr-det{display:none;padding:0 10px 10px}
@@ -3882,6 +3883,18 @@ const SBC = (function () {
       #fcpt-panel .fcpt-sgroup{border-radius:12px;background:var(--bg2);border-color:var(--line)}
       #fcpt-panel .fcpt-sgroup h4{font-size:10.5px;letter-spacing:.08em;color:var(--ink3)}
       #fcpt-panel .fcpt-overview .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
+      .tr-fix{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:10px;background:#0f1420;border:1px solid var(--line)}
+      .tr-fix .lb{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+      .tr-fix input{width:96px;background:var(--bg3);color:var(--ink);border:1px solid #2a3652;border-radius:8px;padding:6px 8px;font:13px 'JetBrains Mono',ui-monospace,monospace;text-align:right}
+      .tr-fix button{height:32px;padding:0 10px;border-radius:8px;border:1px solid #2a3652;background:var(--bg3);color:var(--ink);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}
+      .tr-fix small{flex-basis:100%;font-size:11.5px;color:var(--ink3)}
+      .fcpt-toolbar{flex-wrap:wrap}
+      .fcpt-listall{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+      .fcpt-listall button{height:34px;padding:0 12px;border-radius:9px;border:1px solid #2a3652;background:var(--bg3);color:var(--ink);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}
+      .fcpt-listall button.go{background:var(--gold);border-color:var(--gold);color:#15120a}
+      .fcpt-listall button.stop{background:#3a1515;border-color:#7f1d1d;color:#fecaca}
+      .fcpt-listall button[disabled]{opacity:.45;cursor:default}
+      .fcpt-listall .st{font-size:12px;color:var(--ink2)}
       #fcpt-btn{width:52px;height:52px;padding:0;border-radius:15px;background:#f2c14e;color:#15120a;font:700 16px 'IBM Plex Sans',system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)}
       @media (max-width: 700px){
         #fcpt-panel{width:100vw;flex-direction:column !important;height:100vh;height:100dvh}
@@ -4067,12 +4080,12 @@ const SBC = (function () {
       return `<div class="tr ${cls}${n >= 2 ? ' lieg' : ''}${openRows.has(key) ? ' open' : ''}" data-row="${esc(key)}" data-rid="${p.resourceId}">
         <button class="tr-row" data-trow="${esc(key)}" aria-expanded="${openRows.has(key)}">
           <span class="num ovr">${esc(p.rating ?? '')}</span>
-          <span class="nm">${esc(p.name)}<em class="st">${esc(st)}</em></span>
+          <span class="nm">${esc(p.name)}<em class="st">${esc(st)}</em>${!p.sold && !p.active && settings.listPresets && settings.listPresets[p.resourceId] ? `<em class="st fx">fest ${fmt(settings.listPresets[p.resourceId].bin)}</em>` : ''}</span>
           <span class="num r">${fmt(p.sold ? p.soldFor : p.buyNow)}</span>
           <span class="num r mk" data-mk>${c.mk}</span>
           <span class="num r" data-pf>${c.pf}</span>
         </button>
-        <div class="tr-det">${cardHtml(p)}</div>
+        <div class="tr-det">${cardHtml(p)}${LIST.fixHtml(p)}</div>
       </div>`;
     }
     const headHtml = () => '<div class="tr-h"><span>OVR</span><span>Spieler</span><span>Sofortk.</span><span>Markt</span><span>Profit</span></div>';
@@ -4132,7 +4145,138 @@ const SBC = (function () {
     setMini(settings.uiMini);
     markRail('list');
     quick();
-    return { rowHtml, headHtml, updateRow, after, go, renderHome };
+    // ---------- Festpreise + „Alle einstellen“ (ein Klick von dir, dann nacheinander) ----------
+    const LIST = (() => {
+      if (!settings.listPresets || typeof settings.listPresets !== 'object') settings.listPresets = {};
+      if (settings.listDuration === undefined) settings.listDuration = 3600;
+      if (settings.listFallback === undefined) settings.listFallback = false;
+      if (settings.listAllowLoss === undefined) settings.listAllowLoss = false;
+      const DUR = [[3600, '1 Std.'], [10800, '3 Std.'], [21600, '6 Std.'], [43200, '12 Std.'], [86400, '1 Tag'], [259200, '3 Tage']];
+      let running = false, stop = false, confirmN = 0;
+      const preset = (p) => settings.listPresets[p.resourceId] || null;
+      function priceFor(p) {
+        const ps = preset(p);
+        if (ps) return { bin: ps.bin, start: ps.start || lowerStep(ps.bin), src: 'Festpreis' };
+        if (!settings.listFallback || !p.isPlayer) return null;
+        const m = marketPrice(p.resourceId);
+        if (!m) return null;
+        const bin = listSuggest(p, m).bin;
+        return { bin, start: lowerStep(bin), src: 'Futbin-Vorschlag' };
+      }
+      // Karten, die gerade eingestellt werden können: in der Transferliste, nicht aktiv, nicht verkauft
+      function candidates() {
+        const out = [], skipped = [];
+        for (const p of items) {
+          if (p.sold || p.active || !p.__raw) continue;
+          const pr = priceFor(p);
+          if (!pr) continue;
+          if (!settings.listAllowLoss && p.bought && pr.bin < breakEven(p.bought)) { skipped.push(p); continue; }
+          out.push({ p, pr });
+        }
+        return { out, skipped };
+      }
+      function fixHtml(p) {
+        if (!p.isPlayer || p.sold) return '';
+        const ps = preset(p);
+        const m = marketPrice(p.resourceId);
+        const sug = m ? listSuggest(p, m).bin : null;
+        return `<div class="tr-fix"><span class="lb">Festpreis</span>
+          <input type="number" min="200" step="50" inputmode="numeric" data-fixin="${p.resourceId}" value="${ps ? ps.bin : ''}" placeholder="${sug ? fmt(sug) : 'Sofortkauf'}" aria-label="Festpreis Sofortkauf">
+          <button data-fixsave="${p.resourceId}">${ps ? 'Ändern' : 'Festlegen'}</button>
+          ${ps ? `<button data-fixdel="${p.resourceId}" aria-label="Festpreis entfernen">✕</button>` : ''}
+          <small>${ps ? `Start ${fmt(ps.start)} · gilt für alle Karten dieser Version` : 'Wird bei „Alle einstellen“ verwendet'}</small></div>`;
+      }
+      const bar = document.createElement('div');
+      bar.className = 'fcpt-listall';
+      const tb = panel.querySelector('.fcpt-toolbar');
+      if (tb) tb.appendChild(bar);
+      function drawBar(msg) {
+        const { out, skipped } = candidates();
+        if (running) { bar.innerHTML = `<span class="st">${esc(msg || 'Stelle ein …')}</span><button data-la="stop" class="stop">Stopp</button>`; return; }
+        if (confirmN) {
+          bar.innerHTML = `<span class="st">${confirmN} Karte(n) für ${esc(DUR.find((d) => d[0] === settings.listDuration)?.[1] || '')} einstellen?</span><button data-la="yes" class="go">Ja, einstellen</button><button data-la="no">Nein</button>`;
+          return;
+        }
+        bar.innerHTML = `<button data-la="ask" class="go" ${out.length ? '' : 'disabled'} title="${skipped.length ? `${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“` : 'Stellt alle Karten mit Festpreis nacheinander ein'}">▶ Alle einstellen (${out.length})</button>${msg ? `<span class="st">${esc(msg)}</span>` : ''}`;
+      }
+      async function runAll() {
+        const { out } = candidates();
+        const S = W.services && W.services.Item;
+        if (!S || typeof S.list !== 'function') { drawBar('EA-Funktion zum Einstellen nicht gefunden'); return; }
+        running = true; stop = false;
+        let ok = 0, fail = 0;
+        for (let i = 0; i < out.length && !stop; i++) {
+          const { p, pr } = out[i];
+          drawBar(`${i + 1}/${out.length}: ${p.name} für ${fmt(pr.bin)} …`);
+          try {
+            const ev = await new Promise((resolve, reject) => {
+              const t = setTimeout(() => reject(new Error('Zeitüberschreitung')), 12000);
+              S.list(p.__raw, pr.start, pr.bin, settings.listDuration).observe(panel, (obs, res) => {
+                clearTimeout(t); try { obs.unobserve(panel); } catch (e) { /* */ } resolve(res);
+              });
+            });
+            if (ev && ev.success !== false) ok++; else { fail++; log('Einstellen', p.name, ev && ev.status); }
+          } catch (e) { fail++; log('Einstellen', e); }
+          await sleep(1300 + Math.random() * 1200);   // menschliches Tempo, schont EA
+        }
+        running = false;
+        showToast(`${ok} eingestellt${fail ? ` · ${fail} fehlgeschlagen` : ''}${stop ? ' · gestoppt' : ''}`, fail > 0);
+        drawBar(`${ok} eingestellt${fail ? `, ${fail} Fehler` : ''}`);
+        refresh();
+      }
+      bar.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-la]');
+        if (!b) return;
+        e.stopPropagation();
+        const a = b.dataset.la;
+        if (a === 'ask') { confirmN = candidates().out.length; drawBar(); }
+        if (a === 'no') { confirmN = 0; drawBar(); }
+        if (a === 'yes') { confirmN = 0; runAll(); }
+        if (a === 'stop') { stop = true; drawBar('Stoppe nach dieser Karte …'); }
+      });
+      panel.addEventListener('click', (e) => {
+        const sv = e.target.closest && e.target.closest('[data-fixsave]');
+        const dl = e.target.closest && e.target.closest('[data-fixdel]');
+        if (!sv && !dl) return;
+        e.stopPropagation();
+        const rid = (sv || dl).dataset[sv ? 'fixsave' : 'fixdel'];
+        if (dl) { delete settings.listPresets[rid]; saveSettings(); showToast('Festpreis entfernt'); render(); return; }
+        const inp = panel.querySelector(`[data-fixin="${rid}"]`);
+        let v = parseInt(inp && (inp.value || inp.placeholder.replace(/\D/g, '')), 10) || 0;
+        if (v < 200) { showToast('Bitte einen Preis ab 200 eingeben', true); return; }
+        v = roundPrice(v);
+        settings.listPresets[rid] = { bin: v, start: lowerStep(v) };
+        saveSettings(); showToast(`📌 Festpreis ${fmt(v)} gespeichert`); render();
+      });
+      // Eingabe im Festpreis-Feld darf nicht den allgemeinen „Einstellung geändert → neu laden“-Code auslösen
+      panel.addEventListener('change', (e) => { if (e.target.dataset && e.target.dataset.fixin) e.stopPropagation(); }, true);
+      panel.addEventListener('keydown', (e) => {
+        if (e.target.dataset && e.target.dataset.fixin && e.key === 'Enter') { e.stopPropagation(); panel.querySelector(`[data-fixsave="${e.target.dataset.fixin}"]`).click(); }
+      });
+      // Einstellungen: Dauer, Fallback, Verlustschutz
+      const g = panel.querySelector('[data-opt="inline"]');
+      const grp = g && g.closest('.fcpt-settings');
+      if (grp) {
+        const box = document.createElement('div');
+        box.className = 'fcpt-sgroup';
+        box.innerHTML = `<h4>Alle einstellen</h4>
+          <div class="fcpt-set"><span>Angebotsdauer</span><select data-lo="dur">${DUR.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+          <div class="fcpt-set"><span>Ohne Festpreis: Futbin-Vorschlag nehmen<small>Aus = nur Karten mit Festpreis werden eingestellt</small></span><input type="checkbox" class="fcpt-sw" data-lo="fb"></div>
+          <div class="fcpt-set"><span>Auch unter „ohne Verlust“ einstellen<small>Aus = solche Karten werden übersprungen</small></span><input type="checkbox" class="fcpt-sw" data-lo="loss"></div>`;
+        grp.appendChild(box);
+        const d = box.querySelector('[data-lo="dur"]'), f = box.querySelector('[data-lo="fb"]'), l = box.querySelector('[data-lo="loss"]');
+        d.value = String(settings.listDuration); f.checked = !!settings.listFallback; l.checked = !!settings.listAllowLoss;
+        box.addEventListener('change', (e) => {
+          e.stopPropagation();
+          settings.listDuration = parseInt(d.value, 10) || 3600; settings.listFallback = f.checked; settings.listAllowLoss = l.checked;
+          saveSettings(); drawBar();
+        });
+      }
+      drawBar();
+      return { fixHtml, drawBar };
+    })();
+
+    return { rowHtml, headHtml, updateRow, after: () => { after(); LIST.drawBar(); }, go, renderHome };
   })();
 
   function installHook() {
