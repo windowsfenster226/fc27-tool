@@ -60,7 +60,7 @@
   if (settings.ampel === undefined) settings.ampel = true;
   if (settings.hotkeys === undefined) settings.hotkeys = true;
   if (settings.bumpMinBin === undefined) settings.bumpMinBin = true;
-  settings.keys = Object.assign({ search: '1', buy: '2', confirm: '3', back: '4', up: '5', down: '6' }, settings.keys || {});
+  settings.keys = Object.assign({ search: '1', buy: '2', confirm: '3', back: '4', up: '5', down: '6', snipe: '7' }, settings.keys || {});
   if (settings.stepField === undefined) settings.stepField = 2;   // 0 Min.-Gebot, 1 Max.-Gebot, 2 Min.-Sofortkauf, 3 Max.-Sofortkauf
   if (settings.autoBack === undefined) settings.autoBack = true;
 
@@ -489,6 +489,7 @@
           <label>Zurück<input data-key="back" maxlength="12"></label>
           <label>Preis hoch<input data-key="up" maxlength="12"></label>
           <label>Preis runter<input data-key="down" maxlength="12"></label>
+          <label>Snipe (Suchen + Kaufen)<input data-key="snipe" maxlength="12"></label>
         </div>
         <small style="color:#7d8aa0;font-size:11px">In ein Feld klicken und die neue Taste drücken.</small>
       </div>
@@ -1294,6 +1295,61 @@
     }
   }
 
+  // SNIPE: EIN Tastendruck = neu suchen, günstigstes Angebot wählen, Sofortkauf drücken.
+  // Stoppt immer beim Bestätigen-Dialog – den Kauf bestätigst DU (Taste „OK“ oder Klick).
+  // Keine Schleife: nichts passiert ohne deinen nächsten Tastendruck.
+  let snipeBusy = false;
+  const waitFor = (fn, ms = 3000, step = 60) => new Promise((resolve) => {
+    const t0 = Date.now();
+    const tick = () => { let v = null; try { v = fn(); } catch (e) { /* */ } if (v || Date.now() - t0 > ms) resolve(v || null); else setTimeout(tick, step); };
+    tick();
+  });
+  const noResults = () => [...document.querySelectorAll('.ut-no-results-view, .no-results, [class*="no-results"]')].some(shown);
+  function marketOffers() {
+    const out = [];
+    for (const [, r] of marketRows) {
+      if (!r.root.isConnected || !shown(r.root)) continue;
+      const p = mapItem(r.raw);
+      if (p && p.active && p.buyNow) out.push({ p, root: r.root });
+    }
+    return out;
+  }
+  async function doSnipe() {
+    if (snipeBusy) return;
+    if (findConfirmButton()) return showToast(`Kauf-Dialog ist offen – bestätigen mit ${keyLabel(settings.keys.confirm)} oder „Ok“`);
+    snipeBusy = true;
+    try {
+      // 1) neu suchen (von der Ergebnisseite erst zurück)
+      let s = findSearchButton();
+      if (!s) {
+        const back = findBackButton();
+        if (!back) { showToast('Öffne zuerst die Transfermarkt-Suche', true); return; }
+        pressButton(back);
+        s = await waitFor(findSearchButton, 1500, 40);
+        if (!s) { showToast('Suchen-Button nicht gefunden', true); return; }
+      }
+      for (const [tid, r] of marketRows) if (!r.root.isConnected) marketRows.delete(tid);
+      const before = new Set(marketRows.keys());
+      if (settings.bumpMinBin) bumpMinBin();
+      pressButton(s);
+      // 2) auf Ergebnisse warten
+      const got = await waitFor(() => (noResults() ? 'none' : marketOffers().some((o) => !before.has(o.p.tradeId)) ? 'rows' : null), 4000, 50);
+      if (got !== 'rows') { showToast(got === 'none' ? '🔍 Nichts gefunden – nochmal drücken' : 'Keine Ergebnisse erkannt – nochmal drücken', got !== 'none'); return; }
+      await new Promise((r) => setTimeout(r, 120));   // Liste fertig aufbauen lassen
+      const offers = marketOffers().sort((a, b) => a.p.buyNow - b.p.buyNow);
+      const best = offers[0];
+      if (!best) { showToast('🔍 Nichts gefunden – nochmal drücken'); return; }
+      // 3) günstigstes Angebot auswählen
+      pressButton(best.root.querySelector('.rowContent') || best.root);
+      const buy = await waitFor(findBuyButton, 1500, 40);
+      if (!buy) { showToast(`${best.p.name} ${fmt(best.p.buyNow)} gewählt – Sofortkauf-Button nicht gefunden`, true); return; }
+      // 4) Sofortkauf drücken -> EA fragt nach. Hier ist Schluss: bestätigen musst du.
+      pressButton(buy);
+      const dlg = await waitFor(findConfirmButton, 1500, 40);
+      showToast(dlg ? `💰 ${best.p.rating ?? ''} ${best.p.name} für ${fmt(best.p.buyNow)} – bestätigen mit ${keyLabel(settings.keys.confirm)} oder „Ok“` : `💰 ${best.p.name} für ${fmt(best.p.buyNow)} gewählt`);
+    } catch (e) { log('Snipe', e); showToast('Snipe fehlgeschlagen: ' + e.message, true); } finally { snipeBusy = false; }
+  }
+
   function doBack() {
     const b = findBackButton();
     if (!b) return showToast('Kein Zurück-Button gefunden', true);
@@ -1309,7 +1365,7 @@
     const onMarket = settings.hotkeys && !panel.classList.contains('open') && (findSearchButton() || findBuyButton() || findConfirmButton());
     keyhint.classList.toggle('show', !!onMarket);
     if (!onMarket) return;
-    const html = `<span>${kb('search')}Suchen</span><span>${kb('buy')}Kaufen</span><span>${kb('confirm')}OK</span><span>${kb('back')}Zurück</span><span>${kb('up')}${kb('down')}Preis ±</span>`;
+    const html = `<span>${kb('snipe')}Snipe</span><span>${kb('search')}Suchen</span><span>${kb('buy')}Kaufen</span><span>${kb('confirm')}OK</span><span>${kb('back')}Zurück</span><span>${kb('up')}${kb('down')}Preis ±</span>`;
     if (keyhint.__html !== html) { keyhint.__html = html; keyhint.innerHTML = html; }
   }, 700);
 
@@ -1319,7 +1375,7 @@
     if (a && (/^(input|textarea|select)$/i.test(a.tagName) || a.isContentEditable)) return;
     const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
     const k = settings.keys;
-    const map = { [k.search]: doSearch, [k.buy]: doBuy, [k.confirm]: doConfirm, [k.back]: doBack,
+    const map = { [k.snipe]: doSnipe, [k.search]: doSearch, [k.buy]: doBuy, [k.confirm]: doConfirm, [k.back]: doBack,
       [k.up]: () => stepPrice(1), [k.down]: () => stepPrice(-1) };
     const fn = map[key];
     if (!fn) return;
