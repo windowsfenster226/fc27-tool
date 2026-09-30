@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.14.2
+// @version      2.14.3
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -1809,7 +1809,16 @@ const SBC = (function () {
     toastTimer = setTimeout(() => toast.classList.remove('show'), 1400);
   }
 
-  const visible = (el) => !!el && el.offsetParent !== null && !el.disabled && !el.classList.contains('disabled');
+  // sichtbar? (offsetParent ist bei position:fixed immer null – EAs neue Dialoge sind fixed, daher über die Maße prüfen)
+  const shown = (el) => {
+    if (!el || !el.isConnected) return false;
+    if (el.offsetParent !== null) return true;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+  };
+  const visible = (el) => !!el && shown(el) && !el.disabled && !el.classList.contains('disabled');
   const btnText = (b) => (b.textContent || '').replace(/\s+/g, ' ').trim();
   const findButton = (re, root = document) =>
     [...root.querySelectorAll('button')].find((b) => visible(b) && !b.closest('#fcpt-panel, #fcpt-bidbar') && re.test(btnText(b)));
@@ -1834,9 +1843,17 @@ const SBC = (function () {
       findButton(/^(sofortkauf|jetzt kaufen|buy now)\b/i);
   }
   function findConfirmButton() {
-    const dlg = [...document.querySelectorAll('.ea-dialog-view, .Dialog, .ut-dialog-view, [class*="dialog"]')].filter((d) => d.offsetParent !== null).pop();
-    if (!dlg) return null;
-    return findButton(/^(ok|okay|bestätigen|ja|yes|kaufen|confirm)$/i, dlg) || [...dlg.querySelectorAll('button')].find(visible);
+    const OK = /^(ok|okay|bestätigen|ja|yes|kaufen|jetzt kaufen|confirm)$/i;
+    const dlg = [...document.querySelectorAll('.ea-dialog-view, .Dialog, .ut-dialog-view, [class*="dialog"], [class*="Dialog"], [class*="modal"], [class*="Modal"], [role="dialog"], [role="alertdialog"]')]
+      .filter((d) => shown(d) && !d.closest('#fcpt-panel, #fcpt-sbc') && [...d.querySelectorAll('button')].some(visible)).pop();
+    if (dlg) {
+      const b = findButton(OK, dlg);
+      if (b) return b;
+    }
+    // Rückfall: sichtbarer „Ok“-Knopf neben einem „Abbrechen“-Knopf (EAs Kauf-Bestätigung)
+    const oks = [...document.querySelectorAll('button')].filter((b) => visible(b) && !b.closest('#fcpt-panel, #fcpt-bidbar, #fcpt-sbc') && OK.test(btnText(b)));
+    const withCancel = oks.find((b) => { const box = b.parentElement && b.parentElement.parentElement; return box && [...box.querySelectorAll('button')].some((x) => /^(abbrechen|cancel|nein|no)$/i.test(btnText(x))); });
+    return withCancel || (dlg ? [...dlg.querySelectorAll('button')].filter(visible).pop() : null);
   }
 
   // Min.-Sofortkauf abwechselnd eine Stufe hoch/runter -> EA liefert frische statt zwischengespeicherte Ergebnisse
