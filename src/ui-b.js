@@ -129,6 +129,24 @@
       .fcpt-listall button.stop{background:#3a1515;border-color:#7f1d1d;color:#fecaca}
       .fcpt-listall button[disabled]{opacity:.45;cursor:default}
       .fcpt-listall .st{font-size:12px;color:var(--ink2)}
+      #fcpt-sbc .pts-in-sbc{--bg2:#121826;--bg3:#182033;--line:#1f2940;--ink:#e9edf5;--ink2:#a3aec2;--ink3:#7c889e;--gold:#f2c14e;margin-bottom:10px}
+      #fcpt-sbc .pts-in-sbc .fcpt-sgroup{background:var(--bg2);border:1px solid var(--line);border-radius:12px}
+      #fcpt-sbc .pts-in-sbc input[type=number]{width:96px;background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;text-align:right}
+      #fcpt-sbc .pts-in-sbc .fcpt-bigbtn{width:100%;background:var(--gold);color:#15120a;border:0;border-radius:10px;padding:10px 12px;font-weight:700;cursor:pointer}
+      .pt-det>summary{cursor:pointer;list-style:none}.pt-det>summary::-webkit-details-marker{display:none}
+      .pt-det:not([open])>summary::after{content:' ▸ aufklappen';font-size:11px;color:var(--ink3,#7c889e)}
+      .pt-det[open]{display:flex;flex-direction:column;gap:10px}
+      .pt-res{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+      .pt-sum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+      .pt-sum>div{background:var(--bg3,#182033);border-radius:9px;padding:6px 9px;display:flex;flex-direction:column;gap:2px}
+      .pt-sum span{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3,#7c889e)}
+      .pt-sum b{font:600 14px 'JetBrains Mono',ui-monospace,monospace}
+      .pt-h{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3,#7c889e);margin-top:6px}
+      .pt-r{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0;border-bottom:1px dashed rgba(255,255,255,.07)}
+      .pt-r span:last-child{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;color:var(--ink2,#a3aec2);white-space:nowrap}
+      .pt-r em{font-style:normal;font-size:10.5px;color:#86efac;margin-left:3px}
+      .pt-list{max-height:260px;overflow:auto}
+      .pt-note{font-size:11.5px;color:var(--ink3,#7c889e);line-height:1.4}
       #fcpt-btn{width:52px;height:52px;padding:0;border-radius:15px;background:#f2c14e;color:#15120a;font:700 16px 'IBM Plex Sans',system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)}
       @media (max-width: 700px){
         #fcpt-panel{width:100vw;flex-direction:column !important;height:100vh;height:100dvh}

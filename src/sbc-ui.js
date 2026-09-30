@@ -510,6 +510,7 @@
       <div class="hd"><span class="lg">🧩</span><div><div class="t">SBC-Solver <span class="fcpt-ver">v${TOOL_VERSION}</span></div><div class="s" data-el="name">–</div></div><button class="x" data-a="close">✕</button></div>
       <div class="bd">
         <div class="grp"><h4>Anforderungen</h4><div data-el="reqs"><div class="note">Öffne eine SBC-Aufgabe.</div></div></div>
+        <div data-el="points" class="pts-in-sbc"></div>
         <div class="grp"><h4>Optionen</h4>
           <div class="opt"><span>🛒 Konzept-Spieler nutzen<small>Günstigste Variante: fehlende Karten als Konzept einsetzen – du kaufst sie danach selbst</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcConcepts"></div>
           <div class="opt"><span>Sonderkarten erlauben<small>TOTW, Promos usw. – aus = nur normale Karten</small></span><input type="checkbox" class="fcpt-sw" data-o="sbcSpecials"></div>
@@ -529,6 +530,7 @@
       </div>`;
     document.body.appendChild(pane);
     const el = (n) => pane.querySelector(`[data-el="${n}"]`);
+    setTimeout(() => { try { POINTS.mount(el('points')); } catch (e) { log('Punkte-SBC', e); } }, 0);
     pane.querySelectorAll('[data-o]').forEach((i) => { i.checked = !!settings[i.dataset.o]; });
     pane.querySelectorAll('[data-n]').forEach((i) => { i.value = settings[i.dataset.n]; });
     pane.addEventListener('change', (e) => {
