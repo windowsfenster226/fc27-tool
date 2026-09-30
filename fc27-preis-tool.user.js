@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.16.0
+// @version      2.16.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -2863,6 +2863,21 @@ const SBC = (function () {
         rawCaptured: CAP.raw.size, sampleRawKeys: CAP.raw.size ? Object.keys(CAP.raw.values().next().value).slice(0, 60) : null,
         sampleEntityKeys: sampleEnt ? Object.keys(sampleEnt).slice(0, 60) : null,
         concept: { fn: !!(W.services && W.services.Item && typeof W.services.Item.searchConceptItems === 'function'), loaded: concept ? concept.players.length : 0, sample: concept && concept.players[0] ? (({ name, rating, leagueId, nationId, clubId, positions, def }) => ({ name, rating, leagueId, nationId, clubId, positions, def }))(concept.players[0]) : null },
+        points: (() => {
+          const c = ctx && ctx.challenge;
+          const pick = (o, ks) => ks.reduce((a2, k) => { try { const v = o && o[k]; if (v == null || typeof v !== 'object') a2[k] = v; else a2[k] = JSON.stringify(v).slice(0, 300); } catch (e) { a2[k] = String(e); } return a2; }, {});
+          const src = (fn) => { try { const f = W.services.SBC[fn]; return f ? String(f).replace(/\s+/g, ' ').slice(0, 700) : null; } catch (e) { return String(e); } };
+          const samples = [...CAP.raw.values()].filter((r) => r && r.rating).slice(0, 12).map((r) => ({ rating: r.rating, rareflag: r.rareflag, gradingScore: r.gradingScore, untradeable: r.untradeable, isCollected: r.isCollected }));
+          return {
+            challenge: c ? pick(c, ['id', 'name', 'type', 'status', 'formation', 'scoreRequirement', 'submittedScore', 'eligibilityOperation', 'timesCompleted', 'repeatable']) : null,
+            squadType: c && c.squad ? (c.squad.constructor && c.squad.constructor.name) : null,
+            samples,
+            initiateOneClick: src('initiateOneClickChallenge'),
+            submitOneClick: src('submitOneClickChallenge'),
+            applyOneClick: src('_applyOneClickSubmission'),
+            loadChallenge: src('loadChallenge'),
+          };
+        })(),
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };
       const text = JSON.stringify(d, null, 1);
@@ -3859,15 +3874,25 @@ const SBC = (function () {
     // Punkte einer Karte: falls EA den Wert mitliefert, den nehmen, sonst Tabelle
     function scoreOf(p) {
       const raw = (SBCUI.CAP && SBCUI.CAP.raw && SBCUI.CAP.raw.get(p.id)) || {};
-      for (const k of Object.keys(raw)) if (/score|gem/i.test(k) && typeof raw[k] === 'number' && raw[k] > 0) return { v: raw[k], live: true };
+      // „gradingScore“ gehört vermutlich zur FUT-Galerie, nicht zur SBC – nur eindeutige SBC-Felder übernehmen
+      for (const k of Object.keys(raw)) if (/sbc.?score|item.?score|submit.?score/i.test(k) && typeof raw[k] === 'number' && raw[k] > 0) return { v: raw[k], live: true };
       return { v: base(p.rating), live: false };
     }
 
     // Ziel aus der geöffneten Aufgabe erkennen (Anforderung mit „SCORE“ im Namen)
     function detectTarget() {
       try {
+        // FC 27: die Aufgabe selbst hat „scoreRequirement“ und „submittedScore“ (bereits abgegeben)
+        const ctx = SBCUI.findSbcContext();
+        const c = ctx && ctx.challenge;
+        const req = c && Number(c.scoreRequirement);
+        if (req > 0) {
+          const done = Number(c.submittedScore) || 0;
+          return { v: Math.max(1, req - done), total: req, done, name: c.name || 'SBC' };
+        }
         const id = SBCUI.CAP.currentId;
         const ch = id != null ? SBCUI.CAP.challenges.get(id) : null;
+        if (ch && Number(ch.scoreRequirement) > 0) return { v: Math.max(1, ch.scoreRequirement - (Number(ch.submittedScore) || 0)), total: ch.scoreRequirement, done: Number(ch.submittedScore) || 0, name: ch.name };
         if (!ch || !Array.isArray(ch.elgReq)) return null;
         const e = ch.elgReq.find((x) => /SCORE|POINT|GEM/i.test(String(x.type || '')));
         return e && e.eligibilityValue > 0 ? { v: e.eligibilityValue, name: ch.name } : null;
@@ -3972,7 +3997,7 @@ const SBC = (function () {
       const collapsed = !!box.closest('#fcpt-sbc') && !d && !state.res && !state.busy && !state.msg;
       box.innerHTML = `<details class="fcpt-sgroup pt-det" ${collapsed ? '' : 'open'}><summary><h4 style="display:inline">💎 Punkte-SBC (Diamanten)</h4></summary>
         <div class="note" style="font-size:12px;color:var(--ink2)">Neue FC-27-SBCs ohne Chemie: Karten abgeben, bis die Diamanten-Punkte erreicht sind. Das Tool sucht die günstigste Kombination aus deinem Verein – und rechnet Kauf-Futter mit ein.</div>
-        <div class="fcpt-set"><span>Ziel-Punkte${d ? `<small>Aus „${esc(d.name)}“ erkannt: ${fmt(d.v)}</small>` : '<small>Die Zahl neben dem Diamanten in der SBC</small>'}</span><input type="number" min="1" step="100" data-pt="target" value="${settings.ptsTarget}"></div>
+        <div class="fcpt-set"><span>Ziel-Punkte${d ? `<small>Aus „${esc(d.name)}“ erkannt: ${d.total ? `noch ${fmt(d.v)} von ${fmt(d.total)}` : fmt(d.v)}</small>` : '<small>Die Zahl neben dem Diamanten in der SBC</small>'}</span><input type="number" min="1" step="100" data-pt="target" value="${settings.ptsTarget}"></div>
         <div class="fcpt-set"><span>Min. OVR pro Karte<small>0 = keine Vorgabe</small></span><input type="number" min="0" max="99" data-pt="min" value="${settings.ptsMinOvr}"></div>
         <div class="fcpt-set"><span>Futter kaufen einrechnen<small>Günstigste Karte je Rating laut Futbin</small></span><input type="checkbox" class="fcpt-sw" data-pt="buy" ${settings.ptsBuy ? 'checked' : ''}></div>
         ${d && d.v !== settings.ptsTarget ? `<button class="fcpt-smallbtn" data-pt="use">Erkanntes Ziel ${fmt(d.v)} übernehmen</button>` : ''}

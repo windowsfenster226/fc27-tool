@@ -834,6 +834,21 @@
         rawCaptured: CAP.raw.size, sampleRawKeys: CAP.raw.size ? Object.keys(CAP.raw.values().next().value).slice(0, 60) : null,
         sampleEntityKeys: sampleEnt ? Object.keys(sampleEnt).slice(0, 60) : null,
         concept: { fn: !!(W.services && W.services.Item && typeof W.services.Item.searchConceptItems === 'function'), loaded: concept ? concept.players.length : 0, sample: concept && concept.players[0] ? (({ name, rating, leagueId, nationId, clubId, positions, def }) => ({ name, rating, leagueId, nationId, clubId, positions, def }))(concept.players[0]) : null },
+        points: (() => {
+          const c = ctx && ctx.challenge;
+          const pick = (o, ks) => ks.reduce((a2, k) => { try { const v = o && o[k]; if (v == null || typeof v !== 'object') a2[k] = v; else a2[k] = JSON.stringify(v).slice(0, 300); } catch (e) { a2[k] = String(e); } return a2; }, {});
+          const src = (fn) => { try { const f = W.services.SBC[fn]; return f ? String(f).replace(/\s+/g, ' ').slice(0, 700) : null; } catch (e) { return String(e); } };
+          const samples = [...CAP.raw.values()].filter((r) => r && r.rating).slice(0, 12).map((r) => ({ rating: r.rating, rareflag: r.rareflag, gradingScore: r.gradingScore, untradeable: r.untradeable, isCollected: r.isCollected }));
+          return {
+            challenge: c ? pick(c, ['id', 'name', 'type', 'status', 'formation', 'scoreRequirement', 'submittedScore', 'eligibilityOperation', 'timesCompleted', 'repeatable']) : null,
+            squadType: c && c.squad ? (c.squad.constructor && c.squad.constructor.name) : null,
+            samples,
+            initiateOneClick: src('initiateOneClickChallenge'),
+            submitOneClick: src('submitOneClickChallenge'),
+            applyOneClick: src('_applyOneClickSubmission'),
+            loadChallenge: src('loadChallenge'),
+          };
+        })(),
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };
       const text = JSON.stringify(d, null, 1);

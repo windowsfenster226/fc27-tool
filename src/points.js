@@ -15,15 +15,25 @@
     // Punkte einer Karte: falls EA den Wert mitliefert, den nehmen, sonst Tabelle
     function scoreOf(p) {
       const raw = (SBCUI.CAP && SBCUI.CAP.raw && SBCUI.CAP.raw.get(p.id)) || {};
-      for (const k of Object.keys(raw)) if (/score|gem/i.test(k) && typeof raw[k] === 'number' && raw[k] > 0) return { v: raw[k], live: true };
+      // „gradingScore“ gehört vermutlich zur FUT-Galerie, nicht zur SBC – nur eindeutige SBC-Felder übernehmen
+      for (const k of Object.keys(raw)) if (/sbc.?score|item.?score|submit.?score/i.test(k) && typeof raw[k] === 'number' && raw[k] > 0) return { v: raw[k], live: true };
       return { v: base(p.rating), live: false };
     }
 
     // Ziel aus der geöffneten Aufgabe erkennen (Anforderung mit „SCORE“ im Namen)
     function detectTarget() {
       try {
+        // FC 27: die Aufgabe selbst hat „scoreRequirement“ und „submittedScore“ (bereits abgegeben)
+        const ctx = SBCUI.findSbcContext();
+        const c = ctx && ctx.challenge;
+        const req = c && Number(c.scoreRequirement);
+        if (req > 0) {
+          const done = Number(c.submittedScore) || 0;
+          return { v: Math.max(1, req - done), total: req, done, name: c.name || 'SBC' };
+        }
         const id = SBCUI.CAP.currentId;
         const ch = id != null ? SBCUI.CAP.challenges.get(id) : null;
+        if (ch && Number(ch.scoreRequirement) > 0) return { v: Math.max(1, ch.scoreRequirement - (Number(ch.submittedScore) || 0)), total: ch.scoreRequirement, done: Number(ch.submittedScore) || 0, name: ch.name };
         if (!ch || !Array.isArray(ch.elgReq)) return null;
         const e = ch.elgReq.find((x) => /SCORE|POINT|GEM/i.test(String(x.type || '')));
         return e && e.eligibilityValue > 0 ? { v: e.eligibilityValue, name: ch.name } : null;
@@ -128,7 +138,7 @@
       const collapsed = !!box.closest('#fcpt-sbc') && !d && !state.res && !state.busy && !state.msg;
       box.innerHTML = `<details class="fcpt-sgroup pt-det" ${collapsed ? '' : 'open'}><summary><h4 style="display:inline">💎 Punkte-SBC (Diamanten)</h4></summary>
         <div class="note" style="font-size:12px;color:var(--ink2)">Neue FC-27-SBCs ohne Chemie: Karten abgeben, bis die Diamanten-Punkte erreicht sind. Das Tool sucht die günstigste Kombination aus deinem Verein – und rechnet Kauf-Futter mit ein.</div>
-        <div class="fcpt-set"><span>Ziel-Punkte${d ? `<small>Aus „${esc(d.name)}“ erkannt: ${fmt(d.v)}</small>` : '<small>Die Zahl neben dem Diamanten in der SBC</small>'}</span><input type="number" min="1" step="100" data-pt="target" value="${settings.ptsTarget}"></div>
+        <div class="fcpt-set"><span>Ziel-Punkte${d ? `<small>Aus „${esc(d.name)}“ erkannt: ${d.total ? `noch ${fmt(d.v)} von ${fmt(d.total)}` : fmt(d.v)}</small>` : '<small>Die Zahl neben dem Diamanten in der SBC</small>'}</span><input type="number" min="1" step="100" data-pt="target" value="${settings.ptsTarget}"></div>
         <div class="fcpt-set"><span>Min. OVR pro Karte<small>0 = keine Vorgabe</small></span><input type="number" min="0" max="99" data-pt="min" value="${settings.ptsMinOvr}"></div>
         <div class="fcpt-set"><span>Futter kaufen einrechnen<small>Günstigste Karte je Rating laut Futbin</small></span><input type="checkbox" class="fcpt-sw" data-pt="buy" ${settings.ptsBuy ? 'checked' : ''}></div>
         ${d && d.v !== settings.ptsTarget ? `<button class="fcpt-smallbtn" data-pt="use">Erkanntes Ziel ${fmt(d.v)} übernehmen</button>` : ''}
