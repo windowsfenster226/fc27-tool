@@ -15,8 +15,8 @@
     // Punkte einer Karte: falls EA den Wert mitliefert, den nehmen, sonst Tabelle
     function scoreOf(p) {
       const raw = (SBCUI.CAP && SBCUI.CAP.raw && SBCUI.CAP.raw.get(p.id)) || {};
-      // „gradingScore“ gehört vermutlich zur FUT-Galerie, nicht zur SBC – nur eindeutige SBC-Felder übernehmen
-      for (const k of Object.keys(raw)) if (/sbc.?score|item.?score|submit.?score/i.test(k) && typeof raw[k] === 'number' && raw[k] > 0) return { v: raw[k], live: true };
+      // EA liefert den Diamanten-Wert als „gradingScore“ (per Diagnose bestätigt: 88 = 8.300, 84 = 830 …)
+      if (typeof raw.gradingScore === 'number' && raw.gradingScore > 0) return { v: raw.gradingScore, live: true };
       return { v: base(p.rating), live: false };
     }
 
@@ -29,7 +29,7 @@
         const req = c && Number(c.scoreRequirement);
         if (req > 0) {
           const done = Number(c.submittedScore) || 0;
-          return { v: Math.max(1, req - done), total: req, done, name: c.name || 'SBC' };
+          return Object.assign({ v: Math.max(1, req - done), total: req, done, name: c.name || 'SBC', oneClick: c.type === 'ONE_CLICK_CHALLENGE', id: c.id }, ovrBounds(c.id));
         }
         const id = SBCUI.CAP.currentId;
         const ch = id != null ? SBCUI.CAP.challenges.get(id) : null;
@@ -38,6 +38,21 @@
         const e = ch.elgReq.find((x) => /SCORE|POINT|GEM/i.test(String(x.type || '')));
         return e && e.eligibilityValue > 0 ? { v: e.eligibilityValue, name: ch.name } : null;
       } catch (e) { return null; }
+    }
+
+    // OVR-Grenzen der Aufgabe (Eintrag „ACADEMY_PLAYER_SLOTTING“ mit SCOPE: 0 = mind., 1 = max., 2 = genau)
+    // z. B. „Bronze- und Silber-Neu-Ziehung“: max. 74
+    function ovrBounds(id) {
+      const ch = SBCUI.CAP.challenges.get(id);
+      const L = (ch && ch.elgReq) || [];
+      const e = L.find((x) => x.type === 'ACADEMY_PLAYER_SLOTTING' || x.eligibilityKey === 40);
+      if (!e) return {};
+      const sc = L.find((x) => x.eligibilitySlot === e.eligibilitySlot && (x.type === 'SCOPE' || x.eligibilityKey === 13));
+      const scope = sc ? sc.eligibilityValue : 0;
+      const v = e.eligibilityValue;
+      if (scope === 1) return { maxOvr: v };
+      if (scope === 2) return { minOvr: v, maxOvr: v };
+      return v > 45 ? { minOvr: v } : {};
     }
 
     // Günstigste Auswahl: 0/1-Rucksack über den Verein + beliebig viele Kauf-Karten je Rating
@@ -83,12 +98,15 @@
       const target = Math.max(1, parseInt(settings.ptsTarget, 10) || 0);
       state.busy = true; state.res = null; state.msg = 'Lade Verein …'; render();
       try {
-        const c = await SBCUI.loadClub((m) => { state.msg = m; render(); }, false);
+        const c = await SBCUI.loadClub((m) => { state.msg = m; render(); }, !!state.reload);
+        state.reload = false; state.club = c;
         let act = new Set();
         if (settings.sbcProtectActive !== false) { state.msg = 'Lese aktive Mannschaft …'; render(); act = await SBCUI.activeSquadIds(); }
         const locked = new Set((settings.sbcLocked || []).map((x) => x.id));
-        const minO = settings.ptsMinOvr || 0;
-        let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id) && !act.has(p.id) && (settings.sbcSpecials || !p.special) && (p.rating || 0) >= minO)
+        const d = detectTarget() || {};
+        const minO = Math.max(settings.ptsMinOvr || 0, d.minOvr || 0);
+        const maxO = d.maxOvr || 99;
+        let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id) && !act.has(p.id) && (settings.sbcSpecials || !p.special) && (p.rating || 0) >= minO && (p.rating || 0) <= maxO)
           .map((p) => { const sc = scoreOf(p); return { p, score: sc.v, live: sc.live, cost: Math.max(1, p.cost) }; })
           .filter((x) => x.score > 0);
         // große Vereine: nur die günstigsten pro Punkt behalten (Rechner bleibt schnell)
@@ -98,7 +116,7 @@
         if (settings.ptsBuy) {
           let rp = RATINGS.get();
           if (!rp) { state.msg = 'Lade Rating-Preise von Futbin …'; render(); try { rp = await RATINGS.load(); } catch (e) { rp = null; } }
-          if (rp) buys = Object.keys(rp.prices).map(Number).filter((r) => r >= minO && base(r) > 0).map((r) => ({ rating: r, price: rp.prices[r], score: base(r) }));
+          if (rp) buys = Object.keys(rp.prices).map(Number).filter((r) => r >= minO && r <= maxO && base(r) > 0).map((r) => ({ rating: r, price: rp.prices[r], score: base(r) }));
         }
         state.msg = `Rechne mit ${pool.length} Karten${buys.length ? ` + Kauf-Futter (${buys.length} Ratings)` : ''} …`; render();
         await sleep(30);
@@ -109,7 +127,7 @@
           const pts = res.used.reduce((a, x) => a + x.score, 0) + res.bought.reduce((a, b) => a + b.score, 0);
           const own = res.used.reduce((a, x) => a + x.p.value, 0);
           const buy = res.bought.reduce((a, b) => a + b.price, 0);
-          state.res = { target, pts, own, buy, used: res.used.sort((a, b) => b.score - a.score), bought: res.bought, onlyBuy: onlyBuy ? onlyBuy.cost : null, live: pool.some((x) => x.live) };
+          state.res = { target, pts, own, buy, challengeId: d.id, oneClick: !!d.oneClick, ownPts: res.used.reduce((a, x) => a + x.score, 0), bounds: d.maxOvr || d.minOvr ? `${d.minOvr ? `mind. ${d.minOvr}` : ''}${d.minOvr && d.maxOvr ? ', ' : ''}${d.maxOvr ? `max. ${d.maxOvr}` : ''} OVR` : '', used: res.used.sort((a, b) => b.score - a.score), bought: res.bought, onlyBuy: onlyBuy ? onlyBuy.cost : null, live: pool.some((x) => x.live) };
           state.msg = '';
         }
       } catch (e) { state.msg = 'Fehler: ' + e.message; } finally { state.busy = false; render(); }
@@ -128,13 +146,75 @@
         ${save != null && save > 0 ? `<div class="pt-note">Komplett mit Kauf-Futter ≈ <b>${fmt(Math.round(r.onlyBuy))}</b> – mit deinem Verein sparst du ≈ <b class="fcpt-pos-v">${fmt(Math.round(save))}</b>.</div>` : ''}
         ${buyRows ? `<div class="pt-h">🛒 Futter kaufen</div>${buyRows}` : ''}
         ${own ? `<div class="pt-h">Aus deinem Verein (${r.used.length})</div><div class="pt-list">${own}</div>` : ''}
-        <div class="pt-note">${r.live ? 'Punkte teils direkt von EA gelesen.' : 'Punkte laut Community-Tabelle (Sonderkarten zählen im Spiel oft mehr – dann reicht evtl. weniger).'} Karten wählst du in der SBC selbst aus; Teilabgaben sind erlaubt.</div>
+        ${r.bounds ? `<div class="pt-note">Vorgabe der Aufgabe beachtet: ${esc(r.bounds)}</div>` : ''}
+        <div class="pt-note">${r.live ? 'Punkte direkt von EA gelesen.' : 'Punkte laut Community-Tabelle.'} Teilabgaben sind erlaubt.</div>
+        ${submitHtml(r)}
       </div>`;
+    }
+
+    // ---------- Abgeben (nur auf deinen Klick + Bestätigung) ----------
+    function submitHtml(r) {
+      if (!r.oneClick || !r.used.length) return r.used.length ? '<div class="pt-note">Karten in der SBC selbst auswählen und abgeben.</div>' : '';
+      const cur = detectTarget();
+      if (!cur || cur.id !== r.challengeId) return '<div class="pt-note">Öffne die passende SBC, um direkt abzugeben.</div>';
+      if (state.confirm) {
+        return `<div class="pt-confirm"><b>${r.used.length} Karte(n) mit ${fmt(r.ownPts)} 💎 abgeben?</b>
+          <span>Wert zusammen ≈ ${fmt(Math.round(r.own))} Münzen${r.used.some((x) => !x.p.untradeable) ? ' · enthält handelbare Karten' : ''}. Die Karten sind danach weg – das lässt sich nicht rückgängig machen.</span>
+          <div class="btns2"><button class="fcpt-smallbtn go" data-pt="yes">Ja, abgeben</button><button class="fcpt-smallbtn" data-pt="no">Abbrechen</button></div></div>`;
+      }
+      return `<button class="fcpt-bigbtn" data-pt="submit" ${state.busy ? 'disabled' : ''}>💎 Diese ${r.used.length} Karte(n) abgeben (${fmt(r.ownPts)} Punkte)</button>
+        ${r.bought.length ? '<div class="pt-note">Die Kauf-Karten fehlen noch – erst kaufen, dann neu berechnen. Du kannst die eigenen Karten aber schon jetzt abgeben (Teilabgabe).</div>' : ''}`;
+    }
+    const obs = (o, ms = 15000) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Zeitüberschreitung')), ms);
+      o.observe(box, (ob, ev) => { clearTimeout(t); try { ob.unobserve(box); } catch (e) { /* */ } resolve(ev); });
+    });
+    function findSet(setId) {
+      try {
+        const sets = W.services.SBC.repository.sets;
+        const vals = sets instanceof Map ? [...sets.values()] : Array.isArray(sets) ? sets : Object.values(sets || {});
+        return vals.find((x) => x && x.id === setId) || null;
+      } catch (e) { return null; }
+    }
+    async function submit() {
+      const r = state.res;
+      const ctx = SBCUI.findSbcContext();
+      const ch = ctx && ctx.challenge;
+      const S = W.services && W.services.SBC;
+      if (!ch || ch.id !== r.challengeId || !S || typeof S.submitOneClickChallenge !== 'function') { state.msg = 'SBC nicht gefunden – Aufgabe neu öffnen.'; render(); return; }
+      const ents = r.used.map((x) => state.club && state.club.ents.get(x.p.id)).filter(Boolean);
+      if (ents.length !== r.used.length) { state.msg = 'Karten nicht mehr gefunden – bitte neu berechnen.'; render(); return; }
+      state.busy = true; state.msg = 'Gebe ab …'; render();
+      try {
+        if (typeof ch.hasNotStarted === 'function' && ch.hasNotStarted() && typeof S.initiateOneClickChallenge === 'function') {
+          const e0 = await obs(S.initiateOneClickChallenge(ch));
+          if (e0 && e0.success === false) throw new Error(`EA hat den Start abgelehnt (${e0.status || '?'})`);
+        }
+        const set = findSet(ch.setId) || { id: ch.setId, totalSubmittedScore: 0 };
+        let ev;
+        try { ev = await obs(S.submitOneClickChallenge(ch, set, ents)); } catch (e) { ev = { success: false, error: e }; }
+        // Falls EA IDs statt Karten erwartet: einmal mit IDs versuchen (nur wenn der erste Versuch abgelehnt wurde)
+        if (ev && ev.success === false && ev.status !== 409 && ev.status >= 400 && ev.status < 500) {
+          ev = await obs(S.submitOneClickChallenge(ch, set, ents.map((x) => x.id)));
+        }
+        if (ev && ev.success !== false) {
+          const d = ev.data || {};
+          showToast(d.challengeCompleted ? '💎 SBC abgeschlossen!' : `💎 Abgegeben – jetzt ${fmt(d.submittedScore ?? ch.submittedScore)} Punkte`);
+          state.msg = d.challengeCompleted ? '✓ SBC abgeschlossen – Belohnung einsammeln.' : `✓ Abgegeben. Stand: ${fmt(d.submittedScore ?? ch.submittedScore)} von ${fmt(ch.scoreRequirement)}.`;
+          state.res = null; state.reload = true;
+        } else if (ev && ev.status === 409) {
+          state.msg = 'Einige Karten stecken noch in anderen SBC-Aufstellungen – dort entfernen oder sperren und neu berechnen.';
+        } else {
+          state.msg = `EA hat die Abgabe abgelehnt (${(ev && ev.status) || '?'}). Bitte „Diagnose kopieren“ schicken.`;
+          log('Abgabe', ev);
+        }
+      } catch (e) { state.msg = 'Fehler: ' + e.message; } finally { state.busy = false; state.confirm = false; render(); }
     }
 
     function render() {
       if (!box) return;
       const d = detectTarget();
+      if (d && d.id != null && state.autoFor !== `${d.id}:${d.v}`) { state.autoFor = `${d.id}:${d.v}`; settings.ptsTarget = d.v; saveSettings(); }
       const collapsed = !!box.closest('#fcpt-sbc') && !d && !state.res && !state.busy && !state.msg;
       box.innerHTML = `<details class="fcpt-sgroup pt-det" ${collapsed ? '' : 'open'}><summary><h4 style="display:inline">💎 Punkte-SBC (Diamanten)</h4></summary>
         <div class="note" style="font-size:12px;color:var(--ink2)">Neue FC-27-SBCs ohne Chemie: Karten abgeben, bis die Diamanten-Punkte erreicht sind. Das Tool sucht die günstigste Kombination aus deinem Verein – und rechnet Kauf-Futter mit ein.</div>
@@ -152,7 +232,10 @@
       on('[data-pt="min"]', 'change', (x) => { settings.ptsMinOvr = Math.max(0, Math.min(99, parseInt(x.value, 10) || 0)); saveSettings(); });
       on('[data-pt="buy"]', 'change', (x) => { settings.ptsBuy = x.checked; saveSettings(); });
       on('[data-pt="use"]', 'click', () => { settings.ptsTarget = d.v; saveSettings(); render(); });
-      on('[data-pt="run"]', 'click', () => run());
+      on('[data-pt="run"]', 'click', () => { state.confirm = false; run(); });
+      on('[data-pt="submit"]', 'click', () => { state.confirm = true; render(); });
+      on('[data-pt="no"]', 'click', () => { state.confirm = false; render(); });
+      on('[data-pt="yes"]', 'click', () => submit());
     }
 
     // Welches Rating ist gerade das günstigste Futter pro Punkt?
