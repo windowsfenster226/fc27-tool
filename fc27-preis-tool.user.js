@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.18.2
+// @version      2.18.3
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -2496,6 +2496,7 @@ const SBC = (function () {
     }
 
     // ---------- 5) Einsetzen ----------
+    let lastApplyError = null;
     async function apply(info, sol) {
       const ctx = findSbcContext() || info.ctx;
       const squad = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
@@ -2516,14 +2517,17 @@ const SBC = (function () {
       if (!done) throw new Error('EA-Funktion zum Setzen der Spieler nicht gefunden');
       const S = W.services && W.services.SBC;
       if (S && typeof S.saveChallenge === 'function' && ctx.challenge) {
-        const ev = await observeOnce(S.saveChallenge(ctx.challenge));
-        if (ev && ev.success === false) throw new Error('EA hat das Speichern abgelehnt' + (ev.status ? ` (${ev.status})` : ''));
+        let ev = null;
+        try { ev = await observeOnce(S.saveChallenge(ctx.challenge), 12000); } catch (e) { throw new Error('EA hat beim Speichern nicht geantwortet (' + e.message + ')'); }
+        if (ev && ev.success === false) throw new Error('EA hat das Speichern abgelehnt' + (ev.status ? ` (Code ${ev.status})` : ''));
       }
       const c = ctx.controller;
       for (const fn of ['_pushSquadToView', 'refreshSquad', '_updateSquad', 'onDataChange', 'render']) {
         try { if (c && typeof c[fn] === 'function') c[fn](squad); } catch (e) { /* */ }
       }
       try { if (squad.onDataUpdated && typeof squad.onDataUpdated.notify === 'function') squad.onDataUpdated.notify(); } catch (e) { /* */ }
+      // So aktualisiert EA selbst die Ansicht nach dem Laden einer Aufgabe (aus EAs Code: challenge.onDataChange.notify({squad}))
+      try { const ch = ctx.challenge; if (ch && ch.onDataChange && typeof ch.onDataChange.notify === 'function') ch.onDataChange.notify({ squad }); } catch (e) { /* */ }
       return true;
     }
 
@@ -2712,6 +2716,7 @@ const SBC = (function () {
           <table><thead><tr><th>Pos</th><th>Spieler</th><th style="text-align:right">OVR</th><th style="text-align:right">Chem</th><th style="text-align:right">Wert</th></tr></thead><tbody>${rows}</tbody></table>
           ${anyLocked ? '<div class="note" style="color:#fcd34d">🔒 Gesperrte Spieler in der Lösung – bitte „Nochmal lösen“.</div>' : ''}
           <div class="btns"><button class="btn go" data-a="apply" ${sol.feasible && !anyLocked ? '' : 'disabled'}>✓ In SBC einsetzen</button><button class="btn" data-a="solve">Nochmal lösen</button></div>
+          <div class="st" data-el="applyst"></div>
         </div>`;
     }
 
@@ -2902,19 +2907,31 @@ const SBC = (function () {
       }
     }
 
+    // Rückmeldung direkt unter dem Knopf (der Status oben ist beim Scrollen oft nicht sichtbar)
+    const applyMsg = (m, err) => {
+      setStatus(m, err);
+      const a = el('applyst');
+      if (a) { a.textContent = m; a.classList.toggle('err', !!err); }
+      if (err) showToast(m.length > 140 ? m.slice(0, 137) + '…' : m, true);
+    };
     async function runApply() {
-      if (!lastSol || !lastSol.feasible) return;
-      if (lastSol.players.some((p) => p && lockedIds().has(p.id))) { setStatus('Lösung enthält gesperrte Spieler – bitte neu lösen.', true); return; }
+      if (!lastSol || !lastSol.feasible) { applyMsg('Keine gültige Lösung – bitte zuerst lösen.', true); return; }
+      if (lastSol.players.some((p) => p && lockedIds().has(p.id))) { applyMsg('Lösung enthält gesperrte Spieler – bitte neu lösen.', true); return; }
+      const btn = pane.querySelector('[data-a="apply"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Setze ein …'; }
       try {
-        setStatus('Setze Spieler ein …');
+        applyMsg('Setze Spieler ein …');
         await apply(info, lastSol);
-        setStatus('✓ Eingesetzt. Falls die Aufstellung nicht sofort erscheint: einmal zurück und die Aufgabe neu öffnen. Dann prüfen und selbst einreichen.');
+        applyMsg('✓ Eingesetzt. Falls die Aufstellung nicht sofort erscheint: einmal zurück und die Aufgabe neu öffnen. Dann prüfen und selbst einreichen.');
         if (planValid() && plan.items[info.id]) { plan.items[info.id].done = true; plan.items[info.id].players = lastSol.players.filter(Boolean).map((p) => ({ id: p.id, name: p.name, rating: p.rating })); savePlan(); }
         // Fenster schließen, damit „Absenden“ und EAs Bestätigung nicht verdeckt werden
         setTimeout(() => { pane.classList.remove('open'); showToast('✓ Spieler eingesetzt – prüfen und selbst „Absenden“'); }, 700);
       } catch (e) {
-        setStatus('Einsetzen fehlgeschlagen: ' + e.message + ' – bitte „Diagnose kopieren“ und mir schicken.', true);
+        applyMsg('Einsetzen fehlgeschlagen: ' + e.message + ' – bitte „Diagnose kopieren“ und mir schicken.', true);
+        lastApplyError = String(e && (e.stack || e.message) || e).slice(0, 600);
         log('SBC apply', e);
+      } finally {
+        if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = '✓ In SBC einsetzen'; }
       }
     }
 
@@ -2951,6 +2968,7 @@ const SBC = (function () {
             loadChallenge: src('loadChallenge'),
           };
         })(),
+        lastApplyError,
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };
       const text = JSON.stringify(d, null, 1);
