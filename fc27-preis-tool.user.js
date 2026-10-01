@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.18.1
+// @version      2.18.2
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -693,18 +693,35 @@ const SBC = (function () {
   // ------------------------------------------------------------------
   // Daten aus der EA Web App lesen
   // ------------------------------------------------------------------
-  function loadTransferList() {
+  function loadTransferListOnce() {
     return new Promise((resolve, reject) => {
       const svc = W.services && W.services.Item;
       if (!svc || typeof svc.requestTransferItems !== 'function') {
         return reject(new Error('Web App noch nicht bereit. Bitte einloggen, kurz warten und erneut auf „Aktualisieren“ klicken.'));
       }
+      const t = setTimeout(() => reject(Object.assign(new Error('EA antwortet nicht.'), { status: 'timeout' })), 15000);
       svc.requestTransferItems().observe(W, function (observer, res) {
+        clearTimeout(t);
         if (observer && typeof observer.unobserve === 'function') observer.unobserve(W);
-        if (!res || !res.success) return reject(new Error('EA hat die Transferliste nicht geliefert.'));
+        if (!res || !res.success) {
+          const st = res && (res.status || (res.error && res.error.code));
+          const hint = st === 429 || st === 512 || st === 521 ? ' EA bremst gerade (zu viele Anfragen, z. B. nach vielen Suchen) – ein paar Minuten warten.'
+            : st === 458 || st === 459 ? ' EA verlangt eine Bestätigung – in der Web App die Prüfung abschließen (ggf. Seite neu laden).'
+              : st === 401 || st === 403 ? ' Sitzung abgelaufen – Web App neu laden und neu einloggen.'
+                : ' Öffne einmal Transfers › Transferliste in der Web App und versuche es erneut.';
+          return reject(Object.assign(new Error(`EA hat die Transferliste nicht geliefert${st ? ` (Code ${st})` : ''}.${hint}`), { status: st }));
+        }
         resolve((res.response && res.response.items) || (res.data && res.data.items) || []);
       });
     });
+  }
+  // Ein Fehlschlag kommt oft nur kurz vor -> einmal nach 2 Sek. wiederholen (nicht bei Drosselung)
+  async function loadTransferList() {
+    try { return await loadTransferListOnce(); } catch (e) {
+      if ([429, 458, 459, 512, 521, 401, 403].includes(e.status) || /bereit/.test(e.message)) throw e;
+      await sleep(2000);
+      return loadTransferListOnce();
+    }
   }
 
   // EA liefert die Position als Zahl -> deutsche Kürzel wie in der Web App
