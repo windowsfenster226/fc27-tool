@@ -60,6 +60,8 @@
   if (settings.ampel === undefined) settings.ampel = true;
   if (settings.hotkeys === undefined) settings.hotkeys = true;
   if (settings.bumpMinBin === undefined) settings.bumpMinBin = true;
+  if (settings.bumpField === undefined) settings.bumpField = 'minBin';     // 'minBin' = Min.-Sofortkauf hoch/runter, 'maxBid' = Max.-Gebot hochzählen
+  if (settings.bumpStart === undefined) settings.bumpStart = 1000000;
   settings.keys = Object.assign({ search: '1', buy: '2', confirm: '3', back: '4', up: '5', down: '6', snipe: '7' }, settings.keys || {});
   if (settings.stepField === undefined) settings.stepField = 2;   // 0 Min.-Gebot, 1 Max.-Gebot, 2 Min.-Sofortkauf, 3 Max.-Sofortkauf
   if (settings.autoBack === undefined) settings.autoBack = true;
@@ -475,7 +477,9 @@
       </div>
       <div class="fcpt-sgroup"><h4>Tastenkürzel zum Snipen</h4>
         <div class="fcpt-set"><span>Tastenkürzel aktiv</span><input type="checkbox" class="fcpt-sw" data-opt="hotkeys"></div>
-        <div class="fcpt-set"><span>Min.-Sofortkauf bei jeder Suche ändern<small>Sorgt für frische Suchergebnisse</small></span><input type="checkbox" class="fcpt-sw" data-opt="bumpMinBin"></div>
+        <div class="fcpt-set"><span>Bei jeder Suche einen Preis ändern<small>Sorgt für frische Suchergebnisse</small></span><input type="checkbox" class="fcpt-sw" data-opt="bumpMinBin"></div>
+        <div class="fcpt-set"><span>Welchen Preis?</span><select data-set="bumpField"><option value="minBin">Min.-Sofortkauf (hoch/runter)</option><option value="maxBid">Max.-Gebot hochzählen</option></select></div>
+        <div class="fcpt-set"><span>Max.-Gebot Startwert<small>Startet hier und steigt je Suche um eine Stufe</small></span><input type="number" min="1000" step="1000" data-num="bumpStart"></div>
         <div class="fcpt-set"><span>Nach Bestätigen zurück zur Suche</span><input type="checkbox" class="fcpt-sw" data-opt="autoBack"></div>
         <div class="fcpt-set"><span>Preis-Tasten ändern</span>
           <select data-set="stepField">
@@ -508,6 +512,8 @@
   panel.querySelector('[data-opt="ampel"]').checked = !!settings.ampel;
   panel.querySelector('[data-opt="hotkeys"]').checked = !!settings.hotkeys;
   panel.querySelector('[data-opt="bumpMinBin"]').checked = !!settings.bumpMinBin;
+  panel.querySelector('[data-set="bumpField"]').value = settings.bumpField;
+  panel.querySelector('[data-num="bumpStart"]').value = settings.bumpStart;
   panel.querySelector('[data-opt="autoBack"]').checked = !!settings.autoBack;
   panel.querySelector('[data-set="stepField"]').value = String(settings.stepField);
   const keyLabel = (k) => (k === ' ' ? 'Leertaste' : k.length === 1 ? k.toUpperCase() : k);
@@ -835,6 +841,7 @@
     if (t.dataset.opt === 'autoRefresh') { settings.autoRefresh = t.checked; saveSettings(); return; }
     if (t.dataset.opt === 'hotkeys') { settings.hotkeys = t.checked; saveSettings(); return; }
     if (t.dataset.opt === 'bumpMinBin') { settings.bumpMinBin = t.checked; saveSettings(); return; }
+    if (t.dataset.set === 'bumpField') { saveSettings(); return; }
     if (t.dataset.opt === 'autoBack') { settings.autoBack = t.checked; saveSettings(); return; }
     if (t.dataset.set === 'stepField') { settings.stepField = parseInt(t.value, 10); saveSettings(); return; }
     if (t.dataset.key) return;
@@ -1215,7 +1222,35 @@
 
   // Min.-Sofortkauf abwechselnd eine Stufe hoch/runter -> EA liefert frische statt zwischengespeicherte Ergebnisse
   let bumpUp = true;
+  // Wert in ein EA-Preisfeld schreiben (wie getippt)
+  function setPriceInput(input, v) {
+    try {
+      input.focus();
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, String(v));
+      ['input', 'change', 'keyup'].forEach((t) => input.dispatchEvent(new Event(t, { bubbles: true })));
+      input.blur();
+      input.dispatchEvent(new Event('blur', { bubbles: true }));
+      return true;
+    } catch (e) { return false; }
+  }
+  // Max.-Gebot je Suche eine Stufe höher (ab Startwert, oben angekommen wieder von vorn)
+  function bumpMaxBid() {
+    const filters = [...document.querySelectorAll('.search-prices .price-filter, .price-filter')].filter((f) => shown(f));
+    const f = filters[1];
+    if (!f) return false;
+    const input = f.querySelector('input');
+    const up = f.querySelector('.increment-value, button[class*="increment"]');
+    const cur = input ? toNum(input.value) || 0 : 0;
+    const start = Math.max(1000, settings.bumpStart || 1000000);
+    if (cur < start || cur >= 14900000 || !up || !visible(up)) {
+      return input ? setPriceInput(input, start) : false;
+    }
+    pressButton(up);
+    return true;
+  }
   function bumpMinBin() {
+    if (settings.bumpField === 'maxBid') return bumpMaxBid();
     const filters = [...document.querySelectorAll('.search-prices .price-filter, .price-filter')].filter((f) => f.offsetParent !== null);
     const minBin = filters[2];
     if (!minBin) return false;
