@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.18.0
+// @version      2.18.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -527,6 +527,7 @@ const SBC = (function () {
   if (settings.bumpMinBin === undefined) settings.bumpMinBin = true;
   if (settings.bumpField === undefined) settings.bumpField = 'minBin';     // 'minBin' = Min.-Sofortkauf hoch/runter, 'maxBid' = Max.-Gebot hochzählen
   if (settings.bumpStart === undefined) settings.bumpStart = 1000000;
+  if (settings.bumpMinMax === undefined) settings.bumpMinMax = 1000;
   settings.keys = Object.assign({ search: '1', buy: '2', confirm: '3', back: '4', up: '5', down: '6', snipe: '7' }, settings.keys || {});
   if (settings.stepField === undefined) settings.stepField = 2;   // 0 Min.-Gebot, 1 Max.-Gebot, 2 Min.-Sofortkauf, 3 Max.-Sofortkauf
   if (settings.autoBack === undefined) settings.autoBack = true;
@@ -1101,7 +1102,8 @@ const SBC = (function () {
       <div class="fcpt-sgroup"><h4>Tastenkürzel zum Snipen</h4>
         <div class="fcpt-set"><span>Tastenkürzel aktiv</span><input type="checkbox" class="fcpt-sw" data-opt="hotkeys"></div>
         <div class="fcpt-set"><span>Bei jeder Suche einen Preis ändern<small>Sorgt für frische Suchergebnisse</small></span><input type="checkbox" class="fcpt-sw" data-opt="bumpMinBin"></div>
-        <div class="fcpt-set"><span>Welchen Preis?</span><select data-set="bumpField"><option value="minBin">Min.-Sofortkauf (hoch/runter)</option><option value="maxBid">Max.-Gebot hochzählen</option></select></div>
+        <div class="fcpt-set"><span>Welchen Preis?</span><select data-set="bumpField"><option value="minBin">Min.-Sofortkauf (hoch/runter)</option><option value="minBinUp">Min.-Sofortkauf hochzählen</option><option value="maxBid">Max.-Gebot hochzählen</option></select></div>
+        <div class="fcpt-set"><span>Min.-Sofortkauf bis<small>Zählt je Suche eine Stufe hoch, danach von vorne</small></span><input type="number" min="200" step="50" data-num="bumpMinMax"></div>
         <div class="fcpt-set"><span>Max.-Gebot Startwert<small>Startet hier und steigt je Suche um eine Stufe</small></span><input type="number" min="1000" step="1000" data-num="bumpStart"></div>
         <div class="fcpt-set"><span>Nach Bestätigen zurück zur Suche</span><input type="checkbox" class="fcpt-sw" data-opt="autoBack"></div>
         <div class="fcpt-set"><span>Preis-Tasten ändern</span>
@@ -1138,6 +1140,7 @@ const SBC = (function () {
   panel.querySelector('[data-opt="bumpMinBin"]').checked = !!settings.bumpMinBin;
   panel.querySelector('[data-set="bumpField"]').value = settings.bumpField;
   panel.querySelector('[data-num="bumpStart"]').value = settings.bumpStart;
+  panel.querySelector('[data-num="bumpMinMax"]').value = settings.bumpMinMax;
   panel.querySelector('[data-opt="autoBack"]').checked = !!settings.autoBack;
   panel.querySelector('[data-set="stepField"]').value = String(settings.stepField);
   const keyLabel = (k) => (k === ' ' ? 'Leertaste' : k.length === 1 ? k.toUpperCase() : k);
@@ -1893,8 +1896,26 @@ const SBC = (function () {
     pressButton(up);
     return true;
   }
+  // Min.-Sofortkauf je Suche eine Stufe höher bis zur Grenze (z. B. 1.000), dann wieder von vorn (leer)
+  function bumpMinBinUp() {
+    const filters = [...document.querySelectorAll('.search-prices .price-filter, .price-filter')].filter((f) => shown(f));
+    const f = filters[2];
+    if (!f) return false;
+    const input = f.querySelector('input');
+    const up = f.querySelector('.increment-value, button[class*="increment"]');
+    const cur = input ? toNum(input.value) || 0 : 0;
+    if (cur >= Math.max(200, settings.bumpMinMax || 1000)) {
+      const down = f.querySelector('.clear-value, button[class*="clear"]');
+      if (down && visible(down)) { pressButton(down); return true; }
+      return input ? setPriceInput(input, '') : false;
+    }
+    if (!up || !visible(up)) return false;
+    pressButton(up);
+    return true;
+  }
   function bumpMinBin() {
     if (settings.bumpField === 'maxBid') return bumpMaxBid();
+    if (settings.bumpField === 'minBinUp') return bumpMinBinUp();
     const filters = [...document.querySelectorAll('.search-prices .price-filter, .price-filter')].filter((f) => f.offsetParent !== null);
     const minBin = filters[2];
     if (!minBin) return false;
