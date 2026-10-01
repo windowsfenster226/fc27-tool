@@ -203,6 +203,8 @@
       const resId = g(ent.resourceId, raw.resourceId, def);
       const futbin = cacheGet(`futbin:${settings.platform}:${resId}`);
       const value = g(futbin, raw.marketAverage, estValue(rating, rarity));
+      const unassigned = !!(extra && extra.unassigned) || !!raw.__unassigned;
+      const storage = !!(extra && extra.dup && !extra.unassigned);
       const dup = !!(extra && extra.dup) || !!raw.__unassigned || (typeof ent.isDuplicate === 'function' && (() => { try { return ent.isDuplicate(); } catch (e) { return false; } })());
       const mult = untradeable ? (dup ? 0.1 : settings.sbcPreferUntradeable ? 0.6 : 1) : 1;
       return {
@@ -210,7 +212,7 @@
         name: sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${def}`,
         rating, rarity, nationId: g(raw.nation, ent.nationId, ent.nation), leagueId: g(raw.leagueId, ent.leagueId),
         clubId: g(raw.teamid, ent.teamId, ent.teamid), positions, untradeable, loans, owners: g(raw.owners, ent.owners, 1),
-        dup, value, priceSrc: futbin != null ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung',
+        dup, unassigned, storage, value, priceSrc: futbin != null ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung',
         cost: Math.round(value * mult) + rating * 0.01,
         special: rarity > 1,
       };
@@ -249,7 +251,7 @@
           setStatus('Nicht zugewiesene Karten …');
           const ev = await observeOnce(S.Item.requestUnassignedItems());
           const items = (ev.response || ev.data || {}).items || [];
-          items.forEach((it) => all.push([it, { dup: true }]));
+          items.forEach((it) => all.push([it, { dup: true, unassigned: true }]));
         } catch (e) { log('Unzugewiesen', e); }
       }
       const ents = new Map();
@@ -417,7 +419,11 @@
       if (S && typeof S.saveChallenge === 'function' && ctx.challenge) {
         let ev = null;
         try { ev = await observeOnce(S.saveChallenge(ctx.challenge), 12000); } catch (e) { throw new Error('EA hat beim Speichern nicht geantwortet (' + e.message + ')'); }
-        if (ev && ev.success === false) throw new Error('EA hat das Speichern abgelehnt' + (ev.status ? ` (Code ${ev.status})` : ''));
+        if (ev && ev.success === false) {
+          const hint = ev.status === 404 ? ' – EA kennt eine der Karten an dieser Stelle nicht (z. B. noch unter „Neue Items“ oder inzwischen verkauft/verschoben). Bitte „Verein neu laden“ und erneut lösen'
+            : ev.status === 409 ? ' – eine Karte steckt schon in einer anderen SBC-Aufstellung' : '';
+          throw new Error('EA hat das Speichern abgelehnt' + (ev.status ? ` (Code ${ev.status})` : '') + hint);
+        }
       }
       const c = ctx.controller;
       for (const fn of ['_pushSquadToView', 'refreshSquad', '_updateSquad', 'onDataChange', 'render']) {
@@ -652,6 +658,8 @@
         protectedN = before - pool.length;
       }
       if (!settings.sbcSpecials) pool = pool.filter((p) => !p.special);
+      // „Neue Items“ (noch nicht zugewiesen) lehnt EA beim Speichern der SBC ab (Code 404) -> nicht verwenden
+      pool = pool.filter((p) => !p.unassigned);
       if (settings.sbcMaxRating > 0) pool = pool.filter((p) => p.rating <= settings.sbcMaxRating);
       let conceptN = 0;
       if (settings.sbcConcepts && constraints) {
@@ -827,6 +835,7 @@
       } catch (e) {
         applyMsg('Einsetzen fehlgeschlagen: ' + e.message + ' – bitte „Diagnose kopieren“ und mir schicken.', true);
         lastApplyError = String(e && (e.stack || e.message) || e).slice(0, 600);
+        if (/Code 404|Code 409/.test(e.message)) club = null;   // Vereinsdaten veraltet -> beim nächsten Lösen frisch laden
         log('SBC apply', e);
       } finally {
         if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = '✓ In SBC einsetzen'; }
@@ -867,6 +876,7 @@
           };
         })(),
         lastApplyError,
+        lastSolutionItems: lastSol ? lastSol.players.filter(Boolean).map((p) => ({ id: p.id, r: p.rating, nh: p.untradeable, dup: p.dup, st: p.storage, un: p.unassigned, c: !!p.concept })) : null,
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };
       const text = JSON.stringify(d, null, 1);
