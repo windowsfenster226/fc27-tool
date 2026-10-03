@@ -926,6 +926,21 @@
       sbcBtn.classList.toggle('show', on || pane.classList.contains('open'));
     }, 1500);
 
-    return { CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    // Aktive Mannschaft komplett (für den Kader-Optimierer): Formation + Spieler-IDs
+    async function activeSquadInfo() {
+      try {
+        const S = W.services && W.services.Squad;
+        if (!S || typeof S.getActiveSquad !== 'function') return null;
+        const ev = await observeOnce(S.getActiveSquad(), 6000);
+        const pay = ev.response || ev.data || {};
+        const sq = pay.squad || pay;
+        let f = null;
+        try { f = typeof sq.getFormation === 'function' ? sq.getFormation() : sq._formation || sq.formation; } catch (e) { /* */ }
+        if (f && typeof f === 'object') f = f.name || f.id || f.formation || null;
+        const ids = slotList(sq).slice(0, 11).map((s2) => { const it = slotItem(s2); return it && it.id; });
+        return { formation: f ? String(f) : null, ids };
+      } catch (e) { return null; }
+    }
+    return { activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 

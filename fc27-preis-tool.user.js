@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.19.0
+// @version      2.20.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -3028,7 +3028,22 @@ const SBC = (function () {
       sbcBtn.classList.toggle('show', on || pane.classList.contains('open'));
     }, 1500);
 
-    return { CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    // Aktive Mannschaft komplett (für den Kader-Optimierer): Formation + Spieler-IDs
+    async function activeSquadInfo() {
+      try {
+        const S = W.services && W.services.Squad;
+        if (!S || typeof S.getActiveSquad !== 'function') return null;
+        const ev = await observeOnce(S.getActiveSquad(), 6000);
+        const pay = ev.response || ev.data || {};
+        const sq = pay.squad || pay;
+        let f = null;
+        try { f = typeof sq.getFormation === 'function' ? sq.getFormation() : sq._formation || sq.formation; } catch (e) { /* */ }
+        if (f && typeof f === 'object') f = f.name || f.id || f.formation || null;
+        const ids = slotList(sq).slice(0, 11).map((s2) => { const it = slotItem(s2); return it && it.id; });
+        return { formation: f ? String(f) : null, ids };
+      } catch (e) { return null; }
+    }
+    return { activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 
 
@@ -3341,8 +3356,8 @@ const SBC = (function () {
       const SUBS = [['markt', '📈 Markt'], ['verein', '💼 Verein'], ['futter', '📊 Futter']];
       if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
-        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
-        '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="targets"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="squadopt"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
         '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div></div>';
       const showSub = () => {
         root.querySelectorAll('[data-sub]').forEach((b) => b.classList.toggle('on', b.dataset.sub === settings.tradeSub));
@@ -3353,6 +3368,8 @@ const SBC = (function () {
       SELLALERT.mount(root.querySelector('[data-el="sellalert"]'));
       POINTS.mount(root.querySelector('[data-el="points"]'));
       NEWITEMS.mount(root.querySelector('[data-el="newitems"]'));
+      SQUADOPT.mount(root.querySelector('[data-el="squadopt"]'));
+      TARGETS.mount(root.querySelector('[data-el="targets"]'));
       PROGNOSE.mount(root.querySelector('[data-el="prognose"]'));
       const tim = root.querySelector('[data-el="timing"]');
       const drawTiming = () => { tim.innerHTML = TIMING.html(); };
@@ -4384,6 +4401,211 @@ const SBC = (function () {
   })();
 
   // ==================================================================
+  // KADER-OPTIMIERER: stärkste Elf mit möglichst hoher Chemie aus deinem Verein
+  // (+ optional günstige Upgrades vom Markt). Setzt nichts automatisch ein.
+  // ==================================================================
+  const SQUADOPT = (() => {
+    if (settings.soFormation === undefined) settings.soFormation = '';
+    if (settings.soMinChem === undefined) settings.soMinChem = 24;
+    let box = null;
+    const st = { msg: '', busy: false, res: null, ups: null, active: null };
+
+    const formations = () => {
+      const all = Object.assign({}, SBC.FORMATIONS, settings.sbcFormations || {});
+      return Object.keys(all).filter((k) => Array.isArray(all[k]) && all[k].length === 11).sort();
+    };
+    const posOf = (f) => (settings.sbcFormations && settings.sbcFormations[f]) || SBC.FORMATIONS[f] || null;
+    const label = (f) => String(f).replace(/^f/, '').replace(/[^0-9]/g, '').split('').join('-');
+
+    async function run() {
+      st.busy = true; st.res = null; st.ups = null; st.msg = 'Lade Verein …'; render();
+      try {
+        const c = await SBCUI.loadClub((m) => { st.msg = m; render(); }, false);
+        if (!st.active) st.active = await SBCUI.activeSquadInfo();
+        let f = settings.soFormation;
+        if (!f && st.active && st.active.formation && posOf(st.active.formation)) f = st.active.formation;
+        if (!f || !posOf(f)) f = formations().includes('f4231') ? 'f4231' : 'f442';
+        const positions = posOf(f);
+        const pool = c.players.filter((p) => !p.storage && !p.unassigned && p.rating)
+          .map((p) => Object.assign({}, p, { cost: Math.pow(100 - p.rating, 2) }));   // Ziel: hohe Ratings
+        const slots = positions.map((position) => ({ position }));
+        const variants = [];
+        for (const t of [33, 30, 27, settings.soMinChem]) {
+          st.msg = `Suche beste Elf (${label(f)}) mit Chemie ≥ ${t} …`; render();
+          await sleep(30);
+          const sol = SBC.solve(pool, slots, [{ id: 1, kind: 'CHEMISTRY_POINTS', value: t, scope: 'MIN' }], { timeMs: 2500 });
+          if (!sol.error && sol.feasible) variants.push({ t, sol });
+          if (variants.length && t <= settings.soMinChem) break;
+        }
+        if (!variants.length) { st.msg = 'Keine Elf mit genug Chemie gefunden – Mindest-Chemie senken.'; return; }
+        // Varianten: höchste Chemie und höchstes Rating (falls verschieden)
+        const byChem = variants[0];
+        const byRating = [...variants].sort((a, b) => b.sol.ev.ratingRaw - a.sol.ev.ratingRaw || b.sol.ev.chem.total - a.sol.ev.chem.total)[0];
+        st.res = { f, positions, pool, list: byRating === byChem ? [byChem] : [byChem, byRating] };
+        st.msg = '';
+      } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
+    }
+
+    // Upgrades: Konzept-Spieler gleicher Position, besser bewertet, gleiche Liga oder Nation (Chemie bleibt ähnlich)
+    async function upgrades() {
+      const r = st.res && st.res.list[0];
+      if (!r) return;
+      st.busy = true; st.msg = 'Lade Marktspieler (einmal pro Sitzung, ca. 1–2 Min.) …'; render();
+      try {
+        if (typeof RATINGS !== 'undefined' && !RATINGS.get()) { try { await RATINGS.load(); } catch (e) { /* */ } }
+        const con = await SBCUI.loadConcepts((m) => { st.msg = m; render(); });
+        const out = [];
+        r.sol.players.forEach((cur, i) => {
+          if (!cur) return;
+          const pos = st.res.positions[i];
+          let best = null;
+          for (const p of con.players) {
+            if (p.rating <= cur.rating || !(p.positions || []).includes(pos)) continue;
+            if (p.leagueId !== cur.leagueId && p.nationId !== cur.nationId) continue;
+            SBCUI.conceptPrice(p);
+            const gain = p.rating - cur.rating;
+            const per = p.value / gain;
+            if (!best || per < best.per) best = { p, gain, per, pos, cur };
+          }
+          if (best) out.push(best);
+        });
+        out.sort((a, b) => a.per - b.per);
+        st.ups = out.slice(0, 6);
+        st.msg = out.length ? '' : 'Keine passenden Upgrades gefunden.';
+      } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
+    }
+
+    function solHtml(v, i) {
+      const ev = v.sol.ev;
+      const rows = v.sol.players.map((p, k) => p ? `<div class="so-r"><span class="so-p">${esc(st.res.positions[k])}</span><span class="so-n"><b>${esc(p.rating)}</b> ${esc(p.name)}${p.untradeable ? ' <em>NH</em>' : ''}</span><span class="ch ch${ev.chem.per[k]}">${ev.chem.per[k]}</span></div>` : '').join('');
+      return `<div class="so-v"><div class="so-h"><b>${i === 0 ? 'Beste Chemie' : 'Bestes Rating'}</b><span>Rating <b>${ev.rating}</b> · Chemie <b>${ev.chem.total}</b>/33</span></div>${rows}</div>`;
+    }
+
+    function render() {
+      if (!box) return;
+      const fs = formations();
+      const cur = settings.soFormation;
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>⚽ Kader-Optimierer</h4>
+        <div class="note" style="font-size:12px;color:var(--ink2)">Baut aus deinem Verein die stärkste Elf mit möglichst hoher Chemie. Setzt nichts ein – du stellst die Mannschaft in der Web App selbst auf.</div>
+        <div class="fcpt-set"><span>Formation${st.active && st.active.formation ? `<small>Aktive Mannschaft: ${esc(label(st.active.formation))}</small>` : ''}</span>
+          <select data-so="f"><option value="">Automatisch${st.active && st.active.formation && posOf(st.active.formation) ? ' (wie aktive)' : ''}</option>${fs.map((f) => `<option value="${f}" ${cur === f ? 'selected' : ''}>${esc(label(f))}</option>`).join('')}</select></div>
+        <div class="fcpt-set"><span>Mindest-Chemie<small>Für die Variante „Bestes Rating“</small></span><input type="number" min="0" max="33" data-so="c" value="${settings.soMinChem}"></div>
+        <button class="fcpt-bigbtn" data-so="run" ${st.busy ? 'disabled' : ''}>⚽ Beste Elf berechnen</button>
+        ${st.msg ? `<div class="fcpt-stand">${esc(st.msg)}</div>` : ''}
+        ${st.res ? `<div class="pt-note">Formation ${esc(label(st.res.f))} · aus ${fmt(st.res.pool.length)} Spielern</div>${st.res.list.map(solHtml).join('')}
+          <button class="fcpt-smallbtn" data-so="ups" ${st.busy ? 'disabled' : ''}>💡 Günstige Upgrades vom Markt suchen</button>` : ''}
+        ${st.ups && st.ups.length ? `<div class="pt-h">Günstigste Upgrades (Chemie bleibt ähnlich)</div>${st.ups.map((u) => `<div class="pt-r"><span>${esc(u.pos)}: ${esc(u.cur.rating)} ${esc(u.cur.name)} → <b>${esc(u.p.rating)} ${esc(u.p.name)}</b></span><span>+${u.gain} · ≈ ${fmt(Math.round(u.p.value))}</span></div>`).join('')}
+          <div class="pt-note">Preise teils geschätzt (Futbin, günstigste Karte je Rating) – vor dem Kauf prüfen.</div>` : ''}
+      </div>`;
+      const on = (sel, ev, fn) => { const x = box.querySelector(sel); if (x) x.addEventListener(ev, (e) => { e.stopPropagation(); fn(x); }); };
+      on('[data-so="f"]', 'change', (x) => { settings.soFormation = x.value; saveSettings(); });
+      on('[data-so="c"]', 'change', (x) => { settings.soMinChem = Math.max(0, Math.min(33, parseInt(x.value, 10) || 0)); saveSettings(); });
+      on('[data-so="run"]', 'click', () => run());
+      on('[data-so="ups"]', 'click', () => upgrades());
+    }
+    function mount(el) { box = el; render(); }
+    return { mount };
+  })();
+
+  // ==================================================================
+  // TRANSFERZIELE-MANAGER: deine Gebote im Blick – überboten? lohnt Nachbieten?
+  // Geboten wird nur, wenn du auf „Nachbieten“ klickst.
+  // ==================================================================
+  const TARGETS = (() => {
+    if (settings.tgMinProfit === undefined) settings.tgMinProfit = 200;
+    if (settings.tgAuto === undefined) settings.tgAuto = false;
+    let box = null, timer = null;
+    const st = { list: null, msg: '', busy: false };
+    const obs = (o, ms = 12000) => new Promise((resolve, reject) => {
+      if (!o || typeof o.observe !== 'function') return reject(new Error('Keine EA-Antwort'));
+      const sub = {};
+      const t = setTimeout(() => reject(new Error('Zeitüberschreitung bei EA')), ms);
+      o.observe(sub, (ob, ev) => { clearTimeout(t); try { ob.unobserve(sub); } catch (e) { /* */ } resolve(ev || {}); });
+    });
+    const nextBid = (cur, start) => (cur ? cur + stepFor(cur) : start || 150);
+
+    function row(ent) {
+      const p = mapItem(ent);
+      if (!p) return null;
+      let a = {};
+      try { a = ent.getAuctionData ? ent.getAuctionData() : ent._auction || {}; } catch (e) { /* */ }
+      const bidState = String(a.bidState || '').toLowerCase();
+      const trade = String(a.tradeState || '').toLowerCase();
+      const lead = bidState === 'highest';
+      const status = trade === 'closed' ? (lead ? 'won' : 'lost') : trade === 'expired' ? (lead ? 'won' : 'lost') : lead ? 'lead' : bidState === 'outbid' ? 'outbid' : 'watch';
+      const market = p.isPlayer ? (marketPrice(p.resourceId) || cacheGet(`futbin:${settings.platform}:${p.resourceId}`) || null) : null;
+      const maxBid = market ? Math.floor((afterTax(market) - settings.tgMinProfit) / stepFor(market)) * stepFor(market) : null;
+      const nb = nextBid(a.currentBid, a.startingBid);
+      return { ent, p, status, cur: a.currentBid || 0, bin: a.buyNowPrice, exp: a.expires, market, maxBid, nb, worth: maxBid != null && nb <= maxBid };
+    }
+
+    async function load(quiet) {
+      const S = W.services && W.services.Item;
+      if (!S || typeof S.requestWatchedItems !== 'function') { st.msg = 'EA-Funktion für Transferziele nicht gefunden.'; render(); return; }
+      if (!quiet) { st.busy = true; st.msg = 'Lade Transferziele …'; render(); }
+      try {
+        const ev = await obs(S.requestWatchedItems());
+        const items = (ev.response || ev.data || {}).items || [];
+        st.list = items.map(row).filter(Boolean);
+        const order = { outbid: 0, lead: 1, watch: 2, won: 3, lost: 4 };
+        st.list.sort((a, b) => order[a.status] - order[b.status] || (a.exp || 0) - (b.exp || 0));
+        st.msg = st.list.length ? '' : 'Keine Transferziele.';
+        // fehlende Futbin-Preise nachladen (gedrosselt)
+        st.list.filter((r) => r.p.isPlayer && !r.market).slice(0, 8).forEach((r) => {
+          getPrice('futbin', r.p).then(() => { const n = row(r.ent); if (n) Object.assign(r, n); render(); }).catch(() => {});
+        });
+      } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
+    }
+
+    async function bid(i) {
+      const r = st.list[i];
+      if (!r) return;
+      const S = W.services.Item;
+      r.busy = true; render();
+      try {
+        const ev = await obs(S.bid(r.ent, r.nb));
+        showToast(ev && ev.success === false ? `Gebot abgelehnt (${ev.status || '?'})` : `✓ ${r.p.name}: ${fmt(r.nb)} geboten`, ev && ev.success === false);
+      } catch (e) { showToast('Gebot fehlgeschlagen: ' + e.message, true); }
+      r.busy = false;
+      await load(true);
+    }
+
+    const LBL = { outbid: ['Überboten', 'bad'], lead: ['Führend', 'good'], watch: ['Beobachtet', ''], won: ['Gewonnen', 'good'], lost: ['Verloren', 'mid'] };
+    function render() {
+      if (!box) return;
+      const L = st.list || [];
+      const cnt = (s) => L.filter((r) => r.status === s).length;
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>🎯 Transferziele</h4>
+        <div class="note" style="font-size:12px;color:var(--ink2)">Deine Gebote: wo du überboten wurdest und bis wohin Nachbieten noch Profit bringt (Futbin-Preis nach Steuer minus Mindest-Profit).</div>
+        <div class="fcpt-set"><span>Mindest-Profit beim Weiterverkauf</span><input type="number" min="0" step="50" data-tg="min" value="${settings.tgMinProfit}"></div>
+        <div class="fcpt-set"><span>Alle 20 Sek. aktualisieren<small>Nur solange dieser Bereich offen ist</small></span><input type="checkbox" class="fcpt-sw" data-tg="auto" ${settings.tgAuto ? 'checked' : ''}></div>
+        <button class="fcpt-bigbtn" data-tg="load" ${st.busy ? 'disabled' : ''}>🎯 Transferziele laden</button>
+        ${st.msg ? `<div class="fcpt-stand">${esc(st.msg)}</div>` : ''}
+        ${L.length ? `<div class="ni-sum"><span>${cnt('outbid')}× überboten</span><span>${cnt('lead')}× führend</span><span>${cnt('won')}× gewonnen</span></div>
+        <div class="ni-list">${L.map((r, i) => `<div class="ni-r tg-${r.status}">
+          <span class="ni-n"><b>${esc(r.p.rating ?? '')}</b> ${esc(r.p.name)} <span class="trel ${LBL[r.status][1]}">${LBL[r.status][0]}</span>
+            <small>Gebot ${fmt(r.cur)}${r.bin ? ` · SK ${fmt(r.bin)}` : ''}${r.market ? ` · Futbin ${fmt(r.market)}` : ''}${r.maxBid != null ? ` · lohnt bis <b>${fmt(r.maxBid)}</b>` : ''}${r.status === 'outbid' || r.status === 'lead' || r.status === 'watch' ? ` · ${fmtTime(r.exp)}` : ''}</small></span>
+          ${r.status === 'outbid' || r.status === 'watch' ? (r.worth ? `<button class="fcpt-smallbtn go" data-tg-bid="${i}" ${r.busy ? 'disabled' : ''}>Bieten ${fmt(r.nb)}</button>` : `<span class="tg-no">${r.maxBid != null ? 'lohnt nicht mehr' : 'Preis fehlt'}</span>`) : ''}
+        </div>`).join('')}</div>` : ''}
+      </div>`;
+      const on = (sel, ev, fn) => box.querySelectorAll(sel).forEach((x) => x.addEventListener(ev, (e) => { e.stopPropagation(); fn(x); }));
+      on('[data-tg="load"]', 'click', () => load());
+      on('[data-tg="min"]', 'change', (x) => { settings.tgMinProfit = Math.max(0, parseInt(x.value, 10) || 0); saveSettings(); if (st.list) { st.list = st.list.map((r) => row(r.ent) || r); render(); } });
+      on('[data-tg="auto"]', 'change', (x) => { settings.tgAuto = x.checked; saveSettings(); });
+      on('[data-tg-bid]', 'click', (x) => bid(+x.dataset.tgBid));
+    }
+
+    timer = setInterval(() => {
+      if (!settings.tgAuto || !box || !st.list || st.busy || document.visibilityState !== 'visible') return;
+      const visible = box.offsetParent !== null && panel.classList.contains('open');
+      if (visible) load(true);
+    }, 20000);
+
+    function mount(el) { box = el; render(); }
+    return { mount };
+  })();
+
+  // ==================================================================
   // OBERFLÄCHE „Variante B“: kompakte Symbolleiste rechts, dichte Transferliste,
   // Übersicht mit Alarmen. Baut das vorhandene Panel um (alle Funktionen bleiben).
   // ==================================================================
@@ -4531,6 +4753,14 @@ const SBC = (function () {
       .ni-n{flex:1;min-width:0;font-size:13px}.ni-n small{display:block;font-size:11.5px;color:var(--ink3,#7c889e)}
       .ni-n em{font-style:normal;font-size:10.5px;color:#86efac;margin-left:3px}.ni-n em.d{color:#fde68a}
       .ni-r select{max-width:140px;font-size:12.5px}
+      .so-v{border:1px solid var(--line,#1f2940);border-radius:10px;overflow:hidden}
+      .so-h{display:flex;justify-content:space-between;gap:8px;padding:7px 10px;background:var(--bg3,#182033);font-size:12.5px}
+      .so-r{display:flex;align-items:center;gap:8px;padding:5px 10px;border-top:1px solid var(--line,#1f2940);font-size:13px}
+      .so-p{width:34px;font-size:11px;color:var(--ink3,#7c889e)}.so-n{flex:1;min-width:0}.so-n em{font-style:normal;font-size:10.5px;color:#86efac;margin-left:3px}
+      #fcpt-panel .ch{display:inline-block;min-width:20px;text-align:center;border-radius:5px;font:600 11.5px 'JetBrains Mono',monospace;padding:1px 4px;background:#3a1515;color:#fecaca}
+      #fcpt-panel .ch1,#fcpt-panel .ch2{background:#3a2a0e;color:#fde68a}#fcpt-panel .ch3{background:#10301f;color:#86efac}
+      .tg-no{font-size:11.5px;color:var(--ink3,#7c889e);white-space:nowrap}
+      .ni-r.tg-outbid{background:rgba(255,107,107,.06)}.ni-n .trel{margin-left:4px}
       .pt-confirm{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:10px;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.35);font-size:12.5px}
       .pt-confirm span{color:var(--ink2,#a3aec2)}.pt-confirm .btns2{display:flex;gap:8px}
       .fcpt-smallbtn.go{background:var(--gold,#f2c14e);color:#15120a;border-color:var(--gold,#f2c14e)}
