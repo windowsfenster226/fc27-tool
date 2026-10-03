@@ -139,6 +139,13 @@
       /* Schwebende Knöpfe an den rechten Rand (Mitte) – sie lagen über EAs „Einreichen“-Knöpfen */
       #fcpt-btn{right:0 !important;left:auto !important;bottom:auto !important;top:calc(50% - 60px) !important;width:46px !important;height:52px !important;border-radius:14px 0 0 14px !important;font-size:15px !important}
       #fcpt-sbcbtn{right:0 !important;left:auto !important;bottom:auto !important;top:calc(50% + 2px) !important;border-radius:14px 0 0 14px !important;padding:10px 8px !important;font-size:12px !important;line-height:1.15;max-width:52px;white-space:normal;text-align:center}
+      .ni-sum{display:flex;flex-wrap:wrap;gap:6px}.ni-sum span{font-size:12px;padding:3px 8px;border-radius:999px;background:var(--bg3,#182033);color:var(--ink2,#a3aec2)}
+      .ni-list{display:flex;flex-direction:column;max-height:360px;overflow:auto;border:1px solid var(--line,#1f2940);border-radius:10px}
+      .ni-r{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line,#1f2940)}
+      .ni-r:last-child{border-bottom:0}
+      .ni-n{flex:1;min-width:0;font-size:13px}.ni-n small{display:block;font-size:11.5px;color:var(--ink3,#7c889e)}
+      .ni-n em{font-style:normal;font-size:10.5px;color:#86efac;margin-left:3px}.ni-n em.d{color:#fde68a}
+      .ni-r select{max-width:140px;font-size:12.5px}
       .pt-confirm{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:10px;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.35);font-size:12.5px}
       .pt-confirm span{color:var(--ink2,#a3aec2)}.pt-confirm .btns2{display:flex;gap:8px}
       .fcpt-smallbtn.go{background:var(--gold,#f2c14e);color:#15120a;border-color:var(--gold,#f2c14e)}
@@ -270,6 +277,8 @@
       const lieg = exp.filter((p) => expiredCount(p.itemId) >= 2);
       lieg.forEach((p) => { const m = marketPrice(p.resourceId); A.push({ k: 'o', ic: 'sand', t: `${p.name} liegt: ${expiredCount(p.itemId)}× abgelaufen`, s: m ? `Vorschlag neu einstellen: ${fmt(listSuggest(p, m).bin)}` : 'Günstiger neu einstellen', go: 'list' }); });
       if (exp.length > lieg.length) A.push({ k: 'o', ic: 'sand', t: `${exp.length - lieg.length} Karte(n) abgelaufen`, s: 'Neu einstellen – „Futbin-Preis übernehmen“ hilft', go: 'list' });
+      const nNew = NEWITEMS.count();
+      if (nNew) A.push({ k: 'g', ic: 'list', t: `${nNew} neue Item(s) unsortiert`, s: 'Mit einem Klick verteilen: Verkaufen, SBC-Lager, Verein', go: 'trade:verein' });
       const sold = items.filter((p) => p.sold);
       if (sold.length) A.push({ k: 'p', ic: 'check', t: `${sold.length} Karte(n) verkauft`, s: `+${fmt(sold.reduce((a, p) => a + (p.profit || 0), 0))} Profit – in der Web App abholen`, go: 'list' });
       return A;
@@ -374,7 +383,11 @@
       const t = e.target.dataset && e.target.dataset.tab;
       if (t && !e.target.closest('.fcpt-rail') && t !== 'trade') { cur = t; markRail(t); }
     });
-    btn.addEventListener('click', () => { if (panel.classList.contains('open')) { quick(); badge(); if (cur === 'home') renderHome(); } });
+    btn.addEventListener('click', () => {
+      if (!panel.classList.contains('open')) return;
+      quick(); badge(); if (cur === 'home') renderHome();
+      NEWITEMS.peek().then(() => { badge(); if (cur === 'home') renderHome(); });
+    });
     setInterval(() => { if (panel.classList.contains('open')) { quick(); badge(); } }, 30000);
 
     // iPhone: Menüleiste über Safaris untere Leiste heben (Abstand einstellbar)

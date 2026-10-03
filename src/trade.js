@@ -308,7 +308,7 @@
       if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
         '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
-        '<div class="fcpt-subpane" data-pane="verein">' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
         '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div></div>';
       const showSub = () => {
         root.querySelectorAll('[data-sub]').forEach((b) => b.classList.toggle('on', b.dataset.sub === settings.tradeSub));
@@ -318,6 +318,7 @@
       showSub();
       SELLALERT.mount(root.querySelector('[data-el="sellalert"]'));
       POINTS.mount(root.querySelector('[data-el="points"]'));
+      NEWITEMS.mount(root.querySelector('[data-el="newitems"]'));
       PROGNOSE.mount(root.querySelector('[data-el="prognose"]'));
       const tim = root.querySelector('[data-el="timing"]');
       const drawTiming = () => { tim.innerHTML = TIMING.html(); };

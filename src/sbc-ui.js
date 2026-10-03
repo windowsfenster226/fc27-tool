@@ -877,6 +877,7 @@
           };
         })(),
         lastApplyError,
+        newItems: (() => { try { return NEWITEMS.diag(); } catch (e) { return String(e); } })(),
         lastSolutionItems: lastSol ? lastSol.players.filter(Boolean).map((p) => ({ id: p.id, r: p.rating, nh: p.untradeable, dup: p.dup, st: p.storage, un: p.unassigned, c: !!p.concept })) : null,
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };
