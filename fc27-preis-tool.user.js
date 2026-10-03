@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.18.5
+// @version      2.18.6
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -3988,7 +3988,9 @@ const SBC = (function () {
         const c = ctx && ctx.challenge;
         const req = c && Number(c.scoreRequirement);
         if (req > 0) {
-          const done = Number(c.submittedScore) || 0;
+          let done = Number(c.submittedScore) || 0;
+          // Wiederholbare SBC schon abgeschlossen -> die nächste Runde beginnt wieder bei 0
+          if (c.repeatable && (String(c.status).toUpperCase() === 'COMPLETED' || done >= req)) done = 0;
           return Object.assign({ v: Math.max(1, req - done), total: req, done, name: c.name || 'SBC', oneClick: c.type === 'ONE_CLICK_CHALLENGE', id: c.id }, ovrBounds(c.id));
         }
         const id = SBCUI.CAP.currentId;
@@ -4160,7 +4162,7 @@ const SBC = (function () {
         if (ev && ev.success !== false) {
           const d = ev.data || {};
           showToast(d.challengeCompleted ? '💎 SBC abgeschlossen!' : `💎 Abgegeben – jetzt ${fmt(d.submittedScore ?? ch.submittedScore)} Punkte`);
-          state.msg = d.challengeCompleted ? '✓ SBC abgeschlossen – Belohnung einsammeln.' : `✓ Abgegeben. Stand: ${fmt(d.submittedScore ?? ch.submittedScore)} von ${fmt(ch.scoreRequirement)}.`;
+          state.msg = d.challengeCompleted ? (ch.repeatable ? '✓ Runde abgeschlossen – Belohnung einsammeln. Für die nächste Runde einfach neu berechnen.' : '✓ SBC abgeschlossen – Belohnung einsammeln.') : `✓ Abgegeben. Stand: ${fmt(d.submittedScore ?? ch.submittedScore)} von ${fmt(ch.scoreRequirement)}.`;
           state.res = null; state.reload = true;
         } else if (ev && ev.status === 409) {
           state.msg = 'Einige Karten stecken noch in anderen SBC-Aufstellungen – dort entfernen oder sperren und neu berechnen.';
