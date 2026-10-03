@@ -511,7 +511,8 @@
 
     const sbcBtn = document.createElement('button');
     sbcBtn.id = 'fcpt-sbcbtn';
-    sbcBtn.textContent = '🧩 SBC lösen';
+    sbcBtn.textContent = '🧩 SBC';
+    sbcBtn.setAttribute('aria-label', 'SBC lösen');
     document.body.appendChild(sbcBtn);
 
     const pane = document.createElement('div');

@@ -136,6 +136,9 @@
       .pt-det>summary{cursor:pointer;list-style:none}.pt-det>summary::-webkit-details-marker{display:none}
       .pt-det:not([open])>summary::after{content:' ▸ aufklappen';font-size:11px;color:var(--ink3,#7c889e)}
       .pt-det[open]{display:flex;flex-direction:column;gap:10px}
+      /* Schwebende Knöpfe an den rechten Rand (Mitte) – sie lagen über EAs „Einreichen“-Knöpfen */
+      #fcpt-btn{right:0 !important;left:auto !important;bottom:auto !important;top:calc(50% - 60px) !important;width:46px !important;height:52px !important;border-radius:14px 0 0 14px !important;font-size:15px !important}
+      #fcpt-sbcbtn{right:0 !important;left:auto !important;bottom:auto !important;top:calc(50% + 2px) !important;border-radius:14px 0 0 14px !important;padding:10px 8px !important;font-size:12px !important;line-height:1.15;max-width:52px;white-space:normal;text-align:center}
       .pt-confirm{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:10px;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.35);font-size:12.5px}
       .pt-confirm span{color:var(--ink2,#a3aec2)}.pt-confirm .btns2{display:flex;gap:8px}
       .fcpt-smallbtn.go{background:var(--gold,#f2c14e);color:#15120a;border-color:var(--gold,#f2c14e)}
