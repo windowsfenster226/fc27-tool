@@ -1318,6 +1318,7 @@
   }
 
   function doSearch() {
+    if (typeof GUARD !== 'undefined' && GUARD.blocked()) return showToast(`🛑 ${GUARD.level().text} – Pause empfohlen. Nochmal drücken = trotzdem suchen.`, true);
     const s = findSearchButton();
     if (s) {
       if (settings.bumpMinBin) bumpMinBin();
@@ -1389,6 +1390,7 @@
   }
   async function doSnipe() {
     if (snipeBusy) return;
+    if (typeof GUARD !== 'undefined' && GUARD.blocked()) return showToast(`🛑 ${GUARD.level().text} – Pause empfohlen. Nochmal drücken = trotzdem suchen.`, true);
     if (findConfirmButton()) return showToast(`Kauf-Dialog ist offen – bestätigen mit ${keyLabel(settings.keys.confirm)} oder „Ok“`);
     snipeBusy = true;
     try {

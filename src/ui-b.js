@@ -154,6 +154,10 @@
       #fcpt-panel .ch1,#fcpt-panel .ch2{background:#3a2a0e;color:#fde68a}#fcpt-panel .ch3{background:#10301f;color:#86efac}
       .tg-no{font-size:11.5px;color:var(--ink3,#7c889e);white-space:nowrap}
       .ni-r.tg-outbid{background:rgba(255,107,107,.06)}.ni-n .trel{margin-left:4px}
+      .fav-b{border:0;background:transparent;cursor:pointer;font-size:15px;padding:0 4px;line-height:1;color:#7c889e;vertical-align:middle}
+      .fav-b.on{color:#f2c14e}
+      .gd{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-radius:10px;font-size:12.5px;background:rgba(61,214,140,.08);border:1px solid rgba(61,214,140,.3)}
+      .gd span{color:var(--ink2,#a3aec2)}.gd.warn{background:rgba(255,174,92,.08);border-color:rgba(255,174,92,.35)}.gd.red{background:rgba(255,107,107,.1);border-color:rgba(255,107,107,.4)}
       .pt-confirm{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:10px;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.35);font-size:12.5px}
       .pt-confirm span{color:var(--ink2,#a3aec2)}.pt-confirm .btns2{display:flex;gap:8px}
       .fcpt-smallbtn.go{background:var(--gold,#f2c14e);color:#15120a;border-color:var(--gold,#f2c14e)}
@@ -285,6 +289,8 @@
       const lieg = exp.filter((p) => expiredCount(p.itemId) >= 2);
       lieg.forEach((p) => { const m = marketPrice(p.resourceId); A.push({ k: 'o', ic: 'sand', t: `${p.name} liegt: ${expiredCount(p.itemId)}× abgelaufen`, s: m ? `Vorschlag neu einstellen: ${fmt(listSuggest(p, m).bin)}` : 'Günstiger neu einstellen', go: 'list' }); });
       if (exp.length > lieg.length) A.push({ k: 'o', ic: 'sand', t: `${exp.length - lieg.length} Karte(n) abgelaufen`, s: 'Neu einstellen – „Futbin-Preis übernehmen“ hilft', go: 'list' });
+      const gl = GUARD.level();
+      if (gl.level === 'red') A.unshift({ k: 'o', ic: 'sand', t: 'Sperren-Schutz: Pause empfohlen', s: gl.text, go: 'trade:markt' });
       const nNew = NEWITEMS.count();
       if (nNew) A.push({ k: 'g', ic: 'list', t: `${nNew} neue Item(s) unsortiert`, s: 'Mit einem Klick verteilen: Verkaufen, SBC-Lager, Verein', go: 'trade:verein' });
       const sold = items.filter((p) => p.sold);
@@ -303,7 +309,8 @@
       const today = sumSince(d0.getTime()).profit;
       const t = TIMING.info();
       const col = t.cls === 'sell' ? '#ff6b6b' : t.cls === 'buy' ? '#3dd68c' : t.cls === 'warn' ? '#ffae5c' : '#7c889e';
-      qs.innerHTML = `${coins != null ? `<span><b class="num">${fmt(coins)}</b> Münzen</span>` : ''}<span>Heute <b class="num ${today >= 0 ? 'p' : ''}">${signed(today)}</b></span><span title="${esc(t.text)}"><i class="dot" style="background:${col}"></i>${esc(t.title)}</span>`;
+      const g = GUARD.level();
+      qs.innerHTML = `${coins != null ? `<span><b class="num">${fmt(coins)}</b> Münzen</span>` : ''}${g.s.sMin || g.level !== 'ok' ? `<span title="Sperren-Schutz"><i class="dot" style="background:${g.level === 'red' ? '#ff6b6b' : g.level === 'warn' ? '#ffae5c' : '#3dd68c'}"></i>${g.s.sMin} Suchen/Min</span>` : ''}<span>Heute <b class="num ${today >= 0 ? 'p' : ''}">${signed(today)}</b></span><span title="${esc(t.text)}"><i class="dot" style="background:${col}"></i>${esc(t.title)}</span>`;
     }
     function renderHome() {
       quick();
@@ -450,6 +457,7 @@
         const out = [], skipped = [];
         for (const p of items) {
           if (p.sold || p.active || !p.__raw) continue;
+          if (FAV.has(p.itemId)) continue;   // Favorit -> nicht einstellen
           if (only != null && only !== 'all' && String(p.resourceId) !== String(only)) continue;
           const pr = priceFor(p);
           if (!pr) continue;
@@ -466,7 +474,7 @@
         const ps = preset(p);
         const m = marketPrice(p.resourceId);
         const sug = m ? listSuggest(p, m).bin : null;
-        return `<div class="tr-fix"><span class="lb">Festpreis</span>
+        return `<div class="tr-fix"><span class="lb">Festpreis</span>${FAV.btn({ id: p.itemId, name: p.name, rating: p.rating })}
           <input type="number" min="200" step="50" inputmode="numeric" data-fixin="${p.resourceId}" value="${ps ? ps.bin : ''}" placeholder="${sug ? fmt(sug) : 'Sofortkauf'}" aria-label="Festpreis Sofortkauf">
           <button data-fixsave="${p.resourceId}">${ps ? 'Ändern' : 'Festlegen'}</button>
           ${ps ? `<button data-fixdel="${p.resourceId}" aria-label="Festpreis entfernen">✕</button>` : ''}

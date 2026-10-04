@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.20.0
+// @version      2.21.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -1962,6 +1962,7 @@ const SBC = (function () {
   }
 
   function doSearch() {
+    if (typeof GUARD !== 'undefined' && GUARD.blocked()) return showToast(`🛑 ${GUARD.level().text} – Pause empfohlen. Nochmal drücken = trotzdem suchen.`, true);
     const s = findSearchButton();
     if (s) {
       if (settings.bumpMinBin) bumpMinBin();
@@ -2033,6 +2034,7 @@ const SBC = (function () {
   }
   async function doSnipe() {
     if (snipeBusy) return;
+    if (typeof GUARD !== 'undefined' && GUARD.blocked()) return showToast(`🛑 ${GUARD.level().text} – Pause empfohlen. Nochmal drücken = trotzdem suchen.`, true);
     if (findConfirmButton()) return showToast(`Kauf-Dialog ist offen – bestätigen mit ${keyLabel(settings.keys.confirm)} oder „Ok“`);
     snipeBusy = true;
     try {
@@ -2105,7 +2107,12 @@ const SBC = (function () {
   // ==================================================================
   const SBCUI = (() => {
     // ---------- 1) Netzwerk mitlesen (nur lesen): Anforderungen, Squad, Vereinsdaten ----------
-    const CAP = { challenges: new Map(), currentId: null, currentAt: 0, squads: new Map(), raw: new Map(), urls: [], activeIds: null };
+    const NETHOOKS = [];   // weitere Module hängen sich hier an (Sperren-Schutz, Pack-Auswertung)
+    const emitNet = (url, method, status, text, body) => {
+      if (!url || !/\/ut\/game\//.test(url)) return;
+      for (const h of NETHOOKS) { try { h(String(url), String(method || 'GET').toUpperCase(), status, text, body); } catch (e) { /* */ } }
+    };
+    const CAP = { hooks: NETHOOKS, challenges: new Map(), currentId: null, currentAt: 0, squads: new Map(), raw: new Map(), urls: [], activeIds: null };
 
     function findChallengeObjects(data, out = [], depth = 0) {
       if (!data || typeof data !== 'object' || depth > 5) return out;
@@ -2156,10 +2163,15 @@ const SBC = (function () {
       const XP = W.XMLHttpRequest && W.XMLHttpRequest.prototype;
       if (XP && !XP.__fcptSbc) {
         const oOpen = XP.open, oSend = XP.send;
-        XP.open = function (m, url) { this.__fcptUrl = url; return oOpen.apply(this, arguments); };
-        XP.send = function () {
+        XP.open = function (m, url) { this.__fcptUrl = url; this.__fcptMethod = m; return oOpen.apply(this, arguments); };
+        XP.send = function (body) {
           try {
+            this.__fcptBody = body;
             this.addEventListener('load', function () {
+              try {
+                const txt = !this.responseType || this.responseType === 'text' ? this.responseText : this.responseType === 'json' ? JSON.stringify(this.response) : null;
+                emitNet(this.__fcptUrl, this.__fcptMethod, this.status, txt, this.__fcptBody);
+              } catch (e) { /* */ }
               try {
                 if (!this.responseType || this.responseType === 'text') capture(this.__fcptUrl, this.responseText);
                 else if (this.responseType === 'json') capture(this.__fcptUrl, JSON.stringify(this.response));
@@ -2175,7 +2187,7 @@ const SBC = (function () {
         const wrapped = function (input, init) {
           const url = typeof input === 'string' ? input : input && input.url;
           return oFetch.apply(this, arguments).then((res) => {
-            try { if (/\/ut\/game\//.test(url || '')) res.clone().text().then((t) => capture(url, t)).catch(() => {}); } catch (e) { /* */ }
+            try { if (/\/ut\/game\//.test(url || '')) res.clone().text().then((t) => { capture(url, t); emitNet(url, (init && init.method) || (input && input.method), res.status, t, init && init.body); }).catch(() => {}); } catch (e) { /* */ }
             return res;
           });
         };
@@ -3356,8 +3368,8 @@ const SBC = (function () {
       const SUBS = [['markt', '📈 Markt'], ['verein', '💼 Verein'], ['futter', '📊 Futter']];
       if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
-        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="targets"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
-        '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="squadopt"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="guard"></div><div data-el="targets"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="fav"></div><div data-el="squadopt"></div><div data-el="packs"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
         '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div></div>';
       const showSub = () => {
         root.querySelectorAll('[data-sub]').forEach((b) => b.classList.toggle('on', b.dataset.sub === settings.tradeSub));
@@ -3369,6 +3381,9 @@ const SBC = (function () {
       POINTS.mount(root.querySelector('[data-el="points"]'));
       NEWITEMS.mount(root.querySelector('[data-el="newitems"]'));
       SQUADOPT.mount(root.querySelector('[data-el="squadopt"]'));
+      FAV.mount(root.querySelector('[data-el="fav"]'));
+      PACKS.mount(root.querySelector('[data-el="packs"]'));
+      GUARD.mount(root.querySelector('[data-el="guard"]'));
       TARGETS.mount(root.querySelector('[data-el="targets"]'));
       PROGNOSE.mount(root.querySelector('[data-el="prognose"]'));
       const tim = root.querySelector('[data-el="timing"]');
@@ -3681,7 +3696,8 @@ const SBC = (function () {
           const srcName = fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'geschätzt';
           const bin = roundPrice(val);
           const quick = raw.discardValue || (ent && ent.discardValue) || 0;
-          L.push({ name: p.name, rating: p.rating, val, src: srcName, bin, start: lowerStep(bin), net: afterTax(bin), quick, fav: locked.has(p.id) });
+          if (locked.has(p.id)) continue;   // Favorit -> nie zum Verkauf vorschlagen
+          L.push({ id: p.id, name: p.name, rating: p.rating, val, src: srcName, bin, start: lowerStep(bin), net: afterTax(bin), quick });
         }
         L.sort((a, b) => b.val - a.val);
         list = { L, activeRead: act.size > 0 };
@@ -3694,7 +3710,7 @@ const SBC = (function () {
       const t = TIMING.info();
       const rows = list ? list.L.slice(0, 40).map((r) => `
         <div class="sa-row">
-          <div class="sa-n"><b>${esc(r.rating)} ${esc(r.name)}</b>${r.fav ? ' <span title="Im SBC-Solver gesperrt – evtl. Lieblingsspieler">🔒</span>' : ''}<small>Wert ${fmt(r.val)} (${r.src})${r.quick && r.quick > r.net ? ' · <span class="fcpt-neg-v">Schnellverkauf bringt mehr!</span>' : ''}</small></div>
+          <div class="sa-n"><b>${esc(r.rating)} ${esc(r.name)}</b> ${FAV.btn({ id: r.id, name: r.name, rating: r.rating })}<small>Wert ${fmt(r.val)} (${r.src})${r.quick && r.quick > r.net ? ' · <span class="fcpt-neg-v">Schnellverkauf bringt mehr!</span>' : ''}</small></div>
           <div class="sa-p"><span>Einstellen</span><b>${fmt(r.start)} / ${fmt(r.bin)}</b><small>du bekommst ${fmt(r.net)}</small></div>
         </div>`).join('') : '';
       const total = list ? list.L.reduce((a, r) => a + r.net, 0) : 0;
@@ -4283,6 +4299,7 @@ const SBC = (function () {
     // Vorschlag: teure handelbare Karten verkaufen, Duplikate ins SBC-Lager, sonst Verein
     function suggest(x) {
       if (!x.isPl) return 'club';
+      if (FAV.has(x.id)) return 'club';   // Favorit -> behalten
       if (!x.untr && x.value && x.value >= settings.niSellMin) return 'tl';
       if (!x.untr && x.value && afterTax(x.value) < x.qs) return 'qs';
       if (x.dup) return pile('store') != null ? 'store' : (x.untr ? 'qs' : 'tl');
@@ -4298,6 +4315,7 @@ const SBC = (function () {
         const L = ((ev.response || ev.data || {}).items || []).map(info);
         L.sort((a, b) => (b.value || 0) - (a.value || 0) || (b.rating || 0) - (a.rating || 0));
         st.items = L; st.count = L.length; st.choice = {};
+        try { PACKS.learnNames(L); } catch (e) { /* */ }
         L.forEach((x) => { st.choice[x.id] = suggest(x); });
         st.msg = L.length ? '' : 'Keine neuen Items – alles sortiert. 👍';
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
@@ -4347,10 +4365,10 @@ const SBC = (function () {
       if (!box) return;
       const L = st.items;
       const s = L ? sum() : null;
-      const opts = (x) => Object.keys(ACT).filter((k) => (k !== 'qs' || canQS()) && (k !== 'store' || pile('store') != null) && (k !== 'tl' || !x.untr))
+      const opts = (x) => Object.keys(ACT).filter((k) => !(FAV.has(x.id) && (k === 'qs' || k === 'tl')) && (k !== 'qs' || canQS()) && (k !== 'store' || pile('store') != null) && (k !== 'tl' || !x.untr))
         .map((k) => `<option value="${k}" ${st.choice[x.id] === k ? 'selected' : ''}>${ACT[k]}</option>`).join('');
       const rows = L ? L.map((x) => `<div class="ni-r">
-          <span class="ni-n"><b>${esc(x.rating ?? '')}</b> ${esc(x.name)}${x.untr ? ' <em>NH</em>' : ''}${x.dup ? ' <em class="d">Dup</em>' : ''}
+          <span class="ni-n">${x.isPl ? FAV.btn({ id: x.id, name: x.name, rating: x.rating }) : ''}<b>${esc(x.rating ?? '')}</b> ${esc(x.name)}${x.untr ? ' <em>NH</em>' : ''}${x.dup ? ' <em class="d">Dup</em>' : ''}
             <small>${x.value ? `Wert ${fmt(x.value)}` : 'Wert –'}${x.qs ? ` · Schnell ${fmt(x.qs)}` : ''}${x.pts ? ` · ${fmt(x.pts)} 💎` : ''}</small></span>
           <select data-ni="${x.id}" aria-label="Ziel für ${esc(x.name)}">${opts(x)}</select></div>`).join('') : '';
       box.innerHTML = `<div class="fcpt-sgroup"><h4>📦 Neue Items sortieren</h4>
@@ -4395,9 +4413,219 @@ const SBC = (function () {
       return st.count;
     }
 
-    function mount(el) { box = el; render(); }
+    function mount(el) {
+      box = el; render();
+      FAV.onChange(() => { if (st.items) { st.items.forEach((x) => { if (FAV.has(x.id)) st.choice[x.id] = 'club'; }); render(); } });
+    }
     const diag = () => ({ itemPileKeys: Object.keys(W.ItemPile || {}), move: !!(W.services && W.services.Item && W.services.Item.move), discard: canQS(), count: st.count });
     return { mount, peek, count: () => st.count, diag };
+  })();
+
+  // ==================================================================
+  // FAVORITEN-SCHUTZ: Karten als „behalten“ markieren – kein Modul schlägt sie
+  // zum Verkaufen, Einstellen, Schnellverkauf oder für SBCs vor.
+  // (gleiche Liste wie die 🔒-Sperre im SBC-Solver)
+  // ==================================================================
+  // eslint-disable-next-line no-var
+  var FAV = (() => {
+    if (!Array.isArray(settings.sbcLocked)) settings.sbcLocked = [];
+    const has = (id) => id != null && settings.sbcLocked.some((x) => String(x.id) === String(id));
+    const listeners = [];
+    const changed = () => listeners.forEach((f) => { try { f(); } catch (e) { /* */ } });
+    function toggle(p) {
+      if (!p || p.id == null) return;
+      if (has(p.id)) {
+        settings.sbcLocked = settings.sbcLocked.filter((x) => String(x.id) !== String(p.id));
+        showToast(`☆ ${p.name} nicht mehr geschützt`);
+      } else {
+        settings.sbcLocked.push({ id: /^\d+$/.test(String(p.id)) ? Number(p.id) : p.id, name: p.name, rating: p.rating === '' || p.rating == null ? null : Number(p.rating) });
+        showToast(`⭐ ${p.name} wird behalten – nie zum Verkauf oder für SBCs vorgeschlagen`);
+      }
+      saveSettings(); changed(); render();
+    }
+    const btn = (p) => `<button class="fav-b ${has(p.id) ? 'on' : ''}" data-fav="${esc(p.id)}" data-favn="${esc(p.name)}" data-favr="${esc(p.rating ?? '')}" title="Behalten (Favorit)" aria-label="Als Favorit behalten">${has(p.id) ? '⭐' : '☆'}</button>`;
+    // ein Klick-Handler für alle ☆-Knöpfe im Tool
+    document.addEventListener('click', (e) => {
+      const b = e.target.closest && e.target.closest('[data-fav]');
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();
+      toggle({ id: b.dataset.fav, name: b.dataset.favn, rating: b.dataset.favr });
+      b.classList.toggle('on', has(b.dataset.fav)); b.textContent = has(b.dataset.fav) ? '⭐' : '☆';
+    }, true);
+
+    let box = null;
+    function render() {
+      if (!box) return;
+      const L = settings.sbcLocked;
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>⭐ Favoriten (${L.length})</h4>
+        <div class="note" style="font-size:12px;color:var(--ink2)">Diese Karten schlägt das Tool nie vor: nicht zum Verkaufen, Einstellen, Schnellverkauf, nicht für SBCs oder Diamanten-SBCs. Markieren mit ☆ in der Transferliste, bei neuen Items, im Verkaufs-Assistenten oder 🔒 im SBC-Solver.</div>
+        ${L.length ? `<div class="ni-list">${L.map((x) => `<div class="ni-r"><span class="ni-n"><b>${esc(x.rating ?? '')}</b> ${esc(x.name)}</span><button class="fcpt-smallbtn" data-favdel="${esc(x.id)}">Entfernen</button></div>`).join('')}</div>` : ''}
+      </div>`;
+      box.querySelectorAll('[data-favdel]').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        settings.sbcLocked = settings.sbcLocked.filter((x) => String(x.id) !== b.dataset.favdel); saveSettings(); changed(); render();
+      }));
+    }
+    function mount(el) { box = el; render(); }
+    return { has, toggle, btn, mount, onChange: (f) => listeners.push(f) };
+  })();
+
+  // ==================================================================
+  // SPERREN-SCHUTZ: zählt Suchen/Gebote/Einstellungen und warnt, bevor EA bremst
+  // ==================================================================
+  // eslint-disable-next-line no-var
+  var GUARD = (() => {
+    if (settings.guardOn === undefined) settings.guardOn = true;
+    if (settings.guardPerMin === undefined) settings.guardPerMin = 20;
+    if (settings.guardPerHour === undefined) settings.guardPerHour = 300;
+    if (settings.guardBlock === undefined) settings.guardBlock = true;
+    const ev = { search: [], bid: [], list: [], all: [] };
+    let lastBlock = null, lastWarn = 0, override = 0;
+    const prune = (a, ms) => { const t = Date.now() - ms; while (a.length && a[0] < t) a.shift(); };
+    const BLOCK_CODES = [429, 458, 459, 460, 512, 521];
+
+    SBCUI.CAP.hooks.push((url, method, status) => {
+      const now = Date.now();
+      ev.all.push(now);
+      if (/\/transfermarket(\?|$)/.test(url) && method === 'GET') ev.search.push(now);
+      if (/\/trade\/\d+\/bid/.test(url)) ev.bid.push(now);
+      if (/\/auctionhouse(\?|$)/.test(url) && method === 'POST') ev.list.push(now);
+      Object.values(ev).forEach((a) => prune(a, 3600000));
+      if (BLOCK_CODES.includes(Number(status))) {
+        lastBlock = { t: now, status };
+        showToast(`⛔ EA bremst (Code ${status}) – mach jetzt 5–10 Min. Pause, sonst droht eine Markt-Sperre.`, true);
+        try { if (typeof WATCH !== 'undefined') WATCH.push(`EA bremst dein Konto (Code ${status}) – Pause machen!`, 'FC27 Sperren-Schutz'); } catch (e) { /* */ }
+      }
+      const l = level();
+      if (settings.guardOn && l.level !== 'ok' && now - lastWarn > 45000) {
+        lastWarn = now;
+        showToast(l.level === 'red' ? `🛑 ${l.text} – kurz Pause machen!` : `⚠ ${l.text} – etwas langsamer`, l.level === 'red');
+      }
+    });
+
+    function stats() {
+      const now = Date.now();
+      const inWin = (a, ms) => a.filter((t) => t > now - ms).length;
+      return { sMin: inWin(ev.search, 60000), sHour: ev.search.length, bMin: inWin(ev.bid, 60000), lMin: inWin(ev.list, 60000), allMin: inWin(ev.all, 60000) };
+    }
+    function level() {
+      const s = stats();
+      if (lastBlock && Date.now() - lastBlock.t < 10 * 60000) return { level: 'red', text: `EA hat vor ${Math.round((Date.now() - lastBlock.t) / 60000)} Min. gebremst (Code ${lastBlock.status})`, s };
+      if (s.sMin >= settings.guardPerMin || s.sHour >= settings.guardPerHour) return { level: 'red', text: `${s.sMin} Suchen/Min · ${s.sHour}/Std`, s };
+      if (s.sMin >= settings.guardPerMin * 0.75 || s.sHour >= settings.guardPerHour * 0.8) return { level: 'warn', text: `${s.sMin} Suchen/Min · ${s.sHour}/Std`, s };
+      return { level: 'ok', text: `${s.sMin} Suchen/Min · ${s.sHour}/Std`, s };
+    }
+    // Für Such-/Snipe-Taste: bei Rot einmal anhalten; zweiter Druck innerhalb von 4 Sek. geht trotzdem
+    function blocked() {
+      if (!settings.guardOn || !settings.guardBlock) return false;
+      if (level().level !== 'red') return false;
+      if (Date.now() - override < 4000) { override = 0; return false; }
+      override = Date.now();
+      return true;
+    }
+
+    let box = null;
+    function render() {
+      if (!box) return;
+      const l = level();
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>🛡 Sperren-Schutz</h4>
+        <div class="gd ${l.level}"><b>${l.level === 'ok' ? '🟢 Alles im grünen Bereich' : l.level === 'warn' ? '🟡 Etwas langsamer' : '🔴 Pause empfohlen'}</b><span>${esc(l.text)} · Gebote ${l.s.bMin}/Min · Einstellungen ${l.s.lMin}/Min</span></div>
+        <div class="fcpt-set"><span>Schutz aktiv<small>Warnt bei vielen Suchen und wenn EA bremst (inkl. Handy-Push)</small></span><input type="checkbox" class="fcpt-sw" data-gd="on" ${settings.guardOn ? 'checked' : ''}></div>
+        <div class="fcpt-set"><span>Such-Tasten bei Rot anhalten<small>Nochmal drücken (innerhalb 4 Sek.) = trotzdem suchen</small></span><input type="checkbox" class="fcpt-sw" data-gd="block" ${settings.guardBlock ? 'checked' : ''}></div>
+        <div class="fcpt-set"><span>Grenze Suchen pro Minute</span><input type="number" min="5" max="60" data-gd="min" value="${settings.guardPerMin}"></div>
+        <div class="fcpt-set"><span>Grenze Suchen pro Stunde</span><input type="number" min="50" max="2000" step="50" data-gd="hour" value="${settings.guardPerHour}"></div>
+        <div class="pt-note">EA nennt keine festen Grenzen – die Werte sind vorsichtige Erfahrungswerte. Gezählt wird nur, was in diesem Tab passiert.</div>
+      </div>`;
+      const on = (sel, fn) => { const x = box.querySelector(sel); if (x) x.addEventListener('change', (e) => { e.stopPropagation(); fn(x); saveSettings(); render(); }); };
+      on('[data-gd="on"]', (x) => { settings.guardOn = x.checked; });
+      on('[data-gd="block"]', (x) => { settings.guardBlock = x.checked; });
+      on('[data-gd="min"]', (x) => { settings.guardPerMin = Math.max(5, parseInt(x.value, 10) || 20); });
+      on('[data-gd="hour"]', (x) => { settings.guardPerHour = Math.max(50, parseInt(x.value, 10) || 300); });
+    }
+    setInterval(() => { if (box && box.offsetParent !== null) render(); }, 5000);
+    function mount(el) { box = el; render(); }
+    return { level, stats, blocked, mount };
+  })();
+
+  // ==================================================================
+  // PACK-AUSWERTUNG: merkt sich, was du aus Packs ziehst
+  // ==================================================================
+  const PACKS = (() => {
+    const KEY = 'fcpt_packs';
+    let log2 = GM_getValue(KEY, []);
+    const store = GM_getValue('fcpt_packstore', {});   // packId -> { name, coins }
+    const names = {};                                  // itemId -> Name (aus „Neue Items“/Verein gelernt)
+    const save = () => GM_setValue(KEY, log2.slice(-300));
+
+    function walk(o, fn, d = 0) {
+      if (!o || typeof o !== 'object' || d > 7) return;
+      if (Array.isArray(o)) { o.forEach((x) => walk(x, fn, d + 1)); return; }
+      fn(o); Object.values(o).forEach((v) => walk(v, fn, d + 1));
+    }
+    SBCUI.CAP.hooks.push((url, method, status, text, body) => {
+      if (!text) return;
+      // Shop: Pack-Namen und Münzpreise lernen
+      if (/\/store\/purchaseGroup/.test(url)) {
+        try {
+          walk(JSON.parse(text), (o) => {
+            if (o.id != null && (o.coins != null || o.price != null)) {
+              const nm = o.packName || o.name || o.description || o.localizationKey || store[o.id]?.name || `Pack ${o.id}`;
+              store[o.id] = { name: String(nm).replace(/^.*\./, ''), coins: Number(o.coins ?? o.price) || 0 };
+            }
+          });
+          GM_setValue('fcpt_packstore', store);
+        } catch (e) { /* */ }
+        return;
+      }
+      // Pack geöffnet = POST auf /purchased/items mit packId
+      if (method !== 'POST' || !/\/purchased\/items/.test(url) || !(status >= 200 && status < 300)) return;
+      let data, req = {};
+      try { data = JSON.parse(text); } catch (e) { return; }
+      try { req = typeof body === 'string' ? JSON.parse(body) : body || {}; } catch (e) { /* */ }
+      const items = (data && (data.itemList || data.itemData || data.items)) || [];
+      if (!Array.isArray(items) || !items.length) return;
+      const pk = req.packId ?? req.packID ?? null;
+      const info = (pk != null && store[pk]) || {};
+      const currency = String(req.currency || (info.coins ? 'COINS' : '')).toUpperCase();
+      const its = items.filter((x) => x && x.id != null).map((x) => {
+        const fb = x.resourceId != null ? cacheGet(`futbin:${settings.platform}:${x.resourceId}`) : null;
+        return { id: x.id, r: x.rating || null, pl: x.itemType === 'player', untr: !!x.untradeable, v: x.untradeable ? 0 : (fb || x.marketAverage || 0), qs: x.discardValue || 0, pos: x.preferredPosition };
+      });
+      log2.push({ t: Date.now(), pk, name: info.name || (pk != null ? `Pack ${pk}` : 'Pack'), cost: currency === 'COINS' ? info.coins || 0 : 0, cur: currency || '?', items: its });
+      save();
+      const val = its.reduce((a, x) => a + x.v, 0);
+      const top = its.filter((x) => x.pl).sort((a, b) => (b.r || 0) - (a.r || 0))[0];
+      showToast(`🎁 Pack erfasst: ${its.length} Items · Marktwert ≈ ${fmt(val)}${top ? ` · bester: ${top.r}` : ''}`);
+      render();
+    });
+    function learnNames(list) { (list || []).forEach((x) => { if (x && x.id != null && x.name) names[x.id] = x.name; }); }
+
+    let box = null;
+    function render() {
+      if (!box) return;
+      const L = log2;
+      const sum = (f) => L.reduce((a, p) => a + f(p), 0);
+      const val = (p) => p.items.reduce((a, x) => a + x.v, 0);
+      const coinsSpent = sum((p) => p.cost || 0);
+      const coinsPacks = L.filter((p) => p.cost);
+      const valPaid = coinsPacks.reduce((a, p) => a + val(p), 0);
+      const best = L.flatMap((p) => p.items.map((x) => Object.assign({ t: p.t, pack: p.name }, x))).filter((x) => x.pl).sort((a, b) => (b.v - a.v) || ((b.r || 0) - (a.r || 0))).slice(0, 5);
+      const byName = {};
+      L.forEach((p) => { const g = byName[p.name] || (byName[p.name] = { n: 0, v: 0, c: 0, top: 0 }); g.n++; g.v += val(p); g.c += p.cost || 0; g.top = Math.max(g.top, ...p.items.map((x) => x.r || 0)); });
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>🎁 Pack-Auswertung</h4>
+        ${L.length ? `<div class="pt-sum"><div><span>Packs</span><b>${L.length}</b></div><div><span>Münzen bezahlt</span><b>${fmt(coinsSpent)}</b></div><div><span>Wert gezogen</span><b>${fmt(sum(val))}</b></div></div>
+          ${coinsPacks.length ? `<div class="pt-note">Gekaufte Packs: ${fmt(coinsSpent)} Münzen → ${fmt(valPaid)} handelbarer Marktwert (<b class="${valPaid >= coinsSpent ? 'fcpt-pos-v' : 'fcpt-neg-v'}">${Math.round(valPaid / Math.max(1, coinsSpent) * 100)} %</b>).</div>` : ''}
+          <div class="pt-h">Nach Pack</div>${Object.entries(byName).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([n, g]) => `<div class="pt-r"><span>${esc(n)} (${g.n}×)</span><span>Ø ${fmt(Math.round(g.v / g.n))}${g.c ? ` · kostet Ø ${fmt(Math.round(g.c / g.n))}` : ''} · bestes ${g.top || '–'}</span></div>`).join('')}
+          ${best.length ? `<div class="pt-h">Beste Ziehungen</div>${best.map((x) => `<div class="pt-r"><span><b>${esc(x.r ?? '')}</b> ${esc(names[x.id] || x.pos || 'Spieler')}${x.untr ? ' <em>NH</em>' : ''}</span><span>${x.v ? fmt(x.v) : 'NH'} · ${new Date(x.t).toLocaleDateString('de-DE')}</span></div>`).join('')}` : ''}
+          <div class="pt-note">Wert = Marktwert handelbarer Karten (Futbin/EA). Nicht handelbare zählen mit 0.</div>
+          <button class="fcpt-smallbtn" data-pk="clear">Auswertung zurücksetzen</button>`
+        : '<div class="note" style="font-size:12px;color:var(--ink2)">Noch keine Packs erfasst. Öffne ein Pack in der Web App (dieser Tab) – das Tool merkt sich automatisch Inhalt und Wert.</div>'}
+      </div>`;
+      const c = box.querySelector('[data-pk="clear"]');
+      if (c) c.addEventListener('click', (e) => { e.stopPropagation(); if (confirm('Pack-Auswertung löschen?')) { log2 = []; save(); render(); } });
+    }
+    function mount(el) { box = el; render(); }
+    return { mount, learnNames, count: () => log2.length };
   })();
 
   // ==================================================================
@@ -4761,6 +4989,10 @@ const SBC = (function () {
       #fcpt-panel .ch1,#fcpt-panel .ch2{background:#3a2a0e;color:#fde68a}#fcpt-panel .ch3{background:#10301f;color:#86efac}
       .tg-no{font-size:11.5px;color:var(--ink3,#7c889e);white-space:nowrap}
       .ni-r.tg-outbid{background:rgba(255,107,107,.06)}.ni-n .trel{margin-left:4px}
+      .fav-b{border:0;background:transparent;cursor:pointer;font-size:15px;padding:0 4px;line-height:1;color:#7c889e;vertical-align:middle}
+      .fav-b.on{color:#f2c14e}
+      .gd{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-radius:10px;font-size:12.5px;background:rgba(61,214,140,.08);border:1px solid rgba(61,214,140,.3)}
+      .gd span{color:var(--ink2,#a3aec2)}.gd.warn{background:rgba(255,174,92,.08);border-color:rgba(255,174,92,.35)}.gd.red{background:rgba(255,107,107,.1);border-color:rgba(255,107,107,.4)}
       .pt-confirm{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:10px;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.35);font-size:12.5px}
       .pt-confirm span{color:var(--ink2,#a3aec2)}.pt-confirm .btns2{display:flex;gap:8px}
       .fcpt-smallbtn.go{background:var(--gold,#f2c14e);color:#15120a;border-color:var(--gold,#f2c14e)}
@@ -4892,6 +5124,8 @@ const SBC = (function () {
       const lieg = exp.filter((p) => expiredCount(p.itemId) >= 2);
       lieg.forEach((p) => { const m = marketPrice(p.resourceId); A.push({ k: 'o', ic: 'sand', t: `${p.name} liegt: ${expiredCount(p.itemId)}× abgelaufen`, s: m ? `Vorschlag neu einstellen: ${fmt(listSuggest(p, m).bin)}` : 'Günstiger neu einstellen', go: 'list' }); });
       if (exp.length > lieg.length) A.push({ k: 'o', ic: 'sand', t: `${exp.length - lieg.length} Karte(n) abgelaufen`, s: 'Neu einstellen – „Futbin-Preis übernehmen“ hilft', go: 'list' });
+      const gl = GUARD.level();
+      if (gl.level === 'red') A.unshift({ k: 'o', ic: 'sand', t: 'Sperren-Schutz: Pause empfohlen', s: gl.text, go: 'trade:markt' });
       const nNew = NEWITEMS.count();
       if (nNew) A.push({ k: 'g', ic: 'list', t: `${nNew} neue Item(s) unsortiert`, s: 'Mit einem Klick verteilen: Verkaufen, SBC-Lager, Verein', go: 'trade:verein' });
       const sold = items.filter((p) => p.sold);
@@ -4910,7 +5144,8 @@ const SBC = (function () {
       const today = sumSince(d0.getTime()).profit;
       const t = TIMING.info();
       const col = t.cls === 'sell' ? '#ff6b6b' : t.cls === 'buy' ? '#3dd68c' : t.cls === 'warn' ? '#ffae5c' : '#7c889e';
-      qs.innerHTML = `${coins != null ? `<span><b class="num">${fmt(coins)}</b> Münzen</span>` : ''}<span>Heute <b class="num ${today >= 0 ? 'p' : ''}">${signed(today)}</b></span><span title="${esc(t.text)}"><i class="dot" style="background:${col}"></i>${esc(t.title)}</span>`;
+      const g = GUARD.level();
+      qs.innerHTML = `${coins != null ? `<span><b class="num">${fmt(coins)}</b> Münzen</span>` : ''}${g.s.sMin || g.level !== 'ok' ? `<span title="Sperren-Schutz"><i class="dot" style="background:${g.level === 'red' ? '#ff6b6b' : g.level === 'warn' ? '#ffae5c' : '#3dd68c'}"></i>${g.s.sMin} Suchen/Min</span>` : ''}<span>Heute <b class="num ${today >= 0 ? 'p' : ''}">${signed(today)}</b></span><span title="${esc(t.text)}"><i class="dot" style="background:${col}"></i>${esc(t.title)}</span>`;
     }
     function renderHome() {
       quick();
@@ -5057,6 +5292,7 @@ const SBC = (function () {
         const out = [], skipped = [];
         for (const p of items) {
           if (p.sold || p.active || !p.__raw) continue;
+          if (FAV.has(p.itemId)) continue;   // Favorit -> nicht einstellen
           if (only != null && only !== 'all' && String(p.resourceId) !== String(only)) continue;
           const pr = priceFor(p);
           if (!pr) continue;
@@ -5073,7 +5309,7 @@ const SBC = (function () {
         const ps = preset(p);
         const m = marketPrice(p.resourceId);
         const sug = m ? listSuggest(p, m).bin : null;
-        return `<div class="tr-fix"><span class="lb">Festpreis</span>
+        return `<div class="tr-fix"><span class="lb">Festpreis</span>${FAV.btn({ id: p.itemId, name: p.name, rating: p.rating })}
           <input type="number" min="200" step="50" inputmode="numeric" data-fixin="${p.resourceId}" value="${ps ? ps.bin : ''}" placeholder="${sug ? fmt(sug) : 'Sofortkauf'}" aria-label="Festpreis Sofortkauf">
           <button data-fixsave="${p.resourceId}">${ps ? 'Ändern' : 'Festlegen'}</button>
           ${ps ? `<button data-fixdel="${p.resourceId}" aria-label="Festpreis entfernen">✕</button>` : ''}

@@ -3,7 +3,12 @@
   // ==================================================================
   const SBCUI = (() => {
     // ---------- 1) Netzwerk mitlesen (nur lesen): Anforderungen, Squad, Vereinsdaten ----------
-    const CAP = { challenges: new Map(), currentId: null, currentAt: 0, squads: new Map(), raw: new Map(), urls: [], activeIds: null };
+    const NETHOOKS = [];   // weitere Module hängen sich hier an (Sperren-Schutz, Pack-Auswertung)
+    const emitNet = (url, method, status, text, body) => {
+      if (!url || !/\/ut\/game\//.test(url)) return;
+      for (const h of NETHOOKS) { try { h(String(url), String(method || 'GET').toUpperCase(), status, text, body); } catch (e) { /* */ } }
+    };
+    const CAP = { hooks: NETHOOKS, challenges: new Map(), currentId: null, currentAt: 0, squads: new Map(), raw: new Map(), urls: [], activeIds: null };
 
     function findChallengeObjects(data, out = [], depth = 0) {
       if (!data || typeof data !== 'object' || depth > 5) return out;
@@ -54,10 +59,15 @@
       const XP = W.XMLHttpRequest && W.XMLHttpRequest.prototype;
       if (XP && !XP.__fcptSbc) {
         const oOpen = XP.open, oSend = XP.send;
-        XP.open = function (m, url) { this.__fcptUrl = url; return oOpen.apply(this, arguments); };
-        XP.send = function () {
+        XP.open = function (m, url) { this.__fcptUrl = url; this.__fcptMethod = m; return oOpen.apply(this, arguments); };
+        XP.send = function (body) {
           try {
+            this.__fcptBody = body;
             this.addEventListener('load', function () {
+              try {
+                const txt = !this.responseType || this.responseType === 'text' ? this.responseText : this.responseType === 'json' ? JSON.stringify(this.response) : null;
+                emitNet(this.__fcptUrl, this.__fcptMethod, this.status, txt, this.__fcptBody);
+              } catch (e) { /* */ }
               try {
                 if (!this.responseType || this.responseType === 'text') capture(this.__fcptUrl, this.responseText);
                 else if (this.responseType === 'json') capture(this.__fcptUrl, JSON.stringify(this.response));
@@ -73,7 +83,7 @@
         const wrapped = function (input, init) {
           const url = typeof input === 'string' ? input : input && input.url;
           return oFetch.apply(this, arguments).then((res) => {
-            try { if (/\/ut\/game\//.test(url || '')) res.clone().text().then((t) => capture(url, t)).catch(() => {}); } catch (e) { /* */ }
+            try { if (/\/ut\/game\//.test(url || '')) res.clone().text().then((t) => { capture(url, t); emitNet(url, (init && init.method) || (input && input.method), res.status, t, init && init.body); }).catch(() => {}); } catch (e) { /* */ }
             return res;
           });
         };

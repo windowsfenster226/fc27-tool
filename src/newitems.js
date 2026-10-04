@@ -48,6 +48,7 @@
     // Vorschlag: teure handelbare Karten verkaufen, Duplikate ins SBC-Lager, sonst Verein
     function suggest(x) {
       if (!x.isPl) return 'club';
+      if (FAV.has(x.id)) return 'club';   // Favorit -> behalten
       if (!x.untr && x.value && x.value >= settings.niSellMin) return 'tl';
       if (!x.untr && x.value && afterTax(x.value) < x.qs) return 'qs';
       if (x.dup) return pile('store') != null ? 'store' : (x.untr ? 'qs' : 'tl');
@@ -63,6 +64,7 @@
         const L = ((ev.response || ev.data || {}).items || []).map(info);
         L.sort((a, b) => (b.value || 0) - (a.value || 0) || (b.rating || 0) - (a.rating || 0));
         st.items = L; st.count = L.length; st.choice = {};
+        try { PACKS.learnNames(L); } catch (e) { /* */ }
         L.forEach((x) => { st.choice[x.id] = suggest(x); });
         st.msg = L.length ? '' : 'Keine neuen Items – alles sortiert. 👍';
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
@@ -112,10 +114,10 @@
       if (!box) return;
       const L = st.items;
       const s = L ? sum() : null;
-      const opts = (x) => Object.keys(ACT).filter((k) => (k !== 'qs' || canQS()) && (k !== 'store' || pile('store') != null) && (k !== 'tl' || !x.untr))
+      const opts = (x) => Object.keys(ACT).filter((k) => !(FAV.has(x.id) && (k === 'qs' || k === 'tl')) && (k !== 'qs' || canQS()) && (k !== 'store' || pile('store') != null) && (k !== 'tl' || !x.untr))
         .map((k) => `<option value="${k}" ${st.choice[x.id] === k ? 'selected' : ''}>${ACT[k]}</option>`).join('');
       const rows = L ? L.map((x) => `<div class="ni-r">
-          <span class="ni-n"><b>${esc(x.rating ?? '')}</b> ${esc(x.name)}${x.untr ? ' <em>NH</em>' : ''}${x.dup ? ' <em class="d">Dup</em>' : ''}
+          <span class="ni-n">${x.isPl ? FAV.btn({ id: x.id, name: x.name, rating: x.rating }) : ''}<b>${esc(x.rating ?? '')}</b> ${esc(x.name)}${x.untr ? ' <em>NH</em>' : ''}${x.dup ? ' <em class="d">Dup</em>' : ''}
             <small>${x.value ? `Wert ${fmt(x.value)}` : 'Wert –'}${x.qs ? ` · Schnell ${fmt(x.qs)}` : ''}${x.pts ? ` · ${fmt(x.pts)} 💎` : ''}</small></span>
           <select data-ni="${x.id}" aria-label="Ziel für ${esc(x.name)}">${opts(x)}</select></div>`).join('') : '';
       box.innerHTML = `<div class="fcpt-sgroup"><h4>📦 Neue Items sortieren</h4>
@@ -160,7 +162,10 @@
       return st.count;
     }
 
-    function mount(el) { box = el; render(); }
+    function mount(el) {
+      box = el; render();
+      FAV.onChange(() => { if (st.items) { st.items.forEach((x) => { if (FAV.has(x.id)) st.choice[x.id] = 'club'; }); render(); } });
+    }
     const diag = () => ({ itemPileKeys: Object.keys(W.ItemPile || {}), move: !!(W.services && W.services.Item && W.services.Item.move), discard: canQS(), count: st.count });
     return { mount, peek, count: () => st.count, diag };
   })();

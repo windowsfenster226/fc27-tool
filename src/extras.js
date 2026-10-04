@@ -132,7 +132,8 @@
           const srcName = fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'geschätzt';
           const bin = roundPrice(val);
           const quick = raw.discardValue || (ent && ent.discardValue) || 0;
-          L.push({ name: p.name, rating: p.rating, val, src: srcName, bin, start: lowerStep(bin), net: afterTax(bin), quick, fav: locked.has(p.id) });
+          if (locked.has(p.id)) continue;   // Favorit -> nie zum Verkauf vorschlagen
+          L.push({ id: p.id, name: p.name, rating: p.rating, val, src: srcName, bin, start: lowerStep(bin), net: afterTax(bin), quick });
         }
         L.sort((a, b) => b.val - a.val);
         list = { L, activeRead: act.size > 0 };
@@ -145,7 +146,7 @@
       const t = TIMING.info();
       const rows = list ? list.L.slice(0, 40).map((r) => `
         <div class="sa-row">
-          <div class="sa-n"><b>${esc(r.rating)} ${esc(r.name)}</b>${r.fav ? ' <span title="Im SBC-Solver gesperrt – evtl. Lieblingsspieler">🔒</span>' : ''}<small>Wert ${fmt(r.val)} (${r.src})${r.quick && r.quick > r.net ? ' · <span class="fcpt-neg-v">Schnellverkauf bringt mehr!</span>' : ''}</small></div>
+          <div class="sa-n"><b>${esc(r.rating)} ${esc(r.name)}</b> ${FAV.btn({ id: r.id, name: r.name, rating: r.rating })}<small>Wert ${fmt(r.val)} (${r.src})${r.quick && r.quick > r.net ? ' · <span class="fcpt-neg-v">Schnellverkauf bringt mehr!</span>' : ''}</small></div>
           <div class="sa-p"><span>Einstellen</span><b>${fmt(r.start)} / ${fmt(r.bin)}</b><small>du bekommst ${fmt(r.net)}</small></div>
         </div>`).join('') : '';
       const total = list ? list.L.reduce((a, r) => a + r.net, 0) : 0;
