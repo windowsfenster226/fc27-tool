@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.23.1
+// @version      2.23.2
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -760,11 +760,12 @@ const SBC = (function () {
       if (L && typeof L.localize === 'function') {
         for (const k of [`playstyles.playstyle${id}`, `playstyle.name${id}`]) {
           const v = L.localize(k);
-          if (v && v !== k && !/^playstyle/i.test(v)) return v;
+          // fehlende Übersetzungen liefert EA als „*schlüssel*“ zurück -> nicht verwenden
+          if (v && v !== k && !/playstyle/i.test(v) && !/^\*/.test(v)) return v;
         }
       }
     } catch (e) { /* */ }
-    return CHEM_STYLES[id] || `Chemie-Style ${id}`;
+    return CHEM_STYLES[id] || CHEM_STYLES[Number(id) % 1000] || `Chemie-Style #${id}`;
   }
   function mapItem(it) {
     try {
@@ -4557,7 +4558,7 @@ const SBC = (function () {
       if (!p || p.isPlayer || !data) return null;
       // zuerst über den englischen Namen zur Style-ID, dann über die ID im Futbin-Bild, dann über den Namen
       if (p.playStyle != null) {
-        const en = canon(CHEM_EN[p.playStyle]);
+        const en = canon(CHEM_EN[p.playStyle] || CHEM_EN[Number(p.playStyle) % 1000]);
         const byEn = en && data.rows.find((x) => x.key === en);
         if (byEn) return byEn;
         const byId = data.rows.find((x) => x.ids.includes(Number(p.playStyle)));

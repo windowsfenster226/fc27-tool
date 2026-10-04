@@ -71,7 +71,7 @@
       if (!p || p.isPlayer || !data) return null;
       // zuerst über den englischen Namen zur Style-ID, dann über die ID im Futbin-Bild, dann über den Namen
       if (p.playStyle != null) {
-        const en = canon(CHEM_EN[p.playStyle]);
+        const en = canon(CHEM_EN[p.playStyle] || CHEM_EN[Number(p.playStyle) % 1000]);
         const byEn = en && data.rows.find((x) => x.key === en);
         if (byEn) return byEn;
         const byId = data.rows.find((x) => x.ids.includes(Number(p.playStyle)));

@@ -251,11 +251,12 @@
       if (L && typeof L.localize === 'function') {
         for (const k of [`playstyles.playstyle${id}`, `playstyle.name${id}`]) {
           const v = L.localize(k);
-          if (v && v !== k && !/^playstyle/i.test(v)) return v;
+          // fehlende Übersetzungen liefert EA als „*schlüssel*“ zurück -> nicht verwenden
+          if (v && v !== k && !/playstyle/i.test(v) && !/^\*/.test(v)) return v;
         }
       }
     } catch (e) { /* */ }
-    return CHEM_STYLES[id] || `Chemie-Style ${id}`;
+    return CHEM_STYLES[id] || CHEM_STYLES[Number(id) % 1000] || `Chemie-Style #${id}`;
   }
   function mapItem(it) {
     try {
