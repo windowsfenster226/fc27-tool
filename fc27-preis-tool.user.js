@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.23.2
+// @version      2.23.3
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -773,8 +773,18 @@ const SBC = (function () {
       const sd = typeof it.getStaticData === 'function' ? it.getStaticData() : it._staticData || {};
       const isPlayer = typeof it.isPlayer === 'function' ? it.isPlayer() : it.type === 'player';
       // Chemie-Styles heißen bei EA alle nur „Chemistry Style“ – der eigentliche Style steckt in playStyle
-      const ps = !isPlayer ? (it.playStyle ?? it._playStyle ?? null) : null;
-      const csName = ps != null ? chemStyleName(ps) : null;
+      // EA FC27: playStyle ist 0, die Style-ID (z. B. 265 = Anchor) steht in subtype
+      let ps = null;
+      if (!isPlayer) {
+        const rawName = String(sd.name || it.name || '');
+        const isChemLike = /chem|style/i.test(rawName) || String(it.type || '').toLowerCase() === 'training';
+        for (const c of [it.playStyle, it._playStyle, it.subtype, it._subtype]) {
+          const n = Number(c);
+          if (n && isChemLike && (CHEM_STYLES[n] || CHEM_STYLES[n % 1000])) { ps = n; break; }
+        }
+        if (ps == null && /chem/i.test(rawName) && isChemLike) ps = Number(it.subtype) || Number(it.playStyle) || null;
+      }
+      const csName = ps ? chemStyleName(ps) : null;
       const state = a.tradeState;
       const sold = typeof a.isSold === 'function' ? a.isSold() : state === 'closed';
       const expired = !sold && (typeof a.isExpired === 'function' ? a.isExpired() : state === 'expired');
@@ -3054,7 +3064,7 @@ const SBC = (function () {
         })(),
         lastApplyError,
         newItems: (() => { try { return NEWITEMS.diag(); } catch (e) { return String(e); } })(),
-        consSample: (() => { try { const x = items.find((i) => !i.isPlayer && i.__raw); if (!x) return null; const r = x.__raw; return { name: x.name, rid: x.resourceId, playStyle: r.playStyle, _playStyle: r._playStyle, def: r.definitionId, rating: r.rating, type: r.type, subtype: r.subtype, keys: Object.keys(r).slice(0, 70), futbin: CONS.get() ? CONS.get().rows.slice(0, 4) : null }; } catch (e) { return String(e); } })(),
+        consSample: (() => { try { const x = items.find((i) => !i.isPlayer && i.__raw); if (!x) return null; const r = x.__raw; return { name: x.name, rid: x.resourceId, playStyle: r.playStyle, _playStyle: r._playStyle, def: r.definitionId, rating: r.rating, type: r.type, subtype: r.subtype, cons: (CONS.match(x) || {}).name || null, consRows: CONS.get() ? CONS.get().rows.length : 0, keys: Object.keys(r).slice(0, 70), futbin: CONS.get() ? CONS.get().rows.slice(0, 4) : null }; } catch (e) { return String(e); } })(),
         lastSolutionItems: lastSol ? lastSol.players.filter(Boolean).map((p) => ({ id: p.id, r: p.rating, nh: p.untradeable, dup: p.dup, st: p.storage, un: p.unassigned, c: !!p.concept })) : null,
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };

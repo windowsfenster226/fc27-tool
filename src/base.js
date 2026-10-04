@@ -264,8 +264,18 @@
       const sd = typeof it.getStaticData === 'function' ? it.getStaticData() : it._staticData || {};
       const isPlayer = typeof it.isPlayer === 'function' ? it.isPlayer() : it.type === 'player';
       // Chemie-Styles heißen bei EA alle nur „Chemistry Style“ – der eigentliche Style steckt in playStyle
-      const ps = !isPlayer ? (it.playStyle ?? it._playStyle ?? null) : null;
-      const csName = ps != null ? chemStyleName(ps) : null;
+      // EA FC27: playStyle ist 0, die Style-ID (z. B. 265 = Anchor) steht in subtype
+      let ps = null;
+      if (!isPlayer) {
+        const rawName = String(sd.name || it.name || '');
+        const isChemLike = /chem|style/i.test(rawName) || String(it.type || '').toLowerCase() === 'training';
+        for (const c of [it.playStyle, it._playStyle, it.subtype, it._subtype]) {
+          const n = Number(c);
+          if (n && isChemLike && (CHEM_STYLES[n] || CHEM_STYLES[n % 1000])) { ps = n; break; }
+        }
+        if (ps == null && /chem/i.test(rawName) && isChemLike) ps = Number(it.subtype) || Number(it.playStyle) || null;
+      }
+      const csName = ps ? chemStyleName(ps) : null;
       const state = a.tradeState;
       const sold = typeof a.isSold === 'function' ? a.isSold() : state === 'closed';
       const expired = !sold && (typeof a.isExpired === 'function' ? a.isExpired() : state === 'expired');
