@@ -63,6 +63,7 @@
   if (settings.bumpField === undefined) settings.bumpField = 'minBin';     // 'minBin' = Min.-Sofortkauf hoch/runter, 'maxBid' = Max.-Gebot hochzählen
   if (settings.bumpStart === undefined) settings.bumpStart = 1000000;
   if (settings.bumpMinMax === undefined) settings.bumpMinMax = 1000;
+  if (settings.touchBar === undefined) settings.touchBar = 'auto';   // Snipe-Knöpfe auf dem Bildschirm: auto (Handy/Tablet) | on | off
   settings.keys = Object.assign({ search: '1', buy: '2', confirm: '3', back: '4', up: '5', down: '6', snipe: '7' }, settings.keys || {});
   if (settings.stepField === undefined) settings.stepField = 2;   // 0 Min.-Gebot, 1 Max.-Gebot, 2 Min.-Sofortkauf, 3 Max.-Sofortkauf
   if (settings.autoBack === undefined) settings.autoBack = true;
@@ -499,6 +500,7 @@
         <div class="fcpt-set"><span>Welchen Preis?</span><select data-set="bumpField"><option value="minBin">Min.-Sofortkauf (hoch/runter)</option><option value="minBinUp">Min.-Sofortkauf hochzählen</option><option value="maxBid">Max.-Gebot hochzählen</option></select></div>
         <div class="fcpt-set"><span>Min.-Sofortkauf bis<small>Zählt je Suche eine Stufe hoch, danach von vorne</small></span><input type="number" min="200" step="50" data-num="bumpMinMax"></div>
         <div class="fcpt-set"><span>Max.-Gebot Startwert<small>Startet hier und steigt je Suche um eine Stufe</small></span><input type="number" min="1000" step="1000" data-num="bumpStart"></div>
+        <div class="fcpt-set"><span>Snipe-Knöpfe auf dem Bildschirm<small>Fürs iPhone/iPad: Snipe- und OK-Knopf statt Tastatur</small></span><select data-set="touchBar"><option value="auto">Automatisch (Handy/Tablet)</option><option value="on">Immer</option><option value="off">Aus</option></select></div>
         <div class="fcpt-set"><span>Nach Bestätigen zurück zur Suche</span><input type="checkbox" class="fcpt-sw" data-opt="autoBack"></div>
         <div class="fcpt-set"><span>Preis-Tasten ändern</span>
           <select data-set="stepField">
@@ -534,6 +536,7 @@
   panel.querySelector('[data-set="bumpField"]').value = settings.bumpField;
   panel.querySelector('[data-num="bumpStart"]').value = settings.bumpStart;
   panel.querySelector('[data-num="bumpMinMax"]').value = settings.bumpMinMax;
+  panel.querySelector('[data-set="touchBar"]').value = settings.touchBar;
   panel.querySelector('[data-opt="autoBack"]').checked = !!settings.autoBack;
   panel.querySelector('[data-set="stepField"]').value = String(settings.stepField);
   const keyLabel = (k) => (k === ' ' ? 'Leertaste' : k.length === 1 ? k.toUpperCase() : k);
@@ -861,7 +864,7 @@
     if (t.dataset.opt === 'autoRefresh') { settings.autoRefresh = t.checked; saveSettings(); return; }
     if (t.dataset.opt === 'hotkeys') { settings.hotkeys = t.checked; saveSettings(); return; }
     if (t.dataset.opt === 'bumpMinBin') { settings.bumpMinBin = t.checked; saveSettings(); return; }
-    if (t.dataset.set === 'bumpField') { saveSettings(); return; }
+    if (t.dataset.set === 'bumpField' || t.dataset.set === 'touchBar') { saveSettings(); return; }
     if (t.dataset.opt === 'autoBack') { settings.autoBack = t.checked; saveSettings(); return; }
     if (t.dataset.set === 'stepField') { settings.stepField = parseInt(t.value, 10); saveSettings(); return; }
     if (t.dataset.key) return;
@@ -1443,6 +1446,39 @@
     const html = `<span>${kb('snipe')}Snipe</span><span>${kb('search')}Suchen</span><span>${kb('buy')}Kaufen</span><span>${kb('confirm')}OK</span><span>${kb('back')}Zurück</span><span>${kb('up')}${kb('down')}Preis ±</span>`;
     if (keyhint.__html !== html) { keyhint.__html = html; keyhint.innerHTML = html; }
   }, 700);
+
+  // ---------- Snipe-Knöpfe für Touch (iPhone/iPad): ein Tipp = suchen + günstigstes wählen + Sofortkauf; OK tippst du selbst ----------
+  const touchDev = () => (W.matchMedia && W.matchMedia('(pointer:coarse)').matches) || /iP(hone|od|ad)/.test(navigator.userAgent);
+  const tbar = document.createElement('div');
+  tbar.id = 'fcpt-touchbar';
+  tbar.innerHTML = '<button data-tb="snipe" aria-label="Snipe: suchen und günstigstes kaufen">🔍<span>Snipe</span></button><button data-tb="ok" aria-label="Kauf bestätigen">✓<span>OK</span></button><button data-tb="back" aria-label="Zurück">←<span>Zurück</span></button>';
+  document.body.appendChild(tbar);
+  GM_addStyle(`
+    #fcpt-touchbar{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:100000;display:none;flex-direction:column;gap:8px}
+    #fcpt-touchbar.show{display:flex}
+    #fcpt-touchbar button{width:64px;height:60px;border:0;border-radius:0 14px 14px 0;background:#f2c14e;color:#15120a;font:700 20px system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;box-shadow:0 6px 18px rgba(0,0,0,.45);touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+    #fcpt-touchbar button span{font-size:11px;font-weight:700}
+    #fcpt-touchbar button[data-tb="ok"]{background:#3dd68c;color:#06150d}
+    #fcpt-touchbar button[data-tb="ok"].pulse{animation:fcptPulse .9s ease-in-out infinite}
+    #fcpt-touchbar button[data-tb="back"]{background:#1b2336;color:#e9edf5;height:44px}
+    #fcpt-touchbar button:active{transform:scale(.94)}
+    @keyframes fcptPulse{0%,100%{box-shadow:0 0 0 0 rgba(61,214,140,.6)}50%{box-shadow:0 0 0 10px rgba(61,214,140,0)}}
+  `);
+  tbar.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tb]');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    if (b.dataset.tb === 'snipe') doSnipe();
+    if (b.dataset.tb === 'ok') doConfirm();
+    if (b.dataset.tb === 'back') doBack();
+  }, true);
+  setInterval(() => {
+    const want = settings.touchBar === 'on' || (settings.touchBar === 'auto' && touchDev());
+    const onMarket = want && !panel.classList.contains('open') && !!(findSearchButton() || findBuyButton() || findConfirmButton() || marketOffers().length);
+    tbar.classList.toggle('show', onMarket);
+    const okb = tbar.querySelector('[data-tb="ok"]');
+    if (okb) okb.classList.toggle('pulse', !!(onMarket && findConfirmButton()));
+  }, 500);
 
   document.addEventListener('keydown', (ev) => {
     if (!settings.hotkeys || ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
