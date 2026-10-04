@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.23.0
+// @version      2.23.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -750,11 +750,30 @@ const SBC = (function () {
     GM_setValue(BOUGHT_KEY, manualBought);
   }
 
+  // Chemie-Style-ID -> Name (EAs Übersetzung, sonst englischer Standardname)
+  const CHEM_STYLES = { 250: 'Basic', 251: 'Sniper', 252: 'Finisher', 253: 'Deadeye', 254: 'Marksman', 255: 'Hawk', 256: 'Artist', 257: 'Architect',
+    258: 'Powerhouse', 259: 'Maestro', 260: 'Engine', 261: 'Sentinel', 262: 'Guardian', 263: 'Gladiator', 264: 'Backbone', 265: 'Anchor',
+    266: 'Hunter', 267: 'Catalyst', 268: 'Shadow', 269: 'Wall', 270: 'Shield', 271: 'Cat', 272: 'Glove', 273: 'GK Basic' };
+  function chemStyleName(id) {
+    try {
+      const L = W.services && W.services.Localization;
+      if (L && typeof L.localize === 'function') {
+        for (const k of [`playstyles.playstyle${id}`, `playstyle.name${id}`]) {
+          const v = L.localize(k);
+          if (v && v !== k && !/^playstyle/i.test(v)) return v;
+        }
+      }
+    } catch (e) { /* */ }
+    return CHEM_STYLES[id] || `Chemie-Style ${id}`;
+  }
   function mapItem(it) {
     try {
       const a = typeof it.getAuctionData === 'function' ? it.getAuctionData() : it._auction || {};
       const sd = typeof it.getStaticData === 'function' ? it.getStaticData() : it._staticData || {};
       const isPlayer = typeof it.isPlayer === 'function' ? it.isPlayer() : it.type === 'player';
+      // Chemie-Styles heißen bei EA alle nur „Chemistry Style“ – der eigentliche Style steckt in playStyle
+      const ps = !isPlayer ? (it.playStyle ?? it._playStyle ?? null) : null;
+      const csName = ps != null ? chemStyleName(ps) : null;
       const state = a.tradeState;
       const sold = typeof a.isSold === 'function' ? a.isSold() : state === 'closed';
       const expired = !sold && (typeof a.isExpired === 'function' ? a.isExpired() : state === 'expired');
@@ -767,10 +786,12 @@ const SBC = (function () {
 
       return {
         isPlayer,
-        resourceId: it.resourceId || it.definitionId,
-        name: sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${it.definitionId}`,
-        rating: it.rating,
-        position: posName(it.preferredPosition),
+        resourceId: csName ? `cs${ps}` : (it.resourceId || it.definitionId),
+        playStyle: ps,
+        isCons: !!csName,
+        name: csName || sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${it.definitionId}`,
+        rating: isPlayer ? it.rating : null,
+        position: isPlayer ? posName(it.preferredPosition) : '',
         fullName: [sd.firstName, sd.lastName].filter(Boolean).join(' '),
         startPrice: toNum(a.startingBid),
         buyNow,
@@ -3032,6 +3053,7 @@ const SBC = (function () {
         })(),
         lastApplyError,
         newItems: (() => { try { return NEWITEMS.diag(); } catch (e) { return String(e); } })(),
+        consSample: (() => { try { const x = items.find((i) => !i.isPlayer && i.__raw); if (!x) return null; const r = x.__raw; return { name: x.name, rid: x.resourceId, playStyle: r.playStyle, _playStyle: r._playStyle, def: r.definitionId, rating: r.rating, type: r.type, subtype: r.subtype, keys: Object.keys(r).slice(0, 70), futbin: CONS.get() ? CONS.get().rows.slice(0, 4) : null }; } catch (e) { return String(e); } })(),
         lastSolutionItems: lastSol ? lastSol.players.filter(Boolean).map((p) => ({ id: p.id, r: p.rating, nh: p.untradeable, dup: p.dup, st: p.storage, un: p.unassigned, c: !!p.concept })) : null,
         lastSolution: lastSol ? { feasible: lastSol.feasible, rating: lastSol.ev.rating, chem: lastSol.ev.chem.total } : null,
       };
@@ -4479,6 +4501,9 @@ const SBC = (function () {
       motor: 'engine', wachposten: 'sentinel', wachter: 'guardian', beschutzer: 'guardian', gladiator: 'gladiator', ruckgrat: 'backbone',
       anker: 'anchor', jager: 'hunter', katalysator: 'catalyst', schatten: 'shadow', mauer: 'wall', schild: 'shield', katze: 'cat', handschuh: 'glove',
     };
+    const CHEM_EN = { 250: 'Basic', 251: 'Sniper', 252: 'Finisher', 253: 'Deadeye', 254: 'Marksman', 255: 'Hawk', 256: 'Artist', 257: 'Architect',
+      258: 'Powerhouse', 259: 'Maestro', 260: 'Engine', 261: 'Sentinel', 262: 'Guardian', 263: 'Gladiator', 264: 'Backbone', 265: 'Anchor',
+      266: 'Hunter', 267: 'Catalyst', 268: 'Shadow', 269: 'Wall', 270: 'Shield', 271: 'Cat', 272: 'Glove', 273: 'GK Basic' };
     const fresh = () => data && data.plat === settings.platform && Date.now() - data.t < 30 * 60000;
     const parseK = (t) => {
       const m = String(t || '').replace(/\s/g, '').match(/([\d.,]+)([KkMm])?/);
@@ -4530,6 +4555,14 @@ const SBC = (function () {
     // Ist das ein Chemie-Style? Preis dazu (Futbin, sonst EA-Durchschnitt)
     function match(p) {
       if (!p || p.isPlayer || !data) return null;
+      // zuerst über den englischen Namen zur Style-ID, dann über die ID im Futbin-Bild, dann über den Namen
+      if (p.playStyle != null) {
+        const en = canon(CHEM_EN[p.playStyle]);
+        const byEn = en && data.rows.find((x) => x.key === en);
+        if (byEn) return byEn;
+        const byId = data.rows.find((x) => x.ids.includes(Number(p.playStyle)));
+        if (byId) return byId;
+      }
       const k = canon(p.name);
       const en = DE[k] || k;
       let r = data.rows.find((x) => x.key === en || x.key === k);
@@ -5335,7 +5368,7 @@ const SBC = (function () {
       const c = rowCells(p);
       return `<div class="tr ${cls}${n >= 2 ? ' lieg' : ''}${openRows.has(key) ? ' open' : ''}" data-row="${esc(key)}" data-rid="${p.resourceId}">
         <button class="tr-row" data-trow="${esc(key)}" aria-expanded="${openRows.has(key)}">
-          <span class="num ovr">${esc(p.rating ?? '')}</span>
+          <span class="num ovr">${p.isCons ? '🧪' : esc(p.rating ?? '')}</span>
           <span class="nm">${esc(p.name)}<em class="st">${esc(st)}</em>${!p.sold && !p.active && settings.listPresets && settings.listPresets[p.resourceId] ? `<em class="st fx">fest ${fmt(settings.listPresets[p.resourceId].bin)}</em>` : ''}</span>
           <span class="num r">${fmt(p.sold ? p.soldFor : p.buyNow)}</span>
           <span class="num r mk" data-mk>${c.mk}</span>

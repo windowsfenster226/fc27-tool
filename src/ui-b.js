@@ -361,7 +361,7 @@
       const c = rowCells(p);
       return `<div class="tr ${cls}${n >= 2 ? ' lieg' : ''}${openRows.has(key) ? ' open' : ''}" data-row="${esc(key)}" data-rid="${p.resourceId}">
         <button class="tr-row" data-trow="${esc(key)}" aria-expanded="${openRows.has(key)}">
-          <span class="num ovr">${esc(p.rating ?? '')}</span>
+          <span class="num ovr">${p.isCons ? '🧪' : esc(p.rating ?? '')}</span>
           <span class="nm">${esc(p.name)}<em class="st">${esc(st)}</em>${!p.sold && !p.active && settings.listPresets && settings.listPresets[p.resourceId] ? `<em class="st fx">fest ${fmt(settings.listPresets[p.resourceId].bin)}</em>` : ''}</span>
           <span class="num r">${fmt(p.sold ? p.soldFor : p.buyNow)}</span>
           <span class="num r mk" data-mk>${c.mk}</span>

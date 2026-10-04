@@ -15,6 +15,9 @@
       motor: 'engine', wachposten: 'sentinel', wachter: 'guardian', beschutzer: 'guardian', gladiator: 'gladiator', ruckgrat: 'backbone',
       anker: 'anchor', jager: 'hunter', katalysator: 'catalyst', schatten: 'shadow', mauer: 'wall', schild: 'shield', katze: 'cat', handschuh: 'glove',
     };
+    const CHEM_EN = { 250: 'Basic', 251: 'Sniper', 252: 'Finisher', 253: 'Deadeye', 254: 'Marksman', 255: 'Hawk', 256: 'Artist', 257: 'Architect',
+      258: 'Powerhouse', 259: 'Maestro', 260: 'Engine', 261: 'Sentinel', 262: 'Guardian', 263: 'Gladiator', 264: 'Backbone', 265: 'Anchor',
+      266: 'Hunter', 267: 'Catalyst', 268: 'Shadow', 269: 'Wall', 270: 'Shield', 271: 'Cat', 272: 'Glove', 273: 'GK Basic' };
     const fresh = () => data && data.plat === settings.platform && Date.now() - data.t < 30 * 60000;
     const parseK = (t) => {
       const m = String(t || '').replace(/\s/g, '').match(/([\d.,]+)([KkMm])?/);
@@ -66,6 +69,14 @@
     // Ist das ein Chemie-Style? Preis dazu (Futbin, sonst EA-Durchschnitt)
     function match(p) {
       if (!p || p.isPlayer || !data) return null;
+      // zuerst über den englischen Namen zur Style-ID, dann über die ID im Futbin-Bild, dann über den Namen
+      if (p.playStyle != null) {
+        const en = canon(CHEM_EN[p.playStyle]);
+        const byEn = en && data.rows.find((x) => x.key === en);
+        if (byEn) return byEn;
+        const byId = data.rows.find((x) => x.ids.includes(Number(p.playStyle)));
+        if (byId) return byId;
+      }
       const k = canon(p.name);
       const en = DE[k] || k;
       let r = data.rows.find((x) => x.key === en || x.key === k);
