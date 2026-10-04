@@ -115,7 +115,7 @@
       #fcpt-panel .fcpt-sgroup{border-radius:12px;background:var(--bg2);border-color:var(--line)}
       #fcpt-panel .fcpt-sgroup h4{font-size:10.5px;letter-spacing:.08em;color:var(--ink3)}
       #fcpt-panel .fcpt-overview .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
-      .tr-fix{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:10px;background:#0f1420;border:1px solid var(--line)}
+      .tr-cons{margin:6px 0;font-size:12px;color:var(--ink2)}.tr-cons button{margin-left:6px;padding:4px 8px;border-radius:8px;border:1px solid var(--line,#334);background:transparent;color:inherit}.tr-fix{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:10px;background:#0f1420;border:1px solid var(--line)}
       .tr-fix .lb{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
       .tr-fix input{width:96px;background:var(--bg3);color:var(--ink);border:1px solid #2a3652;border-radius:8px;padding:6px 8px;font:13px 'JetBrains Mono',ui-monospace,monospace;text-align:right}
       .tr-fix button{height:32px;padding:0 10px;border-radius:8px;border:1px solid #2a3652;background:var(--bg3);color:var(--ink);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}
@@ -470,11 +470,12 @@
         return { out, skipped };
       }
       function fixHtml(p) {
-        if (p.sold || (!p.isPlayer && !CONS.match(p))) return '';
+        if (p.sold) return '';
         const ps = preset(p);
         const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
         const sug = m ? listSuggest(p, m).bin : null;
-        return `<div class="tr-fix"><span class="lb">Festpreis</span>${FAV.btn({ id: p.itemId, name: p.name, rating: p.rating })}
+        const consNote = !p.isPlayer && !m ? `<div class="tr-cons">${esc(CONS.status() || 'Kein Futbin-Preis gefunden.')} <button data-consload="1">🧪 Futbin-Preise laden</button> <small>Du kannst den Festpreis auch einfach selbst eintippen.</small></div>` : '';
+        return `${consNote}<div class="tr-fix"><span class="lb">Festpreis</span>${FAV.btn({ id: p.itemId, name: p.name, rating: p.rating })}
           <input type="number" min="200" step="50" inputmode="numeric" data-fixin="${p.resourceId}" value="${ps ? ps.bin : ''}" placeholder="${sug ? fmt(sug) : 'Sofortkauf'}" aria-label="Festpreis Sofortkauf">
           <button data-fixsave="${p.resourceId}">${ps ? 'Ändern' : 'Festlegen'}</button>
           ${ps ? `<button data-fixdel="${p.resourceId}" aria-label="Festpreis entfernen">✕</button>` : ''}
@@ -555,6 +556,13 @@
           group = fl.dataset.fixlist; confirmN = candidates(group).out.length; drawBar();
           const lst = panel.querySelector('.fcpt-list'); if (lst) lst.scrollTop = 0;
           bar.scrollIntoView({ block: 'nearest' });
+          return;
+        }
+        const cl = e.target.closest && e.target.closest('[data-consload]');
+        if (cl) {
+          e.stopPropagation(); cl.disabled = true; cl.textContent = 'Lädt …';
+          CONS.load(true).then(() => { showToast('🧪 Futbin-Preise geladen'); render(); })
+            .catch((er) => { showToast('Futbin: ' + er.message, true); render(); });
           return;
         }
         const sv = e.target.closest && e.target.closest('[data-fixsave]');

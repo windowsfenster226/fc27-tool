@@ -104,5 +104,6 @@
       if (b) b.addEventListener('click', (e) => { e.stopPropagation(); load(true).catch(() => {}); });
     }
     function mount(el) { box = el; drawBox(); }
-    return { load, price, match, mount, get: () => data, parse };
+    const status = () => loading ? 'Lade Futbin-Preise …' : (msg || (!data ? 'Futbin-Preise noch nicht geladen.' : (fresh() ? '' : 'Futbin-Preise veraltet.')));
+    return { load, price, match, mount, get: () => data, parse, status };
   })();
