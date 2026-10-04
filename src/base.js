@@ -272,6 +272,8 @@
         profit: soldFor ? afterTax(soldFor) - (bought || 0) : null,
         potentialProfit: !sold && buyNow ? afterTax(buyNow) - (bought || 0) : null,
         itemId: it.id,
+        defId: it.definitionId,
+        marketAverage: toNum(it._marketAverage ?? it.marketAverage) || null,
         boughtManual: !!manual,
         tradeId: a.tradeId,
         tradeOwner: typeof a.tradeOwner === 'boolean' ? a.tradeOwner : null,
@@ -913,8 +915,10 @@
 
     const draw = () => {
       const keys = enabledSources();
-      const main = (prices[settings.mainSource] && prices[settings.mainSource].v) ||
-        keys.map((k) => prices[k] && prices[k].v).find(Boolean) || null;
+      // Verbrauchsobjekte (Chemie-Styles): Preis aus der Futbin-Consumables-Liste
+      const consV = !p.isPlayer && typeof CONS !== 'undefined' ? CONS.price(p) : null;
+      const main = p.isPlayer ? ((prices[settings.mainSource] && prices[settings.mainSource].v) ||
+        keys.map((k) => prices[k] && prices[k].v).find(Boolean) || null) : consV;
       let profitHtml = '';
       if (isMarket) {
         root.classList.remove('fcpt-bargain');
@@ -952,7 +956,7 @@
         else if (v != null && v > 0) root.classList.add('fcpt-good');
         else if (v != null && v < 0) root.classList.add('fcpt-bad');
       }
-      box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main">Markt: <b>${fmt(main)}</b></span>` : '') + chips + profitHtml +
+      box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main">Markt: <b>${fmt(main)}</b></span>` : consV ? `<span class="fcpt-chip main" title="Futbin – Chemie-Style">🧪 Markt: <b>${fmt(consV)}</b></span>` : '') + chips + profitHtml +
         (!isMarket ? listingWarn(p, main) : '') + (isMarket && p.active ? bidChip(p) : '');
     };
 

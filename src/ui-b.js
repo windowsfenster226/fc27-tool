@@ -346,10 +346,10 @@
     // ---------- Dichte Transferliste ----------
     const openRows = new Set();
     function rowCells(p) {
-      const m = p.isPlayer ? marketPrice(p.resourceId) : null;
+      const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
       const v = profitValue(p, m);
       return {
-        mk: p.isPlayer ? (m ? fmt(m) : '…') : '–',
+        mk: m ? fmt(m) : p.isPlayer ? '…' : '–',
         pf: v == null ? '<span class="fcpt-muted">–</span>' : `<span class="${profitCls(v)}">${signed(v)}</span>`,
       };
     }
@@ -446,8 +446,8 @@
       function priceFor(p) {
         const ps = preset(p);
         if (ps) return { bin: ps.bin, start: ps.start || lowerStep(ps.bin), src: 'Festpreis' };
-        if (!settings.listFallback || !p.isPlayer) return null;
-        const m = marketPrice(p.resourceId);
+        if (!settings.listFallback) return null;
+        const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
         if (!m) return null;
         const bin = listSuggest(p, m).bin;
         return { bin, start: lowerStep(bin), src: 'Futbin-Vorschlag' };
@@ -470,9 +470,9 @@
         return { out, skipped };
       }
       function fixHtml(p) {
-        if (!p.isPlayer || p.sold) return '';
+        if (p.sold || (!p.isPlayer && !CONS.match(p))) return '';
         const ps = preset(p);
-        const m = marketPrice(p.resourceId);
+        const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
         const sug = m ? listSuggest(p, m).bin : null;
         return `<div class="tr-fix"><span class="lb">Festpreis</span>${FAV.btn({ id: p.itemId, name: p.name, rating: p.rating })}
           <input type="number" min="200" step="50" inputmode="numeric" data-fixin="${p.resourceId}" value="${ps ? ps.bin : ''}" placeholder="${sug ? fmt(sug) : 'Sofortkauf'}" aria-label="Festpreis Sofortkauf">

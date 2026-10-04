@@ -309,7 +309,7 @@
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
         '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="guard"></div><div data-el="targets"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
         '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="fav"></div><div data-el="squadopt"></div><div data-el="packs"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
-        '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div></div>';
+        '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div><div data-el="cons"></div></div>';
       const showSub = () => {
         root.querySelectorAll('[data-sub]').forEach((b) => b.classList.toggle('on', b.dataset.sub === settings.tradeSub));
         root.querySelectorAll('[data-pane]').forEach((d) => { d.style.display = d.dataset.pane === settings.tradeSub ? '' : 'none'; });
@@ -322,6 +322,7 @@
       SQUADOPT.mount(root.querySelector('[data-el="squadopt"]'));
       FAV.mount(root.querySelector('[data-el="fav"]'));
       PACKS.mount(root.querySelector('[data-el="packs"]'));
+      CONS.mount(root.querySelector('[data-el="cons"]'));
       GUARD.mount(root.querySelector('[data-el="guard"]'));
       TARGETS.mount(root.querySelector('[data-el="targets"]'));
       PROGNOSE.mount(root.querySelector('[data-el="prognose"]'));

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.22.0
+// @version      2.23.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -782,6 +782,8 @@ const SBC = (function () {
         profit: soldFor ? afterTax(soldFor) - (bought || 0) : null,
         potentialProfit: !sold && buyNow ? afterTax(buyNow) - (bought || 0) : null,
         itemId: it.id,
+        defId: it.definitionId,
+        marketAverage: toNum(it._marketAverage ?? it.marketAverage) || null,
         boughtManual: !!manual,
         boughtAuto: !manual && !!autoB,
         tradeId: a.tradeId,
@@ -1551,8 +1553,10 @@ const SBC = (function () {
 
     const draw = () => {
       const keys = enabledSources();
-      const main = (prices[settings.mainSource] && prices[settings.mainSource].v) ||
-        keys.map((k) => prices[k] && prices[k].v).find(Boolean) || null;
+      // Verbrauchsobjekte (Chemie-Styles): Preis aus der Futbin-Consumables-Liste
+      const consV = !p.isPlayer && typeof CONS !== 'undefined' ? CONS.price(p) : null;
+      const main = p.isPlayer ? ((prices[settings.mainSource] && prices[settings.mainSource].v) ||
+        keys.map((k) => prices[k] && prices[k].v).find(Boolean) || null) : consV;
       let profitHtml = '';
       if (isMarket) {
         root.classList.remove('fcpt-bargain');
@@ -1590,7 +1594,7 @@ const SBC = (function () {
         else if (v != null && v > 0) root.classList.add('fcpt-good');
         else if (v != null && v < 0) root.classList.add('fcpt-bad');
       }
-      box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main">Markt: <b>${fmt(main)}</b></span>` : '') + chips + profitHtml +
+      box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main">Markt: <b>${fmt(main)}</b></span>` : consV ? `<span class="fcpt-chip main" title="Futbin – Chemie-Style">🧪 Markt: <b>${fmt(consV)}</b></span>` : '') + chips + profitHtml +
         (!isMarket ? listingWarn(p, main) : '') + (isMarket && p.active ? bidChip(p) : '') +
         (!isMarket && p.isPlayer && p.bought && !p.sold ? `<span class="fcpt-chip be">Ohne Verlust ab <b>${fmt(breakEven(p.bought))}</b></span>` : '') +
         (isMarket && p.isPlayer ? WATCH.marketChip(p, root) : '') +
@@ -3406,7 +3410,7 @@ const SBC = (function () {
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
         '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="guard"></div><div data-el="targets"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
         '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="fav"></div><div data-el="squadopt"></div><div data-el="packs"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
-        '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div></div>';
+        '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div><div data-el="cons"></div></div>';
       const showSub = () => {
         root.querySelectorAll('[data-sub]').forEach((b) => b.classList.toggle('on', b.dataset.sub === settings.tradeSub));
         root.querySelectorAll('[data-pane]').forEach((d) => { d.style.display = d.dataset.pane === settings.tradeSub ? '' : 'none'; });
@@ -3419,6 +3423,7 @@ const SBC = (function () {
       SQUADOPT.mount(root.querySelector('[data-el="squadopt"]'));
       FAV.mount(root.querySelector('[data-el="fav"]'));
       PACKS.mount(root.querySelector('[data-el="packs"]'));
+      CONS.mount(root.querySelector('[data-el="cons"]'));
       GUARD.mount(root.querySelector('[data-el="guard"]'));
       TARGETS.mount(root.querySelector('[data-el="targets"]'));
       PROGNOSE.mount(root.querySelector('[data-el="prognose"]'));
@@ -4458,6 +4463,104 @@ const SBC = (function () {
   })();
 
   // ==================================================================
+  // VERBRAUCHSOBJEKTE: Chemie-Styles – Preise von Futbin (1 Abruf, 30 Min. gespeichert)
+  // Zuordnung über den Namen (Englisch/Deutsch) oder EAs ID im Futbin-Bild.
+  // ==================================================================
+  // eslint-disable-next-line no-var
+  var CONS = (() => {
+    const KEY = 'fcpt_cons_prices';
+    let data = GM_getValue(KEY, null);   // { t, plat, rows: [{ name, key, price, min, max, ids: [] }] }
+    let loading = null, box = null, msg = '';
+    const canon = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ß/g, 'ss').replace(/[^a-z]/g, '');
+    // Deutsch -> Englisch (Futbin listet englisch); mehrere Varianten, falls EA anders übersetzt
+    const DE = {
+      basis: 'basic', grundlage: 'basic', scharfschutze: 'sniper', vollstrecker: 'finisher', prazision: 'deadeye', prazisionsschutze: 'deadeye', adlerauge: 'deadeye',
+      torjager: 'marksman', schutze: 'marksman', falke: 'hawk', kunstler: 'artist', architekt: 'architect', kraftpaket: 'powerhouse', maestro: 'maestro',
+      motor: 'engine', wachposten: 'sentinel', wachter: 'guardian', beschutzer: 'guardian', gladiator: 'gladiator', ruckgrat: 'backbone',
+      anker: 'anchor', jager: 'hunter', katalysator: 'catalyst', schatten: 'shadow', mauer: 'wall', schild: 'shield', katze: 'cat', handschuh: 'glove',
+    };
+    const fresh = () => data && data.plat === settings.platform && Date.now() - data.t < 30 * 60000;
+    const parseK = (t) => {
+      const m = String(t || '').replace(/\s/g, '').match(/([\d.,]+)([KkMm])?/);
+      if (!m) return null;
+      const v = m[2] ? parseFloat(m[1].replace(',', '.')) * (/k/i.test(m[2]) ? 1000 : 1e6) : parseFloat(m[1].replace(/[.,]/g, ''));
+      return Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+    };
+
+    function parse(html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const plat = settings.platform === 'pc' ? 'pc' : 'ps';
+      const rows = [];
+      for (const tr of doc.querySelectorAll('tbody tr, .consumable-row, [class*="consumable"] tr')) {
+        const a = tr.querySelector('a') || tr.querySelector('td');
+        let name = ((tr.querySelector('.table-name, .name, [class*="name"]') || a || {}).textContent || '').replace(/\s+/g, ' ').trim();
+        if (!name) continue;
+        name = name.replace(/\s*(Chemistry Style|Chem Style)$/i, '');
+        const platEls = [...tr.querySelectorAll(`.platform-${plat}-only`)].map((e) => parseK(e.textContent)).filter(Boolean);
+        const nums = [...tr.querySelectorAll('td')].slice(1).map((td) => parseK(td.textContent)).filter(Boolean);
+        const price = platEls[0] || nums[0] || null;
+        if (!price) continue;
+        const ids = [...tr.querySelectorAll('img')].map((im) => ((im.getAttribute('src') || '').match(/(\d{2,})\.(png|webp|jpg)/) || [])[1]).filter(Boolean).map(Number);
+        rows.push({ name, key: canon(name), price, min: platEls[1] || nums[1] || null, max: platEls[2] || nums[2] || null, ids });
+      }
+      // doppelte Namen: niedrigsten Preis behalten
+      const by = {};
+      rows.forEach((r) => { if (!by[r.key] || r.price < by[r.key].price) by[r.key] = r; });
+      return Object.values(by);
+    }
+
+    function load(force) {
+      if (!force && fresh()) return Promise.resolve(data);
+      if (loading) return loading;
+      msg = 'Lade Chemie-Style-Preise von Futbin …'; drawBox();
+      loading = gmGet('https://www.futbin.com/27/consumables', 'text').then((html) => {
+        if (isCfPage(html)) throw new Error(CHECK_MSG);
+        const rows = parse(html);
+        if (!rows.length) throw new Error('Futbin-Seite konnte nicht gelesen werden (Aufbau geändert?)');
+        data = { t: Date.now(), plat: settings.platform, rows };
+        GM_setValue(KEY, data);
+        msg = '';
+        // Transferliste und EA-Listen mit den neuen Preisen neu zeichnen
+        setTimeout(() => { try { if (items.length) render(); redecorateAll(); } catch (e) { /* */ } }, 0);
+        return data;
+      }).catch((e) => { msg = 'Fehler: ' + e.message; throw e; }).finally(() => { loading = null; drawBox(); });
+      return loading;
+    }
+
+    // Ist das ein Chemie-Style? Preis dazu (Futbin, sonst EA-Durchschnitt)
+    function match(p) {
+      if (!p || p.isPlayer || !data) return null;
+      const k = canon(p.name);
+      const en = DE[k] || k;
+      let r = data.rows.find((x) => x.key === en || x.key === k);
+      if (!r && p.defId) r = data.rows.find((x) => x.ids.includes(p.defId) || x.ids.includes(p.defId % 1000));
+      return r || null;
+    }
+    let autoTried = 0;
+    function price(p) {
+      if (!p || p.isPlayer) return null;
+      if (!fresh() && Date.now() - autoTried > 5 * 60000) { autoTried = Date.now(); load().catch(() => {}); }
+      const r = match(p);
+      return r ? r.price : (p.marketAverage || null);
+    }
+
+    function drawBox() {
+      if (!box) return;
+      const rows = data ? [...data.rows].sort((a, b) => b.price - a.price) : [];
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>🧪 Chemie-Styles</h4>
+        <div class="note" style="font-size:12px;color:var(--ink2)">Aktuelle Futbin-Preise. Chemie-Styles in deiner Transferliste bekommen automatisch Marktpreis, Profit und Festpreis-Vorschlag – und lassen sich mit „Alle einstellen“ verkaufen.</div>
+        <button class="fcpt-bigbtn" data-cs="load" ${loading ? 'disabled' : ''}>🧪 Preise laden</button>
+        <div class="fcpt-stand">${esc(msg || (data ? `Stand: ${agoText(data.t)} · ${data.rows.length} Styles` : ''))}</div>
+        ${rows.length ? `<div class="ni-list">${rows.map((r) => `<div class="pt-r"><span>${esc(r.name)}</span><span><b>${fmt(r.price)}</b>${r.min && r.max ? ` <small>(EA ${fmt(r.min)}–${fmt(r.max)})</small>` : ''} · netto ${fmt(afterTax(r.price))}</span></div>`).join('')}</div>` : ''}
+      </div>`;
+      const b = box.querySelector('[data-cs="load"]');
+      if (b) b.addEventListener('click', (e) => { e.stopPropagation(); load(true).catch(() => {}); });
+    }
+    function mount(el) { box = el; drawBox(); }
+    return { load, price, match, mount, get: () => data, parse };
+  })();
+
+  // ==================================================================
   // FAVORITEN-SCHUTZ: Karten als „behalten“ markieren – kein Modul schlägt sie
   // zum Verkaufen, Einstellen, Schnellverkauf oder für SBCs vor.
   // (gleiche Liste wie die 🔒-Sperre im SBC-Solver)
@@ -5217,10 +5320,10 @@ const SBC = (function () {
     // ---------- Dichte Transferliste ----------
     const openRows = new Set();
     function rowCells(p) {
-      const m = p.isPlayer ? marketPrice(p.resourceId) : null;
+      const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
       const v = profitValue(p, m);
       return {
-        mk: p.isPlayer ? (m ? fmt(m) : '…') : '–',
+        mk: m ? fmt(m) : p.isPlayer ? '…' : '–',
         pf: v == null ? '<span class="fcpt-muted">–</span>' : `<span class="${profitCls(v)}">${signed(v)}</span>`,
       };
     }
@@ -5317,8 +5420,8 @@ const SBC = (function () {
       function priceFor(p) {
         const ps = preset(p);
         if (ps) return { bin: ps.bin, start: ps.start || lowerStep(ps.bin), src: 'Festpreis' };
-        if (!settings.listFallback || !p.isPlayer) return null;
-        const m = marketPrice(p.resourceId);
+        if (!settings.listFallback) return null;
+        const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
         if (!m) return null;
         const bin = listSuggest(p, m).bin;
         return { bin, start: lowerStep(bin), src: 'Futbin-Vorschlag' };
@@ -5341,9 +5444,9 @@ const SBC = (function () {
         return { out, skipped };
       }
       function fixHtml(p) {
-        if (!p.isPlayer || p.sold) return '';
+        if (p.sold || (!p.isPlayer && !CONS.match(p))) return '';
         const ps = preset(p);
-        const m = marketPrice(p.resourceId);
+        const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
         const sug = m ? listSuggest(p, m).bin : null;
         return `<div class="tr-fix"><span class="lb">Festpreis</span>${FAV.btn({ id: p.itemId, name: p.name, rating: p.rating })}
           <input type="number" min="200" step="50" inputmode="numeric" data-fixin="${p.resourceId}" value="${ps ? ps.bin : ''}" placeholder="${sug ? fmt(sug) : 'Sofortkauf'}" aria-label="Festpreis Sofortkauf">
