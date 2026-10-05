@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.26.0
+// @version      2.27.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5265,7 +5265,9 @@ const SBC = (function () {
     if (settings.buyConfirm === undefined) settings.buyConfirm = true;   // Kaufen: zweimal tippen
     if (settings.bidConfirm === undefined) settings.bidConfirm = false;  // Bieten: ein Tipp (Betrag steht drauf)
     let box = null;
-    const st = { rows: [], msg: '', busy: false, t: 0, arm: null, armT: 0, label: '' };
+    const st = { rows: [], msg: '', busy: false, t: 0, arm: null, armT: 0, label: '', sel: 0 };
+    const pc = () => !!(W.matchMedia && W.matchMedia('(hover: hover) and (pointer: fine)').matches);
+    const kb = (k) => (pc() ? `<kbd>${k}</kbd>` : '');
     const obs = (o, ms = 12000) => new Promise((resolve, reject) => {
       if (!o || typeof o.observe !== 'function') return reject(new Error('Keine EA-Antwort'));
       const sub = {};
@@ -5310,6 +5312,7 @@ const SBC = (function () {
         const names = [...new Set(st.rows.map((r) => r.p.name))];
         st.label = names.length === 1 ? `${st.rows[0].p.rating ?? ''} ${names[0]}` : `${names.length} verschiedene Karten`;
         st.msg = '';
+        { let bi = 0, bv = -Infinity; st.rows.forEach((r, i) => { if (r.profBin != null && r.profBin > bv) { bv = r.profBin; bi = i; } }); st.sel = bi; }
         // fehlende Futbin-Preise nachladen
         st.rows.filter((r) => r.p.isPlayer && !r.market).slice(0, 4).forEach((r) => {
           getPrice('futbin', r.p).then(() => { const n = mk({ raw: r.raw, p: r.p }); Object.assign(r, { market: n.market, maxBid: n.maxBid, profBin: n.profBin, profBid: n.profBid }); render(); }).catch(() => {});
@@ -5349,14 +5352,15 @@ const SBC = (function () {
       const bidOk = r.nb < r.bin;
       const worthBid = r.maxBid == null || r.nb <= r.maxBid;
       const bought = r.done && !r.done.bad && /gekauft/.test(r.done.t);
-      return `<div class="by-r ${bought ? 'won' : ''} ${i === best ? 'best' : ''}">
+      const sel = pc() && i === st.sel;
+      return `<div class="by-r ${bought ? 'won' : ''} ${i === best ? 'best' : ''} ${sel ? 'sel' : ''}" data-row="${i}">
         <div class="by-c"><b>${esc(r.p.isCons ? '🧪' : r.p.rating ?? '')}</b><small>${esc(r.p.position || '')}</small></div>
         <div class="by-n"><div class="nm">${esc(r.p.name)}${i === best ? ' <span class="by-best">Bester Deal</span>' : ''}</div>
           <small>${fmtTime(r.exp)} · Gebot ${r.cur ? fmt(r.cur) : '–'} · Markt ${r.market ? fmt(r.market) : '…'}</small>
           ${r.done ? `<small class="${r.done.bad ? 'neg' : 'pos'}">${esc(r.done.t)}</small>` : ''}</div>
         ${bought ? '' : `<div class="by-a">
-          <button data-by="buy" data-i="${i}" class="b ${armB ? 'arm' : ''}" ${r.busy ? 'disabled' : ''}>${armB ? 'Sicher?' : 'Kaufen'} <b>${fmt(r.bin)}</b><small class="${r.profBin == null ? '' : r.profBin >= 0 ? 'pos' : 'neg'}">${r.profBin == null ? '&nbsp;' : sign(r.profBin)}</small></button>
-          ${bidOk ? `<button data-by="bid" data-i="${i}" class="d ${armD ? 'arm' : ''} ${worthBid ? '' : 'no'}" ${r.busy ? 'disabled' : ''}>${armD ? 'Sicher?' : 'Bieten'} <b>${fmt(r.nb)}</b><small class="${r.profBid == null ? '' : r.profBid >= 0 ? 'pos' : 'neg'}">${r.profBid == null ? '&nbsp;' : worthBid ? sign(r.profBid) : 'lohnt nicht'}</small></button>` : ''}
+          <button data-by="buy" data-i="${i}" class="b ${armB ? 'arm' : ''}" ${r.busy ? 'disabled' : ''}><span class="l">${armB ? 'Sicher?' : 'Kaufen'}${sel ? kb('K') : ''}</span><b>${fmt(r.bin)}</b><small class="${r.profBin == null ? '' : r.profBin >= 0 ? 'pos' : 'neg'}">${r.profBin == null ? '&nbsp;' : sign(r.profBin)}</small></button>
+          ${bidOk ? `<button data-by="bid" data-i="${i}" class="d ${armD ? 'arm' : ''} ${worthBid ? '' : 'no'}" ${r.busy ? 'disabled' : ''}><span class="l">${armD ? 'Sicher?' : 'Bieten'}${sel ? kb('B') : ''}</span><b>${fmt(r.nb)}</b><small class="${r.profBid == null ? '' : r.profBid >= 0 ? 'pos' : 'neg'}">${r.profBid == null ? '&nbsp;' : worthBid ? sign(r.profBid) : 'lohnt nicht'}</small></button>` : ''}
         </div>`}
       </div>`;
     }
@@ -5375,11 +5379,28 @@ const SBC = (function () {
         : `<div class="by-empty">${st.busy ? '' : 'Tippe auf <b>Suchen</b>. Das Tool nutzt deine Suche aus der Web App und zeigt die Angebote hier – mit Gewinn, Kaufen und Bieten.'}</div>`}
         <div class="by-tg" data-el="bytg"></div>
         <div class="by-bar">${st.msg ? `<div class="by-msg">${esc(st.msg)}</div>` : ''}
-          <button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}</button></div>`;
+          <button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}${kb('Leertaste')}</button>${pc() ? '<div class="by-keys"><kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen (2×) · <kbd>B</kbd> Bieten · <kbd>Esc</kbd> Abbrechen</div>' : ''}</div>`;
       box.querySelector('[data-by="search"]').addEventListener('click', (e) => { e.stopPropagation(); search(); });
+      box.querySelectorAll('[data-row]').forEach((rw) => rw.addEventListener('mouseenter', () => { if (pc() && st.sel !== +rw.dataset.row) { st.sel = +rw.dataset.row; box.querySelectorAll('.by-r.sel').forEach((x) => x.classList.remove('sel')); rw.classList.add('sel'); } }));
       box.querySelectorAll('[data-by="buy"],[data-by="bid"]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); act(+b.dataset.i, b.dataset.by); }));
       if (typeof TARGETS !== 'undefined') TARGETS.mount(box.querySelector('[data-el="bytg"]'));
     }
+    // Tastatur (PC): nur wenn das Tool offen ist und „Kaufen & Bieten“ angezeigt wird
+    document.addEventListener('keydown', (ev) => {
+      if (!box || !panel.classList.contains('open') || !panel.classList.contains('v-buy')) return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const a = document.activeElement;
+      if (a && (/^(input|textarea|select)$/i.test(a.tagName) || a.isContentEditable)) return;
+      const k = ev.key;
+      let done = true;
+      if (k === ' ' || k === 's' || k === 'S') { if (!ev.repeat) search(); }
+      else if (k === 'ArrowDown' || k === 'ArrowUp') { if (st.rows.length) { st.sel = (st.sel + (k === 'ArrowDown' ? 1 : -1) + st.rows.length) % st.rows.length; st.arm = null; render(); const el = box.querySelector('.by-r.sel'); if (el) el.scrollIntoView({ block: 'nearest' }); } }
+      else if (k === 'k' || k === 'K' || k === 'Enter') { if (!ev.repeat) act(st.sel, 'buy'); }
+      else if (k === 'b' || k === 'B') { if (!ev.repeat) act(st.sel, 'bid'); }
+      else if (k === 'Escape' && st.arm) { st.arm = null; render(); }
+      else done = false;
+      if (done) { ev.preventDefault(); ev.stopPropagation(); }
+    }, true);
     function mount(el) { box = el; render(); }
     return { mount, search, render };
   })();
@@ -5474,6 +5495,14 @@ const SBC = (function () {
       .tr-det .fcpt-card{border:1px solid var(--line);border-left-width:1px;background:var(--bg2);border-radius:12px}
       .tr-det .c-top{display:none}
       .tr-det .c-stats{margin-top:0}
+      .by-r.sel{outline:2px solid var(--blue);outline-offset:1px}
+      #fcpt-panel kbd{display:inline-block;min-width:16px;padding:0 4px;margin-left:5px;border-radius:4px;border:1px solid currentColor;font:600 10px ui-monospace,monospace;opacity:.7;vertical-align:1px}
+      .by-keys{font-size:11px;color:var(--ink3)}
+      .by-a .l{white-space:nowrap}.by-keys kbd{margin:0 1px}
+      .fcpt-resize{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:ew-resize;z-index:3}
+      .fcpt-resize:hover,.fcpt-resize.on{background:linear-gradient(90deg,transparent 3px,var(--gold) 3px,var(--gold) 5px,transparent 5px)}
+      html.fcpt-dock body{width:calc(100vw - var(--fcpt-w, 520px)) !important;min-width:0 !important;transform:translateZ(0);overflow:hidden}
+      html.fcpt-dock #fcpt-panel{box-shadow:none}
       .fcpt-open #fcpt-bidbar{display:none !important}
       .fcpt-buy{display:none;overflow:auto;flex:1;flex-direction:column;gap:10px;padding:12px 14px 0}
       #fcpt-panel.v-buy .fcpt-buy{display:flex}
@@ -5503,6 +5532,7 @@ const SBC = (function () {
       .by-go{width:100%;height:60px;border-radius:18px;border:0;background:var(--gold);color:#15120a;font:800 19px system-ui,sans-serif;cursor:pointer}
       .by-go:disabled{opacity:.6}
       @keyframes fcptArm{50%{filter:brightness(1.25)}}
+      @media (min-width:701px){.by-a{flex-direction:row}.by-a button{min-width:112px}.by-r{padding:8px 10px}}
       .fcpt-home{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}
       #fcpt-panel.v-home .fcpt-home{display:flex}
       #fcpt-panel.v-home .fcpt-list,#fcpt-panel.v-home .fcpt-trade,#fcpt-panel.v-home .fcpt-settings,#fcpt-panel.v-home .fcpt-sum,#fcpt-panel.v-home .fcpt-toolbar{display:none !important}
@@ -5847,13 +5877,53 @@ const SBC = (function () {
       const inp = row.querySelector('input');
       inp.value = settings.iosBottom;
       inp.addEventListener('change', (e) => { e.stopPropagation(); settings.iosBottom = Math.max(0, Math.min(200, parseInt(inp.value, 10) || 0)); saveSettings(); applyIos(); });
+      const pcRow = document.createElement('div');
+      pcRow.className = 'fcpt-set';
+      pcRow.innerHTML = '<span>Neben der Web App andocken (PC)<small>Tool rechts, Web App daneben – nichts wird verdeckt. Breite mit dem Rand links am Tool ziehen.</small></span><select data-uib="dock"><option value="auto">Automatisch (großer Bildschirm)</option><option value="on">Immer</option><option value="off">Aus (Tool liegt über der Web App)</option></select>';
+      grp.appendChild(pcRow);
+      const ds = pcRow.querySelector('select');
+      ds.value = settings.dock;
+      ds.addEventListener('change', (e) => { e.stopPropagation(); settings.dock = ds.value; saveSettings(); applyDock(); });
     }
+
+    // ---------- PC: Breite verstellen + neben der Web App andocken ----------
+    if (settings.panelW === undefined) settings.panelW = 560;
+    if (settings.dock === undefined) settings.dock = 'auto';   // 'auto' | 'on' | 'off'
+    const isWide = () => W.innerWidth > 700;
+    const isPC = () => !!(W.matchMedia && W.matchMedia('(hover: hover) and (pointer: fine)').matches);
+    function applyWidth() {
+      const w = Math.max(380, Math.min(settings.panelW, W.innerWidth - 480));
+      if (isWide()) panel.style.width = w + 'px'; else panel.style.width = '';
+      document.documentElement.style.setProperty('--fcpt-w', w + 'px');
+    }
+    function applyDock() {
+      const want = settings.dock === 'on' || (settings.dock === 'auto' && isPC() && W.innerWidth >= 1200);
+      const on = want && isWide() && panel.classList.contains('open');
+      if (on && panel.parentNode !== document.documentElement) document.documentElement.appendChild(panel);
+      if (!on && panel.parentNode !== document.body) document.body.appendChild(panel);
+      document.documentElement.classList.toggle('fcpt-dock', on);
+      applyWidth();
+      if (on !== applyDock.last) { applyDock.last = on; try { W.dispatchEvent(new Event('resize')); } catch (e) { /* */ } }
+    }
+    const grip = document.createElement('div');
+    grip.className = 'fcpt-resize';
+    grip.title = 'Breite ziehen';
+    panel.appendChild(grip);
+    grip.addEventListener('mousedown', (e) => {
+      e.preventDefault(); e.stopPropagation(); grip.classList.add('on');
+      const mv = (ev) => { settings.panelW = Math.round(W.innerWidth - ev.clientX); applyWidth(); };
+      const up = () => { grip.classList.remove('on'); W.removeEventListener('mousemove', mv); W.removeEventListener('mouseup', up); saveSettings(); try { W.dispatchEvent(new Event('resize')); } catch (er) { /* */ } };
+      W.addEventListener('mousemove', mv); W.addEventListener('mouseup', up);
+    });
+    W.addEventListener('resize', () => { if (!applyDock.inner) { applyDock.inner = true; applyWidth(); applyDock.inner = false; } });
+    applyWidth();
 
     // Schwebende Knöpfe ausblenden, solange das Panel offen ist (sie lagen über der Leiste)
     const syncBtns = () => {
       const o = panel.classList.contains('open');
       btn.style.display = o ? 'none' : '';
       document.documentElement.classList.toggle('fcpt-open', o);
+      applyDock();
       const sb = document.getElementById('fcpt-sbcbtn');
       if (sb) sb.style.visibility = o ? 'hidden' : '';
     };

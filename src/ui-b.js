@@ -88,6 +88,14 @@
       .tr-det .fcpt-card{border:1px solid var(--line);border-left-width:1px;background:var(--bg2);border-radius:12px}
       .tr-det .c-top{display:none}
       .tr-det .c-stats{margin-top:0}
+      .by-r.sel{outline:2px solid var(--blue);outline-offset:1px}
+      #fcpt-panel kbd{display:inline-block;min-width:16px;padding:0 4px;margin-left:5px;border-radius:4px;border:1px solid currentColor;font:600 10px ui-monospace,monospace;opacity:.7;vertical-align:1px}
+      .by-keys{font-size:11px;color:var(--ink3)}
+      .by-a .l{white-space:nowrap}.by-keys kbd{margin:0 1px}
+      .fcpt-resize{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:ew-resize;z-index:3}
+      .fcpt-resize:hover,.fcpt-resize.on{background:linear-gradient(90deg,transparent 3px,var(--gold) 3px,var(--gold) 5px,transparent 5px)}
+      html.fcpt-dock body{width:calc(100vw - var(--fcpt-w, 520px)) !important;min-width:0 !important;transform:translateZ(0);overflow:hidden}
+      html.fcpt-dock #fcpt-panel{box-shadow:none}
       .fcpt-open #fcpt-bidbar{display:none !important}
       .fcpt-buy{display:none;overflow:auto;flex:1;flex-direction:column;gap:10px;padding:12px 14px 0}
       #fcpt-panel.v-buy .fcpt-buy{display:flex}
@@ -117,6 +125,7 @@
       .by-go{width:100%;height:60px;border-radius:18px;border:0;background:var(--gold);color:#15120a;font:800 19px system-ui,sans-serif;cursor:pointer}
       .by-go:disabled{opacity:.6}
       @keyframes fcptArm{50%{filter:brightness(1.25)}}
+      @media (min-width:701px){.by-a{flex-direction:row}.by-a button{min-width:112px}.by-r{padding:8px 10px}}
       .fcpt-home{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}
       #fcpt-panel.v-home .fcpt-home{display:flex}
       #fcpt-panel.v-home .fcpt-list,#fcpt-panel.v-home .fcpt-trade,#fcpt-panel.v-home .fcpt-settings,#fcpt-panel.v-home .fcpt-sum,#fcpt-panel.v-home .fcpt-toolbar{display:none !important}
@@ -461,13 +470,53 @@
       const inp = row.querySelector('input');
       inp.value = settings.iosBottom;
       inp.addEventListener('change', (e) => { e.stopPropagation(); settings.iosBottom = Math.max(0, Math.min(200, parseInt(inp.value, 10) || 0)); saveSettings(); applyIos(); });
+      const pcRow = document.createElement('div');
+      pcRow.className = 'fcpt-set';
+      pcRow.innerHTML = '<span>Neben der Web App andocken (PC)<small>Tool rechts, Web App daneben – nichts wird verdeckt. Breite mit dem Rand links am Tool ziehen.</small></span><select data-uib="dock"><option value="auto">Automatisch (großer Bildschirm)</option><option value="on">Immer</option><option value="off">Aus (Tool liegt über der Web App)</option></select>';
+      grp.appendChild(pcRow);
+      const ds = pcRow.querySelector('select');
+      ds.value = settings.dock;
+      ds.addEventListener('change', (e) => { e.stopPropagation(); settings.dock = ds.value; saveSettings(); applyDock(); });
     }
+
+    // ---------- PC: Breite verstellen + neben der Web App andocken ----------
+    if (settings.panelW === undefined) settings.panelW = 560;
+    if (settings.dock === undefined) settings.dock = 'auto';   // 'auto' | 'on' | 'off'
+    const isWide = () => W.innerWidth > 700;
+    const isPC = () => !!(W.matchMedia && W.matchMedia('(hover: hover) and (pointer: fine)').matches);
+    function applyWidth() {
+      const w = Math.max(380, Math.min(settings.panelW, W.innerWidth - 480));
+      if (isWide()) panel.style.width = w + 'px'; else panel.style.width = '';
+      document.documentElement.style.setProperty('--fcpt-w', w + 'px');
+    }
+    function applyDock() {
+      const want = settings.dock === 'on' || (settings.dock === 'auto' && isPC() && W.innerWidth >= 1200);
+      const on = want && isWide() && panel.classList.contains('open');
+      if (on && panel.parentNode !== document.documentElement) document.documentElement.appendChild(panel);
+      if (!on && panel.parentNode !== document.body) document.body.appendChild(panel);
+      document.documentElement.classList.toggle('fcpt-dock', on);
+      applyWidth();
+      if (on !== applyDock.last) { applyDock.last = on; try { W.dispatchEvent(new Event('resize')); } catch (e) { /* */ } }
+    }
+    const grip = document.createElement('div');
+    grip.className = 'fcpt-resize';
+    grip.title = 'Breite ziehen';
+    panel.appendChild(grip);
+    grip.addEventListener('mousedown', (e) => {
+      e.preventDefault(); e.stopPropagation(); grip.classList.add('on');
+      const mv = (ev) => { settings.panelW = Math.round(W.innerWidth - ev.clientX); applyWidth(); };
+      const up = () => { grip.classList.remove('on'); W.removeEventListener('mousemove', mv); W.removeEventListener('mouseup', up); saveSettings(); try { W.dispatchEvent(new Event('resize')); } catch (er) { /* */ } };
+      W.addEventListener('mousemove', mv); W.addEventListener('mouseup', up);
+    });
+    W.addEventListener('resize', () => { if (!applyDock.inner) { applyDock.inner = true; applyWidth(); applyDock.inner = false; } });
+    applyWidth();
 
     // Schwebende Knöpfe ausblenden, solange das Panel offen ist (sie lagen über der Leiste)
     const syncBtns = () => {
       const o = panel.classList.contains('open');
       btn.style.display = o ? 'none' : '';
       document.documentElement.classList.toggle('fcpt-open', o);
+      applyDock();
       const sb = document.getElementById('fcpt-sbcbtn');
       if (sb) sb.style.visibility = o ? 'hidden' : '';
     };

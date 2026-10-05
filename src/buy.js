@@ -9,7 +9,9 @@
     if (settings.buyConfirm === undefined) settings.buyConfirm = true;   // Kaufen: zweimal tippen
     if (settings.bidConfirm === undefined) settings.bidConfirm = false;  // Bieten: ein Tipp (Betrag steht drauf)
     let box = null;
-    const st = { rows: [], msg: '', busy: false, t: 0, arm: null, armT: 0, label: '' };
+    const st = { rows: [], msg: '', busy: false, t: 0, arm: null, armT: 0, label: '', sel: 0 };
+    const pc = () => !!(W.matchMedia && W.matchMedia('(hover: hover) and (pointer: fine)').matches);
+    const kb = (k) => (pc() ? `<kbd>${k}</kbd>` : '');
     const obs = (o, ms = 12000) => new Promise((resolve, reject) => {
       if (!o || typeof o.observe !== 'function') return reject(new Error('Keine EA-Antwort'));
       const sub = {};
@@ -54,6 +56,7 @@
         const names = [...new Set(st.rows.map((r) => r.p.name))];
         st.label = names.length === 1 ? `${st.rows[0].p.rating ?? ''} ${names[0]}` : `${names.length} verschiedene Karten`;
         st.msg = '';
+        { let bi = 0, bv = -Infinity; st.rows.forEach((r, i) => { if (r.profBin != null && r.profBin > bv) { bv = r.profBin; bi = i; } }); st.sel = bi; }
         // fehlende Futbin-Preise nachladen
         st.rows.filter((r) => r.p.isPlayer && !r.market).slice(0, 4).forEach((r) => {
           getPrice('futbin', r.p).then(() => { const n = mk({ raw: r.raw, p: r.p }); Object.assign(r, { market: n.market, maxBid: n.maxBid, profBin: n.profBin, profBid: n.profBid }); render(); }).catch(() => {});
@@ -93,14 +96,15 @@
       const bidOk = r.nb < r.bin;
       const worthBid = r.maxBid == null || r.nb <= r.maxBid;
       const bought = r.done && !r.done.bad && /gekauft/.test(r.done.t);
-      return `<div class="by-r ${bought ? 'won' : ''} ${i === best ? 'best' : ''}">
+      const sel = pc() && i === st.sel;
+      return `<div class="by-r ${bought ? 'won' : ''} ${i === best ? 'best' : ''} ${sel ? 'sel' : ''}" data-row="${i}">
         <div class="by-c"><b>${esc(r.p.isCons ? '🧪' : r.p.rating ?? '')}</b><small>${esc(r.p.position || '')}</small></div>
         <div class="by-n"><div class="nm">${esc(r.p.name)}${i === best ? ' <span class="by-best">Bester Deal</span>' : ''}</div>
           <small>${fmtTime(r.exp)} · Gebot ${r.cur ? fmt(r.cur) : '–'} · Markt ${r.market ? fmt(r.market) : '…'}</small>
           ${r.done ? `<small class="${r.done.bad ? 'neg' : 'pos'}">${esc(r.done.t)}</small>` : ''}</div>
         ${bought ? '' : `<div class="by-a">
-          <button data-by="buy" data-i="${i}" class="b ${armB ? 'arm' : ''}" ${r.busy ? 'disabled' : ''}>${armB ? 'Sicher?' : 'Kaufen'} <b>${fmt(r.bin)}</b><small class="${r.profBin == null ? '' : r.profBin >= 0 ? 'pos' : 'neg'}">${r.profBin == null ? '&nbsp;' : sign(r.profBin)}</small></button>
-          ${bidOk ? `<button data-by="bid" data-i="${i}" class="d ${armD ? 'arm' : ''} ${worthBid ? '' : 'no'}" ${r.busy ? 'disabled' : ''}>${armD ? 'Sicher?' : 'Bieten'} <b>${fmt(r.nb)}</b><small class="${r.profBid == null ? '' : r.profBid >= 0 ? 'pos' : 'neg'}">${r.profBid == null ? '&nbsp;' : worthBid ? sign(r.profBid) : 'lohnt nicht'}</small></button>` : ''}
+          <button data-by="buy" data-i="${i}" class="b ${armB ? 'arm' : ''}" ${r.busy ? 'disabled' : ''}><span class="l">${armB ? 'Sicher?' : 'Kaufen'}${sel ? kb('K') : ''}</span><b>${fmt(r.bin)}</b><small class="${r.profBin == null ? '' : r.profBin >= 0 ? 'pos' : 'neg'}">${r.profBin == null ? '&nbsp;' : sign(r.profBin)}</small></button>
+          ${bidOk ? `<button data-by="bid" data-i="${i}" class="d ${armD ? 'arm' : ''} ${worthBid ? '' : 'no'}" ${r.busy ? 'disabled' : ''}><span class="l">${armD ? 'Sicher?' : 'Bieten'}${sel ? kb('B') : ''}</span><b>${fmt(r.nb)}</b><small class="${r.profBid == null ? '' : r.profBid >= 0 ? 'pos' : 'neg'}">${r.profBid == null ? '&nbsp;' : worthBid ? sign(r.profBid) : 'lohnt nicht'}</small></button>` : ''}
         </div>`}
       </div>`;
     }
@@ -119,11 +123,28 @@
         : `<div class="by-empty">${st.busy ? '' : 'Tippe auf <b>Suchen</b>. Das Tool nutzt deine Suche aus der Web App und zeigt die Angebote hier – mit Gewinn, Kaufen und Bieten.'}</div>`}
         <div class="by-tg" data-el="bytg"></div>
         <div class="by-bar">${st.msg ? `<div class="by-msg">${esc(st.msg)}</div>` : ''}
-          <button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}</button></div>`;
+          <button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}${kb('Leertaste')}</button>${pc() ? '<div class="by-keys"><kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen (2×) · <kbd>B</kbd> Bieten · <kbd>Esc</kbd> Abbrechen</div>' : ''}</div>`;
       box.querySelector('[data-by="search"]').addEventListener('click', (e) => { e.stopPropagation(); search(); });
+      box.querySelectorAll('[data-row]').forEach((rw) => rw.addEventListener('mouseenter', () => { if (pc() && st.sel !== +rw.dataset.row) { st.sel = +rw.dataset.row; box.querySelectorAll('.by-r.sel').forEach((x) => x.classList.remove('sel')); rw.classList.add('sel'); } }));
       box.querySelectorAll('[data-by="buy"],[data-by="bid"]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); act(+b.dataset.i, b.dataset.by); }));
       if (typeof TARGETS !== 'undefined') TARGETS.mount(box.querySelector('[data-el="bytg"]'));
     }
+    // Tastatur (PC): nur wenn das Tool offen ist und „Kaufen & Bieten“ angezeigt wird
+    document.addEventListener('keydown', (ev) => {
+      if (!box || !panel.classList.contains('open') || !panel.classList.contains('v-buy')) return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const a = document.activeElement;
+      if (a && (/^(input|textarea|select)$/i.test(a.tagName) || a.isContentEditable)) return;
+      const k = ev.key;
+      let done = true;
+      if (k === ' ' || k === 's' || k === 'S') { if (!ev.repeat) search(); }
+      else if (k === 'ArrowDown' || k === 'ArrowUp') { if (st.rows.length) { st.sel = (st.sel + (k === 'ArrowDown' ? 1 : -1) + st.rows.length) % st.rows.length; st.arm = null; render(); const el = box.querySelector('.by-r.sel'); if (el) el.scrollIntoView({ block: 'nearest' }); } }
+      else if (k === 'k' || k === 'K' || k === 'Enter') { if (!ev.repeat) act(st.sel, 'buy'); }
+      else if (k === 'b' || k === 'B') { if (!ev.repeat) act(st.sel, 'bid'); }
+      else if (k === 'Escape' && st.arm) { st.arm = null; render(); }
+      else done = false;
+      if (done) { ev.preventDefault(); ev.stopPropagation(); }
+    }, true);
     function mount(el) { box = el; render(); }
     return { mount, search, render };
   })();
