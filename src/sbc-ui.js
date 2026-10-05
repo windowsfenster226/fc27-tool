@@ -887,6 +887,7 @@
           };
         })(),
         lastApplyError,
+        evo: (() => { try { return EVO.diag(); } catch (e) { return String(e); } })(),
         newItems: (() => { try { return NEWITEMS.diag(); } catch (e) { return String(e); } })(),
         consSample: (() => { try { const x = items.find((i) => !i.isPlayer && i.__raw); if (!x) return null; const r = x.__raw; return { name: x.name, rid: x.resourceId, playStyle: r.playStyle, _playStyle: r._playStyle, def: r.definitionId, rating: r.rating, type: r.type, subtype: r.subtype, cons: (CONS.match(x) || {}).name || null, consRows: CONS.get() ? CONS.get().rows.length : 0, keys: Object.keys(r).slice(0, 70), futbin: CONS.get() ? CONS.get().rows.slice(0, 4) : null }; } catch (e) { return String(e); } })(),
         lastSolutionItems: lastSol ? lastSol.players.filter(Boolean).map((p) => ({ id: p.id, r: p.rating, nh: p.untradeable, dup: p.dup, st: p.storage, un: p.unassigned, c: !!p.concept })) : null,
