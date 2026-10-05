@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.25.0
+// @version      2.26.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -3442,7 +3442,7 @@ const SBC = (function () {
       const SUBS = [['markt', '📈 Markt'], ['verein', '💼 Verein'], ['futter', '📊 Futter']];
       if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
-        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="guard"></div><div data-el="targets"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="guard"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
         '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="fav"></div><div data-el="squadopt"></div><div data-el="evo"></div><div data-el="packs"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
         '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div><div data-el="cons"></div></div>';
       const showSub = () => {
@@ -3460,7 +3460,6 @@ const SBC = (function () {
       PACKS.mount(root.querySelector('[data-el="packs"]'));
       CONS.mount(root.querySelector('[data-el="cons"]'));
       GUARD.mount(root.querySelector('[data-el="guard"]'));
-      TARGETS.mount(root.querySelector('[data-el="targets"]'));
       PROGNOSE.mount(root.querySelector('[data-el="prognose"]'));
       const tim = root.querySelector('[data-el="timing"]');
       const drawTiming = () => { tim.innerHTML = TIMING.html(); };
@@ -4989,7 +4988,7 @@ const SBC = (function () {
       if (!box) return;
       const L = st.list || [];
       const cnt = (s) => L.filter((r) => r.status === s).length;
-      box.innerHTML = `<div class="fcpt-sgroup"><h4>🎯 Transferziele</h4>
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>🎯 Meine Gebote</h4>
         <div class="note" style="font-size:12px;color:var(--ink2)">Deine Gebote: wo du überboten wurdest und bis wohin Nachbieten noch Profit bringt (Futbin-Preis nach Steuer minus Mindest-Profit).</div>
         <div class="fcpt-set"><span>Mindest-Profit beim Weiterverkauf</span><input type="number" min="0" step="50" data-tg="min" value="${settings.tgMinProfit}"></div>
         <div class="fcpt-set"><span>Alle 20 Sek. aktualisieren<small>Nur solange dieser Bereich offen ist</small></span><input type="checkbox" class="fcpt-sw" data-tg="auto" ${settings.tgAuto ? 'checked' : ''}></div>
@@ -5016,7 +5015,7 @@ const SBC = (function () {
     }, 20000);
 
     function mount(el) { box = el; render(); }
-    return { mount };
+    return { mount, reload: () => load(true) };
   })();
 
   // ==================================================================
@@ -5256,6 +5255,136 @@ const SBC = (function () {
   })();
 
   // ==================================================================
+  // KAUFEN & BIETEN: eigene Ansicht im Tool. Ein Tipp = eine Suche (EAs Suche,
+  // im Hintergrund unter dem Tool). Treffer erscheinen hier mit Gewinn,
+  // Kaufen (mit Rückfrage) und Bieten (Betrag steht auf dem Knopf).
+  // Nichts läuft von allein: jede Suche und jedes Gebot startest du.
+  // ==================================================================
+  // eslint-disable-next-line no-var
+  var BUY = (() => {
+    if (settings.buyConfirm === undefined) settings.buyConfirm = true;   // Kaufen: zweimal tippen
+    if (settings.bidConfirm === undefined) settings.bidConfirm = false;  // Bieten: ein Tipp (Betrag steht drauf)
+    let box = null;
+    const st = { rows: [], msg: '', busy: false, t: 0, arm: null, armT: 0, label: '' };
+    const obs = (o, ms = 12000) => new Promise((resolve, reject) => {
+      if (!o || typeof o.observe !== 'function') return reject(new Error('Keine EA-Antwort'));
+      const sub = {};
+      const t = setTimeout(() => reject(new Error('Zeitüberschreitung bei EA')), ms);
+      o.observe(sub, (ob, ev) => { clearTimeout(t); try { ob.unobserve(sub); } catch (e) { /* */ } resolve(ev || {}); });
+    });
+    const ERR = { 461: 'zu spät – schon verkauft oder überboten', 470: 'nicht genug Münzen', 478: 'Gebot zu niedrig', 473: 'eigene Karte', 409: 'schon vergeben', 429: 'EA bremst – kurz Pause', 512: 'EA bremst – Pause machen', 521: 'EA bremst – Pause machen' };
+
+    function mk(o) {
+      const raw = o.raw, p = o.p;
+      let a = {};
+      try { a = raw.getAuctionData ? raw.getAuctionData() : raw._auction || {}; } catch (e) { /* */ }
+      const market = p.isPlayer ? (marketPrice(p.resourceId) || cacheGet(`futbin:${settings.platform}:${p.resourceId}`) || null) : CONS.price(p);
+      const cur = toNum(a.currentBid) || 0;
+      const nb = cur ? cur + stepFor(cur) : (toNum(a.startingBid) || 150);
+      const bin = toNum(a.buyNowPrice) || p.buyNow;
+      const maxBid = market ? Math.floor((afterTax(market) - settings.tgMinProfit) / stepFor(market)) * stepFor(market) : null;
+      return { raw, p, bin, cur, nb, exp: a.expires, market, maxBid, profBin: market ? afterTax(market) - bin : null, profBid: market ? afterTax(market) - nb : null, done: null, busy: false };
+    }
+
+    async function search() {
+      if (st.busy) return;
+      if (typeof GUARD !== 'undefined' && GUARD.blocked()) { st.msg = `🛑 ${GUARD.level().text} – Pause empfohlen. Nochmal tippen = trotzdem suchen.`; render(); return; }
+      if (findConfirmButton()) { st.msg = 'In der Web App ist noch ein Kauf-Dialog offen – dort erst bestätigen oder abbrechen.'; render(); return; }
+      st.busy = true; st.msg = 'Suche …'; render();
+      try {
+        let s = findSearchButton();
+        if (!s) {
+          const back = findBackButton();
+          if (back) { pressButton(back); s = await waitFor(findSearchButton, 1500, 40); }
+          if (!s) { st.msg = 'Öffne einmal in der Web App „Transfers → Transfermarkt durchsuchen“ und stelle die Suche ein (Spieler, Qualität …). Danach suchst du nur noch hier.'; return; }
+        }
+        for (const [tid, r] of marketRows) if (!r.root.isConnected) marketRows.delete(tid);
+        const before = new Set(marketRows.keys());
+        if (settings.bumpMinBin) bumpMinBin();
+        pressButton(s);
+        const got = await waitFor(() => (noResults() ? 'none' : marketOffers().some((o) => !before.has(o.p.tradeId)) ? 'rows' : null), 4000, 50);
+        st.t = Date.now();
+        if (got !== 'rows') { st.rows = []; st.msg = got === 'none' ? 'Nichts gefunden – nochmal tippen.' : 'Keine Ergebnisse erkannt – nochmal tippen.'; return; }
+        await sleep(150);
+        st.rows = marketOffers().filter((o) => !before.has(o.p.tradeId)).map((o) => mk({ p: o.p, raw: (marketRows.get(o.p.tradeId) || {}).raw })).filter((r) => r.raw).sort((a, b) => a.bin - b.bin);
+        const names = [...new Set(st.rows.map((r) => r.p.name))];
+        st.label = names.length === 1 ? `${st.rows[0].p.rating ?? ''} ${names[0]}` : `${names.length} verschiedene Karten`;
+        st.msg = '';
+        // fehlende Futbin-Preise nachladen
+        st.rows.filter((r) => r.p.isPlayer && !r.market).slice(0, 4).forEach((r) => {
+          getPrice('futbin', r.p).then(() => { const n = mk({ raw: r.raw, p: r.p }); Object.assign(r, { market: n.market, maxBid: n.maxBid, profBin: n.profBin, profBid: n.profBid }); render(); }).catch(() => {});
+        });
+      } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
+    }
+
+    async function act(i, kind) {
+      const r = st.rows[i];
+      if (!r || r.busy || (r.done && !r.done.bad && kind === 'buy')) return;
+      const amount = kind === 'buy' ? r.bin : r.nb;
+      const key = `${kind}:${i}`;
+      const needConfirm = kind === 'buy' ? settings.buyConfirm : settings.bidConfirm;
+      if (needConfirm && (st.arm !== key || Date.now() - st.armT > 4000)) {
+        st.arm = key; st.armT = Date.now(); render();
+        setTimeout(() => { if (st.arm === key) { st.arm = null; render(); } }, 4000);
+        return;
+      }
+      st.arm = null;
+      const S = W.services && W.services.Item;
+      if (!S || typeof S.bid !== 'function') { r.done = { bad: true, t: 'EA-Funktion zum Bieten nicht gefunden' }; render(); return; }
+      if ((SBCUI.userCoins() ?? Infinity) < amount) { r.done = { bad: true, t: 'nicht genug Münzen' }; render(); return; }
+      r.busy = true; render();
+      try {
+        const ev = await obs(S.bid(r.raw, amount));
+        if (ev && ev.success === false) r.done = { bad: true, t: `${kind === 'buy' ? 'Kauf' : 'Gebot'} abgelehnt: ${ERR[ev.status] || `Code ${ev.status || '?'}`}` };
+        else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); }
+        else { r.done = { t: `✓ Höchstbietender mit ${fmt(amount)} – steht unter „Meine Gebote“` }; r.cur = amount; r.nb = amount + stepFor(amount); if (r.market) r.profBid = afterTax(r.market) - r.nb; }
+      } catch (e) { r.done = { bad: true, t: e.message }; }
+      r.busy = false; render();
+      if (kind === 'bid' && typeof TARGETS !== 'undefined' && TARGETS.reload) TARGETS.reload();
+    }
+
+    const sign = (v) => (v == null ? '' : `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`);
+    function rowHtml(r, i, best) {
+      const armB = st.arm === `buy:${i}`, armD = st.arm === `bid:${i}`;
+      const bidOk = r.nb < r.bin;
+      const worthBid = r.maxBid == null || r.nb <= r.maxBid;
+      const bought = r.done && !r.done.bad && /gekauft/.test(r.done.t);
+      return `<div class="by-r ${bought ? 'won' : ''} ${i === best ? 'best' : ''}">
+        <div class="by-c"><b>${esc(r.p.isCons ? '🧪' : r.p.rating ?? '')}</b><small>${esc(r.p.position || '')}</small></div>
+        <div class="by-n"><div class="nm">${esc(r.p.name)}${i === best ? ' <span class="by-best">Bester Deal</span>' : ''}</div>
+          <small>${fmtTime(r.exp)} · Gebot ${r.cur ? fmt(r.cur) : '–'} · Markt ${r.market ? fmt(r.market) : '…'}</small>
+          ${r.done ? `<small class="${r.done.bad ? 'neg' : 'pos'}">${esc(r.done.t)}</small>` : ''}</div>
+        ${bought ? '' : `<div class="by-a">
+          <button data-by="buy" data-i="${i}" class="b ${armB ? 'arm' : ''}" ${r.busy ? 'disabled' : ''}>${armB ? 'Sicher?' : 'Kaufen'} <b>${fmt(r.bin)}</b><small class="${r.profBin == null ? '' : r.profBin >= 0 ? 'pos' : 'neg'}">${r.profBin == null ? '&nbsp;' : sign(r.profBin)}</small></button>
+          ${bidOk ? `<button data-by="bid" data-i="${i}" class="d ${armD ? 'arm' : ''} ${worthBid ? '' : 'no'}" ${r.busy ? 'disabled' : ''}>${armD ? 'Sicher?' : 'Bieten'} <b>${fmt(r.nb)}</b><small class="${r.profBid == null ? '' : r.profBid >= 0 ? 'pos' : 'neg'}">${r.profBid == null ? '&nbsp;' : worthBid ? sign(r.profBid) : 'lohnt nicht'}</small></button>` : ''}
+        </div>`}
+      </div>`;
+    }
+
+    function render() {
+      if (!box) return;
+      const g = typeof GUARD !== 'undefined' ? GUARD.level() : { level: 'green', text: '' };
+      let best = -1, bv = -Infinity;
+      st.rows.forEach((r, i) => { if (!r.done && r.profBin != null && r.profBin > bv && r.profBin > 0) { bv = r.profBin; best = i; } });
+      const coins = SBCUI.userCoins();
+      box.innerHTML = `<div class="by-top"><span class="by-g ${g.level}">${g.level === 'red' ? 'Pause empfohlen' : g.level === 'yellow' ? 'Langsamer suchen' : 'Sicher'}</span>
+          <span class="by-coins">${coins != null ? `${fmt(coins)} Münzen` : ''}</span></div>
+        ${st.rows.length ? `<div class="by-h"><b>${esc(st.label)}</b><span>${st.rows.length} Angebote · ${agoText(st.t)}</span></div>
+          <div class="by-list">${st.rows.map((r, i) => rowHtml(r, i, best)).join('')}</div>
+          <div class="by-note">Kaufen: ${settings.buyConfirm ? 'zweimal tippen (Sicherheit)' : 'ein Tipp'} · Bieten: ${settings.bidConfirm ? 'zweimal tippen' : 'ein Tipp, der Betrag steht auf dem Knopf'} · Gewinn = Marktpreis nach 5 % Steuer minus Preis</div>`
+        : `<div class="by-empty">${st.busy ? '' : 'Tippe auf <b>Suchen</b>. Das Tool nutzt deine Suche aus der Web App und zeigt die Angebote hier – mit Gewinn, Kaufen und Bieten.'}</div>`}
+        <div class="by-tg" data-el="bytg"></div>
+        <div class="by-bar">${st.msg ? `<div class="by-msg">${esc(st.msg)}</div>` : ''}
+          <button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}</button></div>`;
+      box.querySelector('[data-by="search"]').addEventListener('click', (e) => { e.stopPropagation(); search(); });
+      box.querySelectorAll('[data-by="buy"],[data-by="bid"]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); act(+b.dataset.i, b.dataset.by); }));
+      if (typeof TARGETS !== 'undefined') TARGETS.mount(box.querySelector('[data-el="bytg"]'));
+    }
+    function mount(el) { box = el; render(); }
+    return { mount, search, render };
+  })();
+
+  // ==================================================================
   // OBERFLÄCHE „Variante B“: kompakte Symbolleiste rechts, dichte Transferliste,
   // Übersicht mit Alarmen. Baut das vorhandene Panel um (alle Funktionen bleiben).
   // ==================================================================
@@ -5282,6 +5411,7 @@ const SBC = (function () {
       sand: '<path d="M6 2h12M6 22h12M7 2c0 6 10 6 10 10S7 16 7 22M17 2c0 6-10 6-10 10"/>',
       check: '<path d="M5 12l5 5 9-10"/>',
       chev: '<path d="M9 6l6 6-6 6"/>',
+      buy: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/><path d="M11 8v6M8 11h6"/>',
     };
     const svg = (k, s = 20) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[k]}</svg>`;
 
@@ -5344,6 +5474,35 @@ const SBC = (function () {
       .tr-det .fcpt-card{border:1px solid var(--line);border-left-width:1px;background:var(--bg2);border-radius:12px}
       .tr-det .c-top{display:none}
       .tr-det .c-stats{margin-top:0}
+      .fcpt-open #fcpt-bidbar{display:none !important}
+      .fcpt-buy{display:none;overflow:auto;flex:1;flex-direction:column;gap:10px;padding:12px 14px 0}
+      #fcpt-panel.v-buy .fcpt-buy{display:flex}
+      #fcpt-panel.v-buy .fcpt-list,#fcpt-panel.v-buy .fcpt-trade,#fcpt-panel.v-buy .fcpt-settings,#fcpt-panel.v-buy .fcpt-sum,#fcpt-panel.v-buy .fcpt-toolbar,#fcpt-panel.v-buy .fcpt-home{display:none !important}
+      .by-top{display:flex;justify-content:space-between;align-items:center}
+      .by-g{font:700 12px system-ui,sans-serif;padding:5px 10px;border-radius:14px;background:#10342a;color:#34d399}
+      .by-g.yellow{background:#3a2a12;color:#fb923c}.by-g.red{background:#3b1518;color:#f87171}
+      .by-coins{font-size:13px;color:var(--ink2);font-variant-numeric:tabular-nums}
+      .by-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.by-h b{font-size:16px}.by-h span{font-size:12px;color:var(--ink2)}
+      .by-list{display:flex;flex-direction:column;gap:8px}
+      .by-r{display:flex;align-items:center;gap:10px;background:#151c2e;border:1px solid #263049;border-radius:14px;padding:10px;font-variant-numeric:tabular-nums}
+      .by-r.best{border-color:var(--gold)}.by-r.won{opacity:.7}
+      .by-c{width:40px;height:48px;border-radius:9px;background:#3b3115;color:var(--gold);display:flex;flex-direction:column;align-items:center;justify-content:center;flex:none}
+      .by-c b{font-size:16px}.by-c small{font-size:10px;font-weight:700}
+      .by-n{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.by-n .nm{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .by-n small{font-size:11px;color:var(--ink2)}.by-n small.pos{color:#34d399}.by-n small.neg{color:#f87171}
+      .by-best{font-size:10px;font-weight:800;color:#15120a;background:var(--gold);padding:1px 6px;border-radius:8px;vertical-align:middle}
+      .by-a{display:flex;flex-direction:column;gap:6px;flex:none}
+      .by-a button{min-width:104px;min-height:44px;border-radius:12px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:600 12px system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 8px;cursor:pointer}
+      .by-a button b{font-size:15px}.by-a button small{font-size:11px;font-weight:700}.by-a small.pos{color:#34d399}.by-a small.neg{color:#f87171}
+      .by-a button.b{background:var(--gold);color:#15120a;border-color:var(--gold)}.by-a button.b small.pos{color:#0b5d3b}.by-a button.b small.neg{color:#8a1c1c}
+      .by-a button.arm{background:#f97316;border-color:#f97316;color:#fff;animation:fcptArm 1s infinite}.by-a button.arm small{color:#fff !important}
+      .by-a button.no{opacity:.6}
+      .by-note,.by-empty{font-size:12px;color:var(--ink2);line-height:1.45}.by-empty{padding:18px 4px;text-align:center;font-size:14px}
+      .by-bar{position:sticky;bottom:0;margin:auto -14px 0;padding:10px 14px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,#0b0f18 30%);display:flex;flex-direction:column;align-items:center;gap:8px}
+      .by-msg{font-size:13px;color:var(--ink);background:#151c2e;border:1px solid #263049;border-radius:12px;padding:8px 12px;text-align:center}
+      .by-go{width:100%;height:60px;border-radius:18px;border:0;background:var(--gold);color:#15120a;font:800 19px system-ui,sans-serif;cursor:pointer}
+      .by-go:disabled{opacity:.6}
+      @keyframes fcptArm{50%{filter:brightness(1.25)}}
       .fcpt-home{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}
       #fcpt-panel.v-home .fcpt-home{display:flex}
       #fcpt-panel.v-home .fcpt-list,#fcpt-panel.v-home .fcpt-trade,#fcpt-panel.v-home .fcpt-settings,#fcpt-panel.v-home .fcpt-sum,#fcpt-panel.v-home .fcpt-toolbar{display:none !important}
@@ -5438,6 +5597,7 @@ const SBC = (function () {
         .fcpt-body{border-right:0;min-height:0}
         .fcpt-rail{width:100%;flex-direction:row;justify-content:space-around;padding:6px 6px calc(8px + env(safe-area-inset-bottom));gap:0;border-top:1px solid #1c2538}
         .fcpt-rail .lg,.fcpt-rail .sp,.fcpt-rail [data-rail="mini"],.fcpt-rail button .tip{display:none}
+        .fcpt-rail button{width:44px}
         .tr-h,.tr-row{grid-template-columns:28px minmax(0,1fr) 62px 62px 58px;gap:6px;padding:0 10px}
         #fcpt-btn{width:48px;height:48px;right:12px;bottom:88px}
       }
@@ -5450,11 +5610,15 @@ const SBC = (function () {
     const home = document.createElement('div');
     home.className = 'fcpt-home';
     body.appendChild(home);
+    const buyEl = document.createElement('div');
+    buyEl.className = 'fcpt-buy';
+    body.appendChild(buyEl);
+    BUY.mount(buyEl);
     const rail = document.createElement('nav');
     rail.className = 'fcpt-rail';
     rail.setAttribute('aria-label', 'Bereiche');
     const R = [
-      ['home', 'home', 'Übersicht'], ['list', 'list', 'Transferliste'], ['trade:markt', 'market', 'Markt & Prognose'],
+      ['home', 'home', 'Übersicht'], ['list', 'list', 'Transferliste'], ['buy', 'buy', 'Kaufen & Bieten'], ['trade:markt', 'market', 'Markt & Prognose'],
       ['trade:verein', 'club', 'Verein & Futter'], ['hist', 'hist', 'Historie & Statistik'], ['sbc', 'sbc', 'SBC-Solver'],
     ];
     rail.innerHTML = `<div class="lg" aria-hidden="true">FC</div>` +
@@ -5477,7 +5641,7 @@ const SBC = (function () {
     qs.className = 'fcpt-qs';
     const head = panel.querySelector('.fcpt-head');
     head.insertBefore(qs, head.querySelector('.fcpt-tabs'));
-    const TITLES = { home: 'Übersicht', list: 'Transferliste', 'trade:markt': 'Markt', 'trade:verein': 'Verein', hist: 'Historie', settings: 'Einstellungen' };
+    const TITLES = { buy: 'Kaufen & Bieten', home: 'Übersicht', list: 'Transferliste', 'trade:markt': 'Markt', 'trade:verein': 'Verein', hist: 'Historie', settings: 'Einstellungen' };
 
     let cur = 'list';
     function markRail(k) {
@@ -5503,6 +5667,14 @@ const SBC = (function () {
         return;
       }
       cur = k;
+      panel.classList.remove('v-buy');
+      if (k === 'buy') {
+        panel.classList.remove('v-settings', 'v-hist', 'v-trade', 'v-home');
+        panel.classList.add('v-buy');
+        view = 'buy';
+        markRail(k); BUY.render();
+        return;
+      }
       if (k === 'home') {
         panel.classList.remove('v-settings', 'v-hist', 'v-trade');
         panel.classList.add('v-home');
@@ -5681,6 +5853,7 @@ const SBC = (function () {
     const syncBtns = () => {
       const o = panel.classList.contains('open');
       btn.style.display = o ? 'none' : '';
+      document.documentElement.classList.toggle('fcpt-open', o);
       const sb = document.getElementById('fcpt-sbcbtn');
       if (sb) sb.style.visibility = o ? 'hidden' : '';
     };

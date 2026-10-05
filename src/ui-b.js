@@ -25,6 +25,7 @@
       sand: '<path d="M6 2h12M6 22h12M7 2c0 6 10 6 10 10S7 16 7 22M17 2c0 6-10 6-10 10"/>',
       check: '<path d="M5 12l5 5 9-10"/>',
       chev: '<path d="M9 6l6 6-6 6"/>',
+      buy: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/><path d="M11 8v6M8 11h6"/>',
     };
     const svg = (k, s = 20) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[k]}</svg>`;
 
@@ -87,6 +88,35 @@
       .tr-det .fcpt-card{border:1px solid var(--line);border-left-width:1px;background:var(--bg2);border-radius:12px}
       .tr-det .c-top{display:none}
       .tr-det .c-stats{margin-top:0}
+      .fcpt-open #fcpt-bidbar{display:none !important}
+      .fcpt-buy{display:none;overflow:auto;flex:1;flex-direction:column;gap:10px;padding:12px 14px 0}
+      #fcpt-panel.v-buy .fcpt-buy{display:flex}
+      #fcpt-panel.v-buy .fcpt-list,#fcpt-panel.v-buy .fcpt-trade,#fcpt-panel.v-buy .fcpt-settings,#fcpt-panel.v-buy .fcpt-sum,#fcpt-panel.v-buy .fcpt-toolbar,#fcpt-panel.v-buy .fcpt-home{display:none !important}
+      .by-top{display:flex;justify-content:space-between;align-items:center}
+      .by-g{font:700 12px system-ui,sans-serif;padding:5px 10px;border-radius:14px;background:#10342a;color:#34d399}
+      .by-g.yellow{background:#3a2a12;color:#fb923c}.by-g.red{background:#3b1518;color:#f87171}
+      .by-coins{font-size:13px;color:var(--ink2);font-variant-numeric:tabular-nums}
+      .by-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.by-h b{font-size:16px}.by-h span{font-size:12px;color:var(--ink2)}
+      .by-list{display:flex;flex-direction:column;gap:8px}
+      .by-r{display:flex;align-items:center;gap:10px;background:#151c2e;border:1px solid #263049;border-radius:14px;padding:10px;font-variant-numeric:tabular-nums}
+      .by-r.best{border-color:var(--gold)}.by-r.won{opacity:.7}
+      .by-c{width:40px;height:48px;border-radius:9px;background:#3b3115;color:var(--gold);display:flex;flex-direction:column;align-items:center;justify-content:center;flex:none}
+      .by-c b{font-size:16px}.by-c small{font-size:10px;font-weight:700}
+      .by-n{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.by-n .nm{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .by-n small{font-size:11px;color:var(--ink2)}.by-n small.pos{color:#34d399}.by-n small.neg{color:#f87171}
+      .by-best{font-size:10px;font-weight:800;color:#15120a;background:var(--gold);padding:1px 6px;border-radius:8px;vertical-align:middle}
+      .by-a{display:flex;flex-direction:column;gap:6px;flex:none}
+      .by-a button{min-width:104px;min-height:44px;border-radius:12px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:600 12px system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 8px;cursor:pointer}
+      .by-a button b{font-size:15px}.by-a button small{font-size:11px;font-weight:700}.by-a small.pos{color:#34d399}.by-a small.neg{color:#f87171}
+      .by-a button.b{background:var(--gold);color:#15120a;border-color:var(--gold)}.by-a button.b small.pos{color:#0b5d3b}.by-a button.b small.neg{color:#8a1c1c}
+      .by-a button.arm{background:#f97316;border-color:#f97316;color:#fff;animation:fcptArm 1s infinite}.by-a button.arm small{color:#fff !important}
+      .by-a button.no{opacity:.6}
+      .by-note,.by-empty{font-size:12px;color:var(--ink2);line-height:1.45}.by-empty{padding:18px 4px;text-align:center;font-size:14px}
+      .by-bar{position:sticky;bottom:0;margin:auto -14px 0;padding:10px 14px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,#0b0f18 30%);display:flex;flex-direction:column;align-items:center;gap:8px}
+      .by-msg{font-size:13px;color:var(--ink);background:#151c2e;border:1px solid #263049;border-radius:12px;padding:8px 12px;text-align:center}
+      .by-go{width:100%;height:60px;border-radius:18px;border:0;background:var(--gold);color:#15120a;font:800 19px system-ui,sans-serif;cursor:pointer}
+      .by-go:disabled{opacity:.6}
+      @keyframes fcptArm{50%{filter:brightness(1.25)}}
       .fcpt-home{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}
       #fcpt-panel.v-home .fcpt-home{display:flex}
       #fcpt-panel.v-home .fcpt-list,#fcpt-panel.v-home .fcpt-trade,#fcpt-panel.v-home .fcpt-settings,#fcpt-panel.v-home .fcpt-sum,#fcpt-panel.v-home .fcpt-toolbar{display:none !important}
@@ -181,6 +211,7 @@
         .fcpt-body{border-right:0;min-height:0}
         .fcpt-rail{width:100%;flex-direction:row;justify-content:space-around;padding:6px 6px calc(8px + env(safe-area-inset-bottom));gap:0;border-top:1px solid #1c2538}
         .fcpt-rail .lg,.fcpt-rail .sp,.fcpt-rail [data-rail="mini"],.fcpt-rail button .tip{display:none}
+        .fcpt-rail button{width:44px}
         .tr-h,.tr-row{grid-template-columns:28px minmax(0,1fr) 62px 62px 58px;gap:6px;padding:0 10px}
         #fcpt-btn{width:48px;height:48px;right:12px;bottom:88px}
       }
@@ -193,11 +224,15 @@
     const home = document.createElement('div');
     home.className = 'fcpt-home';
     body.appendChild(home);
+    const buyEl = document.createElement('div');
+    buyEl.className = 'fcpt-buy';
+    body.appendChild(buyEl);
+    BUY.mount(buyEl);
     const rail = document.createElement('nav');
     rail.className = 'fcpt-rail';
     rail.setAttribute('aria-label', 'Bereiche');
     const R = [
-      ['home', 'home', 'Übersicht'], ['list', 'list', 'Transferliste'], ['trade:markt', 'market', 'Markt & Prognose'],
+      ['home', 'home', 'Übersicht'], ['list', 'list', 'Transferliste'], ['buy', 'buy', 'Kaufen & Bieten'], ['trade:markt', 'market', 'Markt & Prognose'],
       ['trade:verein', 'club', 'Verein & Futter'], ['hist', 'hist', 'Historie & Statistik'], ['sbc', 'sbc', 'SBC-Solver'],
     ];
     rail.innerHTML = `<div class="lg" aria-hidden="true">FC</div>` +
@@ -220,7 +255,7 @@
     qs.className = 'fcpt-qs';
     const head = panel.querySelector('.fcpt-head');
     head.insertBefore(qs, head.querySelector('.fcpt-tabs'));
-    const TITLES = { home: 'Übersicht', list: 'Transferliste', 'trade:markt': 'Markt', 'trade:verein': 'Verein', hist: 'Historie', settings: 'Einstellungen' };
+    const TITLES = { buy: 'Kaufen & Bieten', home: 'Übersicht', list: 'Transferliste', 'trade:markt': 'Markt', 'trade:verein': 'Verein', hist: 'Historie', settings: 'Einstellungen' };
 
     let cur = 'list';
     function markRail(k) {
@@ -246,6 +281,14 @@
         return;
       }
       cur = k;
+      panel.classList.remove('v-buy');
+      if (k === 'buy') {
+        panel.classList.remove('v-settings', 'v-hist', 'v-trade', 'v-home');
+        panel.classList.add('v-buy');
+        view = 'buy';
+        markRail(k); BUY.render();
+        return;
+      }
       if (k === 'home') {
         panel.classList.remove('v-settings', 'v-hist', 'v-trade');
         panel.classList.add('v-home');
@@ -424,6 +467,7 @@
     const syncBtns = () => {
       const o = panel.classList.contains('open');
       btn.style.display = o ? 'none' : '';
+      document.documentElement.classList.toggle('fcpt-open', o);
       const sb = document.getElementById('fcpt-sbcbtn');
       if (sb) sb.style.visibility = o ? 'hidden' : '';
     };

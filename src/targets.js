@@ -66,7 +66,7 @@
       if (!box) return;
       const L = st.list || [];
       const cnt = (s) => L.filter((r) => r.status === s).length;
-      box.innerHTML = `<div class="fcpt-sgroup"><h4>🎯 Transferziele</h4>
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>🎯 Meine Gebote</h4>
         <div class="note" style="font-size:12px;color:var(--ink2)">Deine Gebote: wo du überboten wurdest und bis wohin Nachbieten noch Profit bringt (Futbin-Preis nach Steuer minus Mindest-Profit).</div>
         <div class="fcpt-set"><span>Mindest-Profit beim Weiterverkauf</span><input type="number" min="0" step="50" data-tg="min" value="${settings.tgMinProfit}"></div>
         <div class="fcpt-set"><span>Alle 20 Sek. aktualisieren<small>Nur solange dieser Bereich offen ist</small></span><input type="checkbox" class="fcpt-sw" data-tg="auto" ${settings.tgAuto ? 'checked' : ''}></div>
@@ -93,5 +93,5 @@
     }, 20000);
 
     function mount(el) { box = el; render(); }
-    return { mount };
+    return { mount, reload: () => load(true) };
   })();
