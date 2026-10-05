@@ -115,7 +115,7 @@
       #fcpt-panel .fcpt-sgroup{border-radius:12px;background:var(--bg2);border-color:var(--line)}
       #fcpt-panel .fcpt-sgroup h4{font-size:10.5px;letter-spacing:.08em;color:var(--ink3)}
       #fcpt-panel .fcpt-overview .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
-      .tr-cons{margin:6px 0;font-size:12px;color:var(--ink2)}.tr-cons button{margin-left:6px;padding:4px 8px;border-radius:8px;border:1px solid var(--line,#334);background:transparent;color:inherit}.tr-fix{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:10px;background:#0f1420;border:1px solid var(--line)}
+      .rl-box{display:flex;flex-direction:column;gap:4px;width:100%}.rl-r{display:flex;justify-content:space-between;gap:8px;font-size:12px}.rl-r small{color:var(--ink2)}.fcpt-listall button.rl{background:transparent;border:1px solid var(--line,#445);color:inherit}.tr-cons{margin:6px 0;font-size:12px;color:var(--ink2)}.tr-cons button{margin-left:6px;padding:4px 8px;border-radius:8px;border:1px solid var(--line,#334);background:transparent;color:inherit}.tr-fix{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:10px;background:#0f1420;border:1px solid var(--line)}
       .tr-fix .lb{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
       .tr-fix input{width:96px;background:var(--bg3);color:var(--ink);border:1px solid #2a3652;border-radius:8px;padding:6px 8px;font:13px 'JetBrains Mono',ui-monospace,monospace;text-align:right}
       .tr-fix button{height:32px;padding:0 10px;border-radius:8px;border:1px solid #2a3652;background:var(--bg3);color:var(--ink);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}
@@ -439,6 +439,10 @@
       if (settings.listAllowLoss === undefined) settings.listAllowLoss = false;
       // Festpreis unter „ohne Verlust“: 'be' = zum Ohne-Verlust-Preis einstellen, 'skip' = überspringen, 'allow' = trotzdem Festpreis
       if (settings.listLossMode === undefined) settings.listLossMode = settings.listAllowLoss ? 'allow' : 'be';
+      if (settings.relistMode === undefined) settings.relistMode = 'market';   // 'market' | 'cut' | 'same'
+      if (settings.relistCut === undefined) settings.relistCut = 1;            // Preisstufen günstiger
+      if (settings.relistFloor === undefined) settings.relistFloor = true;     // nie unter „ohne Verlust“
+      if (settings.relistUsePreset === undefined) settings.relistUsePreset = true;
       const DUR = [[3600, '1 Std.'], [10800, '3 Std.'], [21600, '6 Std.'], [43200, '12 Std.'], [86400, '1 Tag'], [259200, '3 Tage']];
       let running = false, stop = false, confirmN = 0;
       let group = null;   // resourceId der gewählten Kartenversion (nur gleiche Karten einstellen) oder 'all'
@@ -469,6 +473,36 @@
         }
         return { out, skipped };
       }
+      // ---------- Abgelaufene neu einstellen (mit Preisanpassung) ----------
+      let relistAsk = false;
+      const stepsDown = (v, n) => { let x = v; for (let i = 0; i < n; i++) x = Math.max(200, x - stepFor(x - 1)); return x; };
+      function relistPrice(p) {
+        const old = p.buyNow || null;
+        const ps = settings.relistUsePreset ? preset(p) : null;
+        let bin = null, src = '';
+        if (ps) { bin = ps.bin; src = 'Festpreis'; }
+        else if (settings.relistMode === 'market') {
+          const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
+          if (m) { bin = listSuggest(p, m).bin; src = 'Marktpreis'; }
+          else if (old) { bin = stepsDown(old, settings.relistCut); src = 'kein Marktpreis → günstiger'; }
+        } else if (settings.relistMode === 'cut' && old) { bin = stepsDown(old, settings.relistCut); src = `${settings.relistCut} Stufe(n) günstiger`; }
+        else if (old) { bin = old; src = 'gleicher Preis'; }
+        if (!bin) return null;
+        bin = roundPrice(bin);
+        let floored = false;
+        if (settings.relistFloor && p.bought && bin < breakEven(p.bought)) { bin = roundPrice(breakEven(p.bought)); if (bin < breakEven(p.bought)) bin += stepFor(bin); floored = true; }
+        return { bin, start: lowerStep(bin), src: floored ? 'ohne Verlust' : src, old, floored };
+      }
+      function relistCandidates() {
+        const out = [], none = [];
+        for (const p of items) {
+          if (!p.expired || p.sold || !p.__raw || FAV.has(p.itemId)) continue;
+          const pr = relistPrice(p);
+          if (pr) out.push({ p, pr }); else none.push(p);
+        }
+        return { out, none };
+      }
+
       function fixHtml(p) {
         if (p.sold) return '';
         const ps = preset(p);
@@ -503,16 +537,26 @@
         const { out, skipped } = candidates(group);
         const gName = group === 'all' ? 'alle Karten mit Festpreis' : (() => { const g = G.find((x) => x.k === String(group)); return g ? `${g.rating ?? ''} ${g.name}` : ''; })();
         if (running) { bar.innerHTML = `<span class="st">${esc(msg || 'Stelle ein …')}</span><button data-la="stop" class="stop">Stopp</button>`; return; }
+        const RL = relistCandidates();
+        if (relistAsk) {
+          if (!RL.out.length) { relistAsk = false; } else {
+            const prev = RL.out.slice(0, 6).map(({ p, pr }) => `<div class="rl-r"><span>${esc(p.rating ?? (p.isCons ? '🧪' : ''))} ${esc(p.name)}</span><span>${pr.old ? fmt(pr.old) + ' → ' : ''}<b>${fmt(pr.bin)}</b> <small>${esc(pr.src)}</small></span></div>`).join('');
+            const sumOld = RL.out.reduce((a, c) => a + (c.pr.old || 0), 0), sumNew = RL.out.reduce((a, c) => a + c.pr.bin, 0);
+            bar.innerHTML = `<div class="rl-box"><span class="st">${RL.out.length} abgelaufene Karte(n) für ${esc(DUR.find((d) => d[0] === settings.listDuration)?.[1] || '')} neu einstellen?${sumOld ? ` Summe ${fmt(sumOld)} → <b>${fmt(sumNew)}</b>` : ''}</span>${prev}${RL.out.length > 6 ? `<div class="rl-r"><small>… und ${RL.out.length - 6} weitere</small></div>` : ''}${RL.none.length ? `<div class="rl-r"><small>${RL.none.length} ohne Preis übersprungen</small></div>` : ''}<div><button data-la="rlyes" class="go">Ja, neu einstellen</button><button data-la="rlno">Nein</button></div></div>`;
+            return;
+          }
+        }
         if (confirmN) {
           const nr = out.filter((c) => c.raised).length;
           bar.innerHTML = `<span class="st">${confirmN}× ${esc(gName)} für ${esc(DUR.find((d) => d[0] === settings.listDuration)?.[1] || '')} einstellen?${nr ? ` (${nr}× zum Ohne-Verlust-Preis, weil teurer gekauft)` : ''}</span><button data-la="yes" class="go">Ja, einstellen</button><button data-la="no">Nein</button>`;
           return;
         }
         const sel = G.length ? `<select data-la="grp" aria-label="Welche Karten einstellen">${G.map((g) => `<option value="${g.k}" ${String(group) === g.k ? 'selected' : ''}>${g.n}× ${esc(g.rating ?? '')} ${esc(g.name)} · ${fmt(g.bin)}${g.raised ? ` (${g.raised}× höher, ohne Verlust)` : ''}</option>`).join('')}${G.length > 1 ? `<option value="all" ${group === 'all' ? 'selected' : ''}>Alle mit Festpreis (${G.reduce((a, g) => a + g.n, 0)})</option>` : ''}</select>` : '';
-        bar.innerHTML = `${sel}<button data-la="ask" class="go" ${out.length ? '' : 'disabled'} title="${skipped.length ? `${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“` : 'Stellt die gewählten gleichen Karten nacheinander ein'}">▶ Einstellen (${out.length})</button>${msg ? `<span class="st">${esc(msg)}</span>` : skipped.length ? `<span class="st">${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“ – in den Einstellungen änderbar</span>` : (G.length ? '' : '<span class="st">Festpreis in einer Zeile festlegen, dann hier einstellen</span>')}`;
+        const rlBtn = RL.out.length ? `<button data-la="rl" class="rl" title="Abgelaufene Karten mit angepasstem Preis neu einstellen">↻ Abgelaufene (${RL.out.length})</button>` : '';
+        bar.innerHTML = `${sel}${rlBtn}<button data-la="ask" class="go" ${out.length ? '' : 'disabled'} title="${skipped.length ? `${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“` : 'Stellt die gewählten gleichen Karten nacheinander ein'}">▶ Einstellen (${out.length})</button>${msg ? `<span class="st">${esc(msg)}</span>` : skipped.length ? `<span class="st">${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“ – in den Einstellungen änderbar</span>` : (G.length ? '' : '<span class="st">Festpreis in einer Zeile festlegen, dann hier einstellen</span>')}`;
       }
-      async function runAll() {
-        const { out } = candidates(group);
+      async function runAll(list) {
+        const out = list || candidates(group).out;
         const S = W.services && W.services.Item;
         if (!S || typeof S.list !== 'function') { drawBar('EA-Funktion zum Einstellen nicht gefunden'); return; }
         running = true; stop = false;
@@ -547,6 +591,9 @@
         if (a === 'ask') { confirmN = candidates(group).out.length; drawBar(); }
         if (a === 'no') { confirmN = 0; drawBar(); }
         if (a === 'yes') { confirmN = 0; runAll(); }
+        if (a === 'rl') { relistAsk = true; confirmN = 0; drawBar(); }
+        if (a === 'rlno') { relistAsk = false; drawBar(); }
+        if (a === 'rlyes') { relistAsk = false; runAll(relistCandidates().out); }
         if (a === 'stop') { stop = true; drawBar('Stoppe nach dieser Karte …'); }
       });
       panel.addEventListener('click', (e) => {
@@ -593,13 +640,21 @@
         box.innerHTML = `<h4>Alle einstellen</h4>
           <div class="fcpt-set"><span>Angebotsdauer</span><select data-lo="dur">${DUR.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
           <div class="fcpt-set"><span>Ohne Festpreis: Futbin-Vorschlag nehmen<small>Aus = nur Karten mit Festpreis werden eingestellt</small></span><input type="checkbox" class="fcpt-sw" data-lo="fb"></div>
-          <div class="fcpt-set"><span>Festpreis unter „ohne Verlust“<small>Wenn eine Karte teurer gekauft wurde als der Festpreis zurückbringt</small></span><select data-lo="loss"><option value="be">zum Ohne-Verlust-Preis einstellen</option><option value="skip">überspringen</option><option value="allow">trotzdem zum Festpreis</option></select></div>`;
+          <div class="fcpt-set"><span>Festpreis unter „ohne Verlust“<small>Wenn eine Karte teurer gekauft wurde als der Festpreis zurückbringt</small></span><select data-lo="loss"><option value="be">zum Ohne-Verlust-Preis einstellen</option><option value="skip">überspringen</option><option value="allow">trotzdem zum Festpreis</option></select></div>
+          <h4>↻ Abgelaufene neu einstellen</h4>
+          <div class="fcpt-set"><span>Neuer Preis<small>Für Karten ohne Festpreis</small></span><select data-lo="rlm"><option value="market">aktueller Marktpreis (Futbin)</option><option value="cut">letzter Preis, etwas günstiger</option><option value="same">letzter Preis</option></select></div>
+          <div class="fcpt-set"><span>Wie viel günstiger<small>In Preisstufen (z. B. 1 = 2.600 → 2.500)</small></span><input type="number" min="1" max="10" data-lo="rlc"></div>
+          <div class="fcpt-set"><span>Festpreis hat Vorrang</span><input type="checkbox" class="fcpt-sw" data-lo="rlp"></div>
+          <div class="fcpt-set"><span>Nie unter „ohne Verlust“<small>Teurer gekaufte Karten nicht mit Verlust einstellen</small></span><input type="checkbox" class="fcpt-sw" data-lo="rlf"></div>`;
         grp.appendChild(box);
         const d = box.querySelector('[data-lo="dur"]'), f = box.querySelector('[data-lo="fb"]'), l = box.querySelector('[data-lo="loss"]');
         d.value = String(settings.listDuration); f.checked = !!settings.listFallback; l.value = settings.listLossMode;
+        const rm = box.querySelector('[data-lo="rlm"]'), rc = box.querySelector('[data-lo="rlc"]'), rp = box.querySelector('[data-lo="rlp"]'), rf = box.querySelector('[data-lo="rlf"]');
+        rm.value = settings.relistMode; rc.value = settings.relistCut; rp.checked = !!settings.relistUsePreset; rf.checked = !!settings.relistFloor;
         box.addEventListener('change', (e) => {
           e.stopPropagation();
           settings.listDuration = parseInt(d.value, 10) || 3600; settings.listFallback = f.checked; settings.listLossMode = l.value;
+          settings.relistMode = rm.value; settings.relistCut = Math.max(1, Math.min(10, parseInt(rc.value, 10) || 1)); settings.relistUsePreset = rp.checked; settings.relistFloor = rf.checked;
           saveSettings(); drawBar();
         });
       }
