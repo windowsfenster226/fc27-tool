@@ -27,7 +27,7 @@
       CAP.urls.push(u.replace(/^.*\/ut\/game\/[^/]+/, ''));
       const setM = u.match(/\/sbs\/setId\/(\d+)\/challenges/);
       for (const c of findChallengeObjects(data)) { if (setM) c.__setId = +setM[1]; CAP.challenges.set(c.challengeId, c); }
-      const m = u.match(/\/sbs\/challenge\/(\d+)(\/squad)?$/);
+      const m = u.match(/\/sbs\/challenge\/(\d+)(\/[a-zA-Z]+)*$/);
       if (m) {
         CAP.currentId = +m[1]; CAP.currentAt = Date.now();
         if (data && data.squad) CAP.squads.set(+m[1], data.squad);
@@ -152,7 +152,21 @@
         const [o, d] = queue.shift();
         if (!o || typeof o !== 'object' || seen.has(o) || d > 9) continue;
         seen.add(o);
-        const chx = o._challenge || o._sbcChallenge || o._currentChallenge;
+        let chx = o._challenge || o._sbcChallenge || o._currentChallenge;
+        if (!chx) {
+          for (const k of Object.keys(o)) {
+            if (!/challenge|sbc/i.test(k)) continue;
+            let v; try { v = o[k]; } catch (e) { continue; }
+            if (isChallenge(v) || (v && typeof v === 'object' && Number(v.scoreRequirement) > 0 && v.id != null)) { chx = v; break; }
+          }
+        }
+        // weitere Controller (auch unter anderen Namen) mit durchsuchen
+        if (d < 9) for (const k of Object.keys(o)) {
+          if (kids.includes(k) || !/controller|view|presented|child|modal|overlay|navigation/i.test(k)) continue;
+          let v; try { v = o[k]; } catch (e) { continue; }
+          if (Array.isArray(v)) v.slice(0, 20).forEach((x) => { if (x && typeof x === 'object' && !x.nodeType) queue.push([x, d + 1]); });
+          else if (v && typeof v === 'object' && !v.nodeType) queue.push([v, d + 1]);
+        }
         if (chx && (o._squad || chx.squad)) return { controller: o, challenge: chx, squad: o._squad || chx.squad, via: 'walk' };
         if (chx && !noSquad && isChallenge(chx)) noSquad = { controller: o, challenge: chx, squad: null, via: 'walk-oneclick' };
         for (const k of kids) {
@@ -870,6 +884,46 @@
       }
     }
 
+    // Wo steckt die geöffnete Aufgabe? (für die Diagnose)
+    function sbcProbe() {
+      const out = { walk: [], repo: null };
+      try {
+        const root = W.getAppMain && W.getAppMain().getRootViewController();
+        const seen = new Set(); const q = [[root, 0, 'root']];
+        while (q.length && out.walk.length < 40) {
+          const [o, d, path] = q.shift();
+          if (!o || typeof o !== 'object' || seen.has(o) || d > 8) continue;
+          seen.add(o);
+          const name = (o.constructor && o.constructor.name) || '?';
+          const ck = Object.keys(o).filter((k) => /challenge|sbc|squad|score/i.test(k));
+          if (/controller/i.test(name) || ck.length) out.walk.push(`${path} ${name}${ck.length ? ' [' + ck.join(',') + ']' : ''}`);
+          for (const k of Object.keys(o)) {
+            if (!/controller|view|presented|child|modal|navigation|current/i.test(k)) continue;
+            let v; try { v = o[k]; } catch (e) { continue; }
+            if (Array.isArray(v)) v.slice(0, 10).forEach((x, i) => q.push([x, d + 1, `${path}.${k}[${i}]`]));
+            else if (v && typeof v === 'object' && !v.nodeType) q.push([v, d + 1, `${path}.${k}`]);
+          }
+          for (const g of ['getPresentedViewController', 'getCurrentViewController', 'getCurrentController']) {
+            if (typeof o[g] === 'function') { try { const v = o[g](); if (v) q.push([v, d + 1, `${path}.${g}()`]); } catch (e) { /* */ } }
+          }
+        }
+      } catch (e) { out.walkErr = String(e); }
+      try {
+        const repo = W.services.SBC.repository;
+        const found = [];
+        const seen = new Set();
+        const scan = (o, d) => {
+          if (!o || typeof o !== 'object' || seen.has(o) || d > 5 || found.length > 15) return;
+          seen.add(o);
+          if (Number(o.scoreRequirement) > 0 || (o.type && /ONE_CLICK/i.test(String(o.type)))) found.push({ id: o.id, name: o.name, type: o.type, status: o.status, req: o.scoreRequirement, sub: o.submittedScore, keys: Object.keys(o).slice(0, 25) });
+          const vals = o instanceof Map || o instanceof Set ? [...o.values()] : Object.values(o);
+          vals.slice(0, 400).forEach((v) => scan(v, d + 1));
+        };
+        scan(repo, 0);
+        out.repo = found;
+      } catch (e) { out.repoErr = String(e); }
+      return out;
+    }
     function diagnose() {
       const ctx = findSbcContext();
       const sl = ctx ? slotList(ctx.squad || (ctx.challenge && ctx.challenge.squad)) : [];
@@ -904,6 +958,7 @@
           };
         })(),
         lastApplyError,
+        sbcProbe: (() => { try { return sbcProbe(); } catch (e) { return String(e); } })(),
         buy: (() => { try { return BUY.diag(); } catch (e) { return String(e); } })(),
         evo: (() => { try { return EVO.diag(); } catch (e) { return String(e); } })(),
         newItems: (() => { try { return NEWITEMS.diag(); } catch (e) { return String(e); } })(),
@@ -980,6 +1035,6 @@
         return { formation: f ? String(f) : null, ids };
       } catch (e) { return null; }
     }
-    return { applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    return { diagnose, applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 

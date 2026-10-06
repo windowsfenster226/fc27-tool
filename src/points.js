@@ -254,6 +254,7 @@
         <div class="fcpt-set"><span>Futter kaufen einrechnen<small>Günstigste Karte je Rating laut Futbin</small></span><input type="checkbox" class="fcpt-sw" data-pt="buy" ${settings.ptsBuy ? 'checked' : ''}></div>
         ${d && d.v !== settings.ptsTarget ? `<button class="fcpt-smallbtn" data-pt="use">Erkanntes Ziel ${fmt(d.v)} übernehmen</button>` : ''}
         <button class="fcpt-bigbtn" data-pt="run" ${state.busy ? 'disabled' : ''}>💎 Günstigste Auswahl berechnen</button>
+        ${!d ? '<button class="fcpt-smallbtn" data-pt="diag" title="Kopiert Infos, damit Claude die SBC-Erkennung anpassen kann">📋 Diagnose kopieren (SBC nicht erkannt)</button>' : ''}
         ${state.msg ? `<div class="fcpt-stand">${esc(state.msg)}</div>` : ''}
         ${resHtml()}
         ${cheapHtml()}
@@ -268,6 +269,7 @@
       on('[data-pt="no"]', 'click', () => { state.confirm = false; render(); });
       on('[data-pt="yes"]', 'click', () => submit());
       on('[data-pt="place"]', 'click', () => place());
+      on('[data-pt="diag"]', 'click', () => { try { SBCUI.diagnose(); showToast('📋 Diagnose kopiert – im Chat einfügen'); } catch (e) { showToast('Diagnose fehlgeschlagen: ' + e.message, true); } });
     }
 
     // Welches Rating ist gerade das günstigste Futter pro Punkt?
