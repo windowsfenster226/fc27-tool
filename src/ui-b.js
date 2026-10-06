@@ -93,6 +93,7 @@
       .by-keys{font-size:11px;color:var(--ink3)}
       .by-opts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink2);align-items:center}
       .by-opts label{display:flex;align-items:center;gap:5px;cursor:pointer}.by-opts input[type=number]{width:70px;padding:3px 6px;border-radius:6px;border:1px solid #2b3654;background:#0f1526;color:var(--ink)}
+      .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
       .by-mode{font-size:12px;color:var(--ink2);background:#151c2e;border:1px solid #263049;border-radius:10px;padding:7px 10px}.by-mode.on{color:#fde68a;border-color:#a16207;background:#2a2412}
       .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
       .by-max{border:1px dashed #3a4562;background:transparent;color:var(--ink);border-radius:10px;padding:8px 10px;font:600 12px system-ui,sans-serif;cursor:pointer;text-align:left}

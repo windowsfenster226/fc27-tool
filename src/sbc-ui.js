@@ -445,6 +445,20 @@
       return true;
     }
 
+    // Liste von Karten in die geöffnete SBC setzen (Punkte-SBC ohne Positionen: der Reihe nach)
+    async function applyPlayers(players) {
+      const info = readChallenge();
+      const ctx = findSbcContext();
+      const squad = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
+      if (!squad) throw new Error('SBC-Aufstellung nicht gefunden – öffne die Aufgabe in der Web App.');
+      const slots = slotList(squad);
+      if (!slots.length) throw new Error('Die SBC hat keine Plätze zum Einsetzen.');
+      if (players.length > slots.length) throw new Error(`Die SBC hat nur ${slots.length} Plätze, ausgewählt sind ${players.length} Karten.`);
+      const missing = players.filter((p) => !entOf(p.id));
+      if (missing.length) throw new Error('Einige Karten sind nicht mehr im Verein – bitte neu berechnen.');
+      return apply(info, { players: slots.map((s, i) => players[i] || null) });
+    }
+
     // ---------- 6) Oberfläche ----------
     if (settings.sbcSpecials === undefined) settings.sbcSpecials = false;
     if (settings.sbcMaxRating === undefined) settings.sbcMaxRating = 0;
@@ -954,6 +968,6 @@
         return { formation: f ? String(f) : null, ids };
       } catch (e) { return null; }
     }
-    return { activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    return { applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 

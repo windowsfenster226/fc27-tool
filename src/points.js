@@ -155,17 +155,46 @@
     }
 
     // ---------- Abgeben (nur auf deinen Klick + Bestätigung) ----------
-    function submitHtml(r) {
-      if (!r.oneClick || !r.used.length) return r.used.length ? '<div class="pt-note">Karten in der SBC selbst auswählen und abgeben.</div>' : '';
+    // Welche Abgabe-Art ist gerade möglich? (wird bei jedem Zeichnen neu geprüft)
+    function submitMode(r) {
       const cur = detectTarget();
-      if (!cur || cur.id !== r.challengeId) return '<div class="pt-note">Öffne die passende SBC, um direkt abzugeben.</div>';
+      const ctx = SBCUI.findSbcContext();
+      const ch = ctx && ctx.challenge;
+      if (cur && cur.oneClick && W.services && W.services.SBC && typeof W.services.SBC.submitOneClickChallenge === 'function') {
+        r.challengeId = cur.id; r.oneClick = true;
+        return { mode: 'oneclick', cur };
+      }
+      if (ch && ctx.squad) return { mode: 'squad', cur, ch };
+      return { mode: 'none', cur };
+    }
+    function submitHtml(r) {
+      if (!r.used.length) return '';
+      const m = submitMode(r);
+      if (m.mode === 'none') {
+        return `<div class="pt-open"><b>Zum Einsetzen die SBC öffnen</b><span>Öffne in der Web App die Diamanten-SBC selbst (die Aufgabe mit der Punktzahl). Dann hier auf „Günstigste Auswahl berechnen“ tippen – danach erscheint der Knopf zum Einsetzen/Abgeben.</span></div>`;
+      }
+      if (m.mode === 'squad') {
+        return `<button class="fcpt-bigbtn" data-pt="place" ${state.busy ? 'disabled' : ''}>🧩 ${r.used.length} Karte(n) in die SBC setzen</button>
+          <div class="pt-note">Setzt die Karten in die geöffnete SBC. Abgeben/Einreichen machst du danach selbst in der Web App.</div>`;
+      }
       if (state.confirm) {
         return `<div class="pt-confirm"><b>${r.used.length} Karte(n) mit ${fmt(r.ownPts)} 💎 abgeben?</b>
           <span>Wert zusammen ≈ ${fmt(Math.round(r.own))} Münzen${r.used.some((x) => !x.p.untradeable) ? ' · enthält handelbare Karten' : ''}. Die Karten sind danach weg – das lässt sich nicht rückgängig machen.</span>
           <div class="btns2"><button class="fcpt-smallbtn go" data-pt="yes">Ja, abgeben</button><button class="fcpt-smallbtn" data-pt="no">Abbrechen</button></div></div>`;
       }
       return `<button class="fcpt-bigbtn" data-pt="submit" ${state.busy ? 'disabled' : ''}>💎 Diese ${r.used.length} Karte(n) abgeben (${fmt(r.ownPts)} Punkte)</button>
+        ${m.cur && m.cur.v && r.ownPts < m.cur.v ? `<div class="pt-note">Das sind ${fmt(r.ownPts)} von noch ${fmt(m.cur.v)} Punkten – Teilabgabe.</div>` : ''}
         ${r.bought.length ? '<div class="pt-note">Die Kauf-Karten fehlen noch – erst kaufen, dann neu berechnen. Du kannst die eigenen Karten aber schon jetzt abgeben (Teilabgabe).</div>' : ''}`;
+    }
+    async function place() {
+      const r = state.res;
+      if (!r) return;
+      state.busy = true; state.msg = 'Setze Karten ein …'; render();
+      try {
+        await SBCUI.applyPlayers(r.used.map((x) => x.p));
+        state.msg = `✓ ${r.used.length} Karte(n) eingesetzt – jetzt in der Web App prüfen und einreichen.`;
+        showToast('🧩 Karten eingesetzt');
+      } catch (e) { state.msg = 'Fehler: ' + e.message; } finally { state.busy = false; render(); }
     }
     const obs = (o, ms = 15000) => new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error('Zeitüberschreitung')), ms);
@@ -183,7 +212,7 @@
       const ctx = SBCUI.findSbcContext();
       const ch = ctx && ctx.challenge;
       const S = W.services && W.services.SBC;
-      if (!ch || ch.id !== r.challengeId || !S || typeof S.submitOneClickChallenge !== 'function') { state.msg = 'SBC nicht gefunden – Aufgabe neu öffnen.'; render(); return; }
+      if (!ch || (r.challengeId != null && ch.id !== r.challengeId) || !S || typeof S.submitOneClickChallenge !== 'function') { state.msg = 'Die Diamanten-SBC ist in der Web App nicht geöffnet – bitte die Aufgabe öffnen und erneut tippen.'; render(); return; }
       const ents = r.used.map((x) => state.club && state.club.ents.get(x.p.id)).filter(Boolean);
       if (ents.length !== r.used.length) { state.msg = 'Karten nicht mehr gefunden – bitte neu berechnen.'; render(); return; }
       state.busy = true; state.msg = 'Gebe ab …'; render();
@@ -238,6 +267,7 @@
       on('[data-pt="submit"]', 'click', () => { state.confirm = true; render(); });
       on('[data-pt="no"]', 'click', () => { state.confirm = false; render(); });
       on('[data-pt="yes"]', 'click', () => submit());
+      on('[data-pt="place"]', 'click', () => place());
     }
 
     // Welches Rating ist gerade das günstigste Futter pro Punkt?

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.30.0
+// @version      2.30.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -2621,6 +2621,20 @@ const SBC = (function () {
       return true;
     }
 
+    // Liste von Karten in die geöffnete SBC setzen (Punkte-SBC ohne Positionen: der Reihe nach)
+    async function applyPlayers(players) {
+      const info = readChallenge();
+      const ctx = findSbcContext();
+      const squad = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
+      if (!squad) throw new Error('SBC-Aufstellung nicht gefunden – öffne die Aufgabe in der Web App.');
+      const slots = slotList(squad);
+      if (!slots.length) throw new Error('Die SBC hat keine Plätze zum Einsetzen.');
+      if (players.length > slots.length) throw new Error(`Die SBC hat nur ${slots.length} Plätze, ausgewählt sind ${players.length} Karten.`);
+      const missing = players.filter((p) => !entOf(p.id));
+      if (missing.length) throw new Error('Einige Karten sind nicht mehr im Verein – bitte neu berechnen.');
+      return apply(info, { players: slots.map((s, i) => players[i] || null) });
+    }
+
     // ---------- 6) Oberfläche ----------
     if (settings.sbcSpecials === undefined) settings.sbcSpecials = false;
     if (settings.sbcMaxRating === undefined) settings.sbcMaxRating = 0;
@@ -3130,7 +3144,7 @@ const SBC = (function () {
         return { formation: f ? String(f) : null, ids };
       } catch (e) { return null; }
     }
-    return { activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    return { applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 
 
@@ -4227,17 +4241,46 @@ const SBC = (function () {
     }
 
     // ---------- Abgeben (nur auf deinen Klick + Bestätigung) ----------
-    function submitHtml(r) {
-      if (!r.oneClick || !r.used.length) return r.used.length ? '<div class="pt-note">Karten in der SBC selbst auswählen und abgeben.</div>' : '';
+    // Welche Abgabe-Art ist gerade möglich? (wird bei jedem Zeichnen neu geprüft)
+    function submitMode(r) {
       const cur = detectTarget();
-      if (!cur || cur.id !== r.challengeId) return '<div class="pt-note">Öffne die passende SBC, um direkt abzugeben.</div>';
+      const ctx = SBCUI.findSbcContext();
+      const ch = ctx && ctx.challenge;
+      if (cur && cur.oneClick && W.services && W.services.SBC && typeof W.services.SBC.submitOneClickChallenge === 'function') {
+        r.challengeId = cur.id; r.oneClick = true;
+        return { mode: 'oneclick', cur };
+      }
+      if (ch && ctx.squad) return { mode: 'squad', cur, ch };
+      return { mode: 'none', cur };
+    }
+    function submitHtml(r) {
+      if (!r.used.length) return '';
+      const m = submitMode(r);
+      if (m.mode === 'none') {
+        return `<div class="pt-open"><b>Zum Einsetzen die SBC öffnen</b><span>Öffne in der Web App die Diamanten-SBC selbst (die Aufgabe mit der Punktzahl). Dann hier auf „Günstigste Auswahl berechnen“ tippen – danach erscheint der Knopf zum Einsetzen/Abgeben.</span></div>`;
+      }
+      if (m.mode === 'squad') {
+        return `<button class="fcpt-bigbtn" data-pt="place" ${state.busy ? 'disabled' : ''}>🧩 ${r.used.length} Karte(n) in die SBC setzen</button>
+          <div class="pt-note">Setzt die Karten in die geöffnete SBC. Abgeben/Einreichen machst du danach selbst in der Web App.</div>`;
+      }
       if (state.confirm) {
         return `<div class="pt-confirm"><b>${r.used.length} Karte(n) mit ${fmt(r.ownPts)} 💎 abgeben?</b>
           <span>Wert zusammen ≈ ${fmt(Math.round(r.own))} Münzen${r.used.some((x) => !x.p.untradeable) ? ' · enthält handelbare Karten' : ''}. Die Karten sind danach weg – das lässt sich nicht rückgängig machen.</span>
           <div class="btns2"><button class="fcpt-smallbtn go" data-pt="yes">Ja, abgeben</button><button class="fcpt-smallbtn" data-pt="no">Abbrechen</button></div></div>`;
       }
       return `<button class="fcpt-bigbtn" data-pt="submit" ${state.busy ? 'disabled' : ''}>💎 Diese ${r.used.length} Karte(n) abgeben (${fmt(r.ownPts)} Punkte)</button>
+        ${m.cur && m.cur.v && r.ownPts < m.cur.v ? `<div class="pt-note">Das sind ${fmt(r.ownPts)} von noch ${fmt(m.cur.v)} Punkten – Teilabgabe.</div>` : ''}
         ${r.bought.length ? '<div class="pt-note">Die Kauf-Karten fehlen noch – erst kaufen, dann neu berechnen. Du kannst die eigenen Karten aber schon jetzt abgeben (Teilabgabe).</div>' : ''}`;
+    }
+    async function place() {
+      const r = state.res;
+      if (!r) return;
+      state.busy = true; state.msg = 'Setze Karten ein …'; render();
+      try {
+        await SBCUI.applyPlayers(r.used.map((x) => x.p));
+        state.msg = `✓ ${r.used.length} Karte(n) eingesetzt – jetzt in der Web App prüfen und einreichen.`;
+        showToast('🧩 Karten eingesetzt');
+      } catch (e) { state.msg = 'Fehler: ' + e.message; } finally { state.busy = false; render(); }
     }
     const obs = (o, ms = 15000) => new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error('Zeitüberschreitung')), ms);
@@ -4255,7 +4298,7 @@ const SBC = (function () {
       const ctx = SBCUI.findSbcContext();
       const ch = ctx && ctx.challenge;
       const S = W.services && W.services.SBC;
-      if (!ch || ch.id !== r.challengeId || !S || typeof S.submitOneClickChallenge !== 'function') { state.msg = 'SBC nicht gefunden – Aufgabe neu öffnen.'; render(); return; }
+      if (!ch || (r.challengeId != null && ch.id !== r.challengeId) || !S || typeof S.submitOneClickChallenge !== 'function') { state.msg = 'Die Diamanten-SBC ist in der Web App nicht geöffnet – bitte die Aufgabe öffnen und erneut tippen.'; render(); return; }
       const ents = r.used.map((x) => state.club && state.club.ents.get(x.p.id)).filter(Boolean);
       if (ents.length !== r.used.length) { state.msg = 'Karten nicht mehr gefunden – bitte neu berechnen.'; render(); return; }
       state.busy = true; state.msg = 'Gebe ab …'; render();
@@ -4310,6 +4353,7 @@ const SBC = (function () {
       on('[data-pt="submit"]', 'click', () => { state.confirm = true; render(); });
       on('[data-pt="no"]', 'click', () => { state.confirm = false; render(); });
       on('[data-pt="yes"]', 'click', () => submit());
+      on('[data-pt="place"]', 'click', () => place());
     }
 
     // Welches Rating ist gerade das günstigste Futter pro Punkt?
@@ -5655,6 +5699,7 @@ const SBC = (function () {
       .by-keys{font-size:11px;color:var(--ink3)}
       .by-opts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink2);align-items:center}
       .by-opts label{display:flex;align-items:center;gap:5px;cursor:pointer}.by-opts input[type=number]{width:70px;padding:3px 6px;border-radius:6px;border:1px solid #2b3654;background:#0f1526;color:var(--ink)}
+      .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
       .by-mode{font-size:12px;color:var(--ink2);background:#151c2e;border:1px solid #263049;border-radius:10px;padding:7px 10px}.by-mode.on{color:#fde68a;border-color:#a16207;background:#2a2412}
       .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
       .by-max{border:1px dashed #3a4562;background:transparent;color:var(--ink);border-radius:10px;padding:8px 10px;font:600 12px system-ui,sans-serif;cursor:pointer;text-align:left}
