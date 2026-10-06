@@ -180,12 +180,12 @@
     queues[key] = run.catch(() => {}).then(() => sleep(CONFIG.requestDelayMs + Math.random() * 400));
     return run;
   }
-  function getPrice(key, p) {
+  function getPrice(key, p, queueKey) {
     const ck = `${key}:${settings.platform}:${p.resourceId}`;
     const cached = cacheGet(ck);
     if (cached !== undefined) return Promise.resolve(cached);
     if (inflight[ck]) return inflight[ck];
-    const pr = enqueue(key, () => SOURCES[key].price(p))
+    const pr = enqueue(queueKey || key, () => SOURCES[key].price(p))
       .then((v) => { cacheSet(ck, v); return v; })
       .finally(() => { delete inflight[ck]; });
     inflight[ck] = pr;

@@ -91,6 +91,12 @@
       .by-r.sel{outline:2px solid var(--blue);outline-offset:1px}
       #fcpt-panel kbd{display:inline-block;min-width:16px;padding:0 4px;margin-left:5px;border-radius:4px;border:1px solid currentColor;font:600 10px ui-monospace,monospace;opacity:.7;vertical-align:1px}
       .by-keys{font-size:11px;color:var(--ink3)}
+      .by-opts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink2);align-items:center}
+      .by-opts label{display:flex;align-items:center;gap:5px;cursor:pointer}.by-opts input[type=number]{width:70px;padding:3px 6px;border-radius:6px;border:1px solid #2b3654;background:#0f1526;color:var(--ink)}
+      .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
+      .by-max{border:1px dashed #3a4562;background:transparent;color:var(--ink);border-radius:10px;padding:8px 10px;font:600 12px system-ui,sans-serif;cursor:pointer;text-align:left}
+      .by-max b{color:var(--gold)}
+      .by-ready{background:#3a2a12;border:1px solid #f97316;color:#fed7aa;border-radius:10px;padding:8px 10px;font-size:13px}
       .by-a .l{white-space:nowrap}.by-keys kbd{margin:0 1px}
       .fcpt-resize{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:ew-resize;z-index:3}
       .fcpt-resize:hover,.fcpt-resize.on{background:linear-gradient(90deg,transparent 3px,var(--gold) 3px,var(--gold) 5px,transparent 5px)}
