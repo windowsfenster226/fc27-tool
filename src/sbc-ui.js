@@ -100,7 +100,7 @@
       obs.observe(sub, (o, ev) => { clearTimeout(t); try { o && o.unobserve && o.unobserve(sub); } catch (e) { /* */ } resolve(ev || {}); });
     });
 
-    const isChallenge = (o) => !!o && typeof o === 'object' && ((W.UTSBCChallengeEntity && o instanceof W.UTSBCChallengeEntity) || ('elgReq' in o && 'squad' in o));
+    const isChallenge = (o) => !!o && typeof o === 'object' && ((W.UTSBCChallengeEntity && o instanceof W.UTSBCChallengeEntity) || ('elgReq' in o && ('squad' in o || 'scoreRequirement' in o)));
     const isSquad = (o) => !!o && typeof o === 'object' && ((W.UTSquadEntity && o instanceof W.UTSquadEntity) || (typeof o.getPlayers === 'function' && 'formation' in o));
 
     function scanFor(obj, depth, want, seen = new Set()) {
@@ -144,6 +144,7 @@
       if (!root) return null;
       const seen = new Set();
       const queue = [[root, 0]];
+      let noSquad = null;   // Diamanten-SBC (One-Click) hat keine Aufstellung
       const kids = ['_leftController', '_rightController', '_currentController', '_childViewControllers', '_viewControllers',
         '_presentedViewController', '_navigationController', '_rootController', '_controllers', '_tabController'];
       const getters = ['getPresentedViewController', 'getCurrentViewController', 'getCurrentController'];
@@ -151,7 +152,9 @@
         const [o, d] = queue.shift();
         if (!o || typeof o !== 'object' || seen.has(o) || d > 9) continue;
         seen.add(o);
-        if (o._challenge && (o._squad || o._challenge.squad)) return { controller: o, challenge: o._challenge, squad: o._squad || o._challenge.squad, via: 'walk' };
+        const chx = o._challenge || o._sbcChallenge || o._currentChallenge;
+        if (chx && (o._squad || chx.squad)) return { controller: o, challenge: chx, squad: o._squad || chx.squad, via: 'walk' };
+        if (chx && !noSquad && isChallenge(chx)) noSquad = { controller: o, challenge: chx, squad: null, via: 'walk-oneclick' };
         for (const k of kids) {
           const v = o[k];
           if (Array.isArray(v)) v.forEach((x) => queue.push([x, d + 1]));
@@ -161,7 +164,7 @@
           if (typeof o[g] === 'function') { try { const v = o[g](); if (v) queue.push([v, d + 1]); } catch (e) { /* */ } }
         }
       }
-      return null;
+      return noSquad;
     }
 
     function slotList(squad) {
@@ -947,9 +950,18 @@
     });
 
     // Button nur auf SBC-Aufgaben zeigen
+    let visTick = 0;
     setInterval(() => {
       let on = false;
       on = CAP.currentId != null && Date.now() - CAP.currentAt < 30 * 60000;
+      // Auch ohne Netzwerk-Mitschnitt (z. B. Diamanten-SBC aus EAs Zwischenspeicher): geöffnete Aufgabe direkt suchen
+      if (!on || ++visTick % 4 === 0) {
+        try {
+          const w = findSbcContextWalk();
+          const id = w && w.challenge && (w.challenge.id ?? w.challenge.challengeId);
+          if (id != null) { CAP.currentId = id; CAP.currentAt = Date.now(); on = true; if (!CAP.challenges.has(id) && Array.isArray(w.challenge.elgReq)) CAP.challenges.set(id, w.challenge); }
+        } catch (e) { /* */ }
+      }
       sbcBtn.classList.toggle('show', on || pane.classList.contains('open'));
     }, 1500);
 
