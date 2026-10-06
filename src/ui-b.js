@@ -131,6 +131,7 @@
       .by-msg{font-size:13px;color:var(--ink);background:#151c2e;border:1px solid #263049;border-radius:12px;padding:8px 12px;text-align:center}
       .by-go{width:100%;height:60px;border-radius:18px;border:0;background:var(--gold);color:#15120a;font:800 19px system-ui,sans-serif;cursor:pointer}
       .by-go:disabled{opacity:.6}
+      .by-go.buy{background:#f97316;color:#fff;animation:fcptArm 1s infinite}.by-go.buy small{font-size:14px;opacity:.9}
       @keyframes fcptArm{50%{filter:brightness(1.25)}}
       @media (min-width:701px){.by-a{flex-direction:row}.by-a button{min-width:112px}.by-r{padding:8px 10px}}
       .fcpt-home{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}

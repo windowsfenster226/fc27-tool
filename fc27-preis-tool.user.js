@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.29.0
+// @version      2.30.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5267,6 +5267,7 @@ const SBC = (function () {
     if (settings.bidConfirm === undefined) settings.bidConfirm = false;  // Bieten: ein Tipp (Betrag steht drauf)
     if (settings.snipeArm === undefined) settings.snipeArm = true;       // bester Deal nach der Suche sofort kaufbereit (1× K)
     if (settings.snipeSound === undefined) settings.snipeSound = true;   // Ton bei lohnendem Treffer
+    if (settings.snipeOneKey === undefined) settings.snipeOneKey = true;  // Leertaste: suchen – bei bereitem Deal kaufen
     if (settings.snipeMinProfit === undefined) settings.snipeMinProfit = 200;
     let box = null;
     const st = { rows: [], msg: '', busy: false, t: 0, arm: null, armT: 0, armMs: 4000, label: '', sel: 0, lastSearch: 0,
@@ -5282,6 +5283,14 @@ const SBC = (function () {
         o.frequency.setValueAtTime(1320, actx.currentTime + 0.08);
         o.stop(actx.currentTime + 0.18);
       } catch (e) { /* */ }
+    }
+    // Ist gerade ein Deal kaufbereit, der mit derselben Taste gekauft werden darf?
+    // (kurze Sperre, damit ein schon „unterwegs“ gedrückter Tastendruck nicht ungesehen kauft)
+    const readyBuy = () => settings.snipeOneKey && st.arm && st.arm.startsWith('buy:') && st.armMs > 4000
+      && Date.now() - st.armT > 350 && Date.now() - st.armT < st.armMs;
+    function mainAction() {
+      if (readyBuy()) act(+st.arm.split(':')[1], 'buy');
+      else if (!(settings.snipeOneKey && st.arm && st.armMs > 4000 && Date.now() - st.armT <= 350)) search();
     }
     // ---------- TURBO: EAs eigene Marktsuche direkt aufrufen (ohne Seitenwechsel) ----------
     // Die Suchkriterien übernimmt das Tool, sobald du in der Web App einmal normal suchst.
@@ -5493,6 +5502,7 @@ const SBC = (function () {
           <span class="by-coins">${coins != null ? `${fmt(coins)} Münzen` : ''}</span></div>
         <div class="by-opts">
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
+          <label title="Leertaste sucht – ist ein Deal bereit, kauft dieselbe Taste ihn"><input type="checkbox" data-bo="one" ${settings.snipeOneKey ? 'checked' : ''}> 1-Tasten-Modus</label>
           <label title="Sucht direkt über EAs Schnittstelle statt über die Seite – deutlich schneller"><input type="checkbox" data-bo="turbo" ${settings.snipeTurbo ? 'checked' : ''}> Turbo</label>
           <label title="Kurzer Ton, wenn ein lohnender Deal gefunden wurde"><input type="checkbox" data-bo="snd" ${settings.snipeSound ? 'checked' : ''}> Ton</label>
           <label title="Ab diesem Gewinn (nach Steuer) gilt ein Angebot als lohnend">ab <input type="number" min="0" step="50" data-bo="min" value="${settings.snipeMinProfit}"> Gewinn</label>
@@ -5500,25 +5510,30 @@ const SBC = (function () {
         <div class="by-mode ${settings.snipeTurbo && TC.crit ? 'on' : ''}">${settings.snipeTurbo ? (TC.crit ? `⚡ Turbo aktiv – sucht direkt bei EA, ohne Seitenwechsel${critMaxBuy() ? ` · Max. SK ${fmt(critMaxBuy())}` : ''}${st.lastMs ? ` · letzte Suche ${st.lastMs} ms` : ''}` : '⚡ Turbo: einmal in der Web App normal auf „Suchen“ klicken – danach übernimmt das Tool die Suche direkt.') : 'Normaler Modus (über die Web-App-Seite)'}</div>
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
-        ${st.arm && st.armMs > 4000 ? `<div class="by-ready">Bester Deal bereit – <b>K</b>, <b>Enter</b> oder Klick kauft ihn. <b>Esc</b> = nicht kaufen.</div>` : ''}
+        ${st.arm && st.armMs > 4000 ? `<div class="by-ready">Bester Deal bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder K)' : '<b>K</b>, <b>Enter</b> oder Klick'} kauft ihn. <b>Esc</b> = nicht kaufen.</div>` : ''}
         ${st.rows.length ? `<div class="by-h"><b>${esc(st.label)}</b><span>${st.rows.length} Angebote · ${agoText(st.t)}</span></div>
           <div class="by-list">${st.rows.map((r, i) => rowHtml(r, i, best)).join('')}</div>
           <div class="by-note">Kaufen: ${settings.buyConfirm ? (settings.snipeArm ? `bester Deal ab +${fmt(settings.snipeMinProfit)} ist sofort bereit (1×), sonst zweimal tippen` : 'zweimal tippen (Sicherheit)') : 'ein Tipp'} · Bieten: ${settings.bidConfirm ? 'zweimal tippen' : 'ein Tipp, der Betrag steht auf dem Knopf'} · Gewinn = Marktpreis nach 5 % Steuer minus Preis</div>`
         : `<div class="by-empty">${st.busy ? '' : 'Tippe auf <b>Suchen</b>. Das Tool nutzt deine Suche aus der Web App und zeigt die Angebote hier – mit Gewinn, Kaufen und Bieten.'}</div>`}
         <div class="by-tg" data-el="bytg"></div>
         <div class="by-bar">${st.msg ? `<div class="by-msg">${esc(st.msg)}</div>` : ''}
-          <button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}${kb('Leertaste')}</button>${pc() ? `<div class="by-keys"><kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen${settings.snipeArm ? ' (bester Deal: 1×)' : ' (2×)'} · <kbd>B</kbd> Bieten · <kbd>Esc</kbd> Abbrechen</div>` : ''}</div>`;
+          ${(() => {
+            const ar = settings.snipeOneKey && st.arm && st.arm.startsWith('buy:') && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null;
+            return ar ? `<button class="by-go buy" data-by="search">KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}${kb('Leertaste')}</button>`
+              : `<button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}${kb('Leertaste')}</button>`;
+          })()}${pc() ? `<div class="by-keys">${settings.snipeOneKey ? '<b>Nur Leertaste:</b> suchen – bei Treffer nochmal = kaufen · ' : ''}<kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen${settings.snipeArm ? ' (bester Deal: 1×)' : ' (2×)'} · <kbd>B</kbd> Bieten · <kbd>Esc</kbd> Abbrechen</div>` : ''}</div>`;
       const mx = box.querySelector('[data-by="max"]');
       if (mx) mx.addEventListener('click', (e) => { e.stopPropagation(); setMaxBin(+mx.dataset.v); });
       box.querySelectorAll('[data-bo]').forEach((x) => x.addEventListener('change', (e) => {
         e.stopPropagation();
         if (x.dataset.bo === 'arm') settings.snipeArm = x.checked;
+        if (x.dataset.bo === 'one') { settings.snipeOneKey = x.checked; if (x.checked) settings.snipeArm = true; saveSettings(); render(); }
         if (x.dataset.bo === 'turbo') { settings.snipeTurbo = x.checked; saveSettings(); render(); }
         if (x.dataset.bo === 'snd') { settings.snipeSound = x.checked; if (x.checked) beep(); }
         if (x.dataset.bo === 'min') settings.snipeMinProfit = Math.max(0, parseInt(x.value, 10) || 0);
         saveSettings();
       }));
-      box.querySelector('[data-by="search"]').addEventListener('click', (e) => { e.stopPropagation(); search(); });
+      box.querySelector('[data-by="search"]').addEventListener('click', (e) => { e.stopPropagation(); mainAction(); });
       box.querySelectorAll('[data-row]').forEach((rw) => rw.addEventListener('mouseenter', () => { if (pc() && st.sel !== +rw.dataset.row) { st.sel = +rw.dataset.row; box.querySelectorAll('.by-r.sel').forEach((x) => x.classList.remove('sel')); rw.classList.add('sel'); } }));
       box.querySelectorAll('[data-by="buy"],[data-by="bid"]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); act(+b.dataset.i, b.dataset.by); }));
       if (typeof TARGETS !== 'undefined') TARGETS.mount(box.querySelector('[data-el="bytg"]'));
@@ -5531,7 +5546,8 @@ const SBC = (function () {
       if (a && (/^(input|textarea|select)$/i.test(a.tagName) || a.isContentEditable)) return;
       const k = ev.key;
       let done = true;
-      if (k === ' ' || k === 's' || k === 'S') { if (!ev.repeat) search(); }
+      if (k === ' ') { if (!ev.repeat) mainAction(); }
+      else if (k === 's' || k === 'S') { if (!ev.repeat) search(); }
       else if (k === 'ArrowDown' || k === 'ArrowUp') { if (st.rows.length) { st.sel = (st.sel + (k === 'ArrowDown' ? 1 : -1) + st.rows.length) % st.rows.length; st.arm = null; render(); const el = box.querySelector('.by-r.sel'); if (el) el.scrollIntoView({ block: 'nearest' }); } }
       else if (k === 'k' || k === 'K' || k === 'Enter') { if (!ev.repeat) act(st.sel, 'buy'); }
       else if (k === 'b' || k === 'B') { if (!ev.repeat) act(st.sel, 'bid'); }
@@ -5677,6 +5693,7 @@ const SBC = (function () {
       .by-msg{font-size:13px;color:var(--ink);background:#151c2e;border:1px solid #263049;border-radius:12px;padding:8px 12px;text-align:center}
       .by-go{width:100%;height:60px;border-radius:18px;border:0;background:var(--gold);color:#15120a;font:800 19px system-ui,sans-serif;cursor:pointer}
       .by-go:disabled{opacity:.6}
+      .by-go.buy{background:#f97316;color:#fff;animation:fcptArm 1s infinite}.by-go.buy small{font-size:14px;opacity:.9}
       @keyframes fcptArm{50%{filter:brightness(1.25)}}
       @media (min-width:701px){.by-a{flex-direction:row}.by-a button{min-width:112px}.by-r{padding:8px 10px}}
       .fcpt-home{display:none;overflow:auto;padding:12px 14px 90px;flex:1;flex-direction:column;gap:12px}
