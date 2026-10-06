@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.28.0
+// @version      2.29.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -3063,6 +3063,7 @@ const SBC = (function () {
           };
         })(),
         lastApplyError,
+        buy: (() => { try { return BUY.diag(); } catch (e) { return String(e); } })(),
         evo: (() => { try { return EVO.diag(); } catch (e) { return String(e); } })(),
         newItems: (() => { try { return NEWITEMS.diag(); } catch (e) { return String(e); } })(),
         consSample: (() => { try { const x = items.find((i) => !i.isPlayer && i.__raw); if (!x) return null; const r = x.__raw; return { name: x.name, rid: x.resourceId, playStyle: r.playStyle, _playStyle: r._playStyle, def: r.definitionId, rating: r.rating, type: r.type, subtype: r.subtype, cons: (CONS.match(x) || {}).name || null, consRows: CONS.get() ? CONS.get().rows.length : 0, keys: Object.keys(r).slice(0, 70), futbin: CONS.get() ? CONS.get().rows.slice(0, 4) : null }; } catch (e) { return String(e); } })(),
@@ -5282,11 +5283,66 @@ const SBC = (function () {
         o.stop(actx.currentTime + 0.18);
       } catch (e) { /* */ }
     }
+    // ---------- TURBO: EAs eigene Marktsuche direkt aufrufen (ohne Seitenwechsel) ----------
+    // Die Suchkriterien übernimmt das Tool, sobald du in der Web App einmal normal suchst.
+    if (settings.snipeTurbo === undefined) settings.snipeTurbo = true;
+    const TC = { crit: null, at: 0, keys: [], hooked: false };
+    const fld = (re) => (TC.crit ? Object.keys(TC.crit).find((k) => re.test(k)) : null);
+    function hookSearch() {
+      const S = W.services && W.services.Item;
+      if (!S || typeof S.searchTransferMarket !== 'function') return;
+      if (S.searchTransferMarket.__fcpt) { TC.hooked = true; return; }
+      const orig = S.searchTransferMarket;
+      const f = function (crit) {
+        try { if (crit && typeof crit === 'object' && !f.own) { TC.crit = crit; TC.at = Date.now(); TC.keys = Object.keys(crit).slice(0, 40); render(); } } catch (e) { /* */ }
+        return orig.apply(this, arguments);
+      };
+      f.__fcpt = true; f.orig = orig;
+      S.searchTransferMarket = f;
+      TC.hooked = true;
+    }
+    hookSearch(); setInterval(hookSearch, 2000);
+    // Cache von EA umgehen: Min.-Sofortkauf (bzw. Max.-Gebot) bei jeder Suche eine Stufe weiter
+    function bumpCrit() {
+      const c = TC.crit;
+      if (!c || !settings.bumpMinBin) return;
+      if (settings.bumpField === 'maxBid') {
+        const k = fld(/^max_?bid$/i); if (!k) return;
+        const start = Math.max(1000, settings.bumpStart || 1000000), cur = toNum(c[k]) || 0;
+        c[k] = cur < start || cur >= 14900000 ? start : cur + stepFor(cur);
+      } else {
+        const k = fld(/^min_?(buy|bin|buynow)$/i); if (!k) return;
+        const mb = critMaxBuy();
+        let lim = Math.max(200, settings.bumpMinMax || 1000);
+        if (mb > 0) lim = Math.min(lim, Math.max(150, mb - stepFor(mb) * 2));   // nie über den eigenen Max.-Preis hinaus
+        const cur = toNum(c[k]) || 0;
+        c[k] = cur >= lim ? 0 : cur ? cur + stepFor(cur) : 150;
+      }
+    }
+    async function directSearch() {
+      const S = W.services.Item;
+      bumpCrit();
+      const t0 = performance.now();
+      const fn = S.searchTransferMarket.orig || S.searchTransferMarket;
+      const ev = await obs(fn.call(S, TC.crit, 1), 8000);
+      st.lastMs = Math.round(performance.now() - t0);
+      if (ev && ev.success === false) throw Object.assign(new Error(ERR[ev.status] || `EA-Code ${ev.status || '?'}`), { status: ev.status });
+      const items = ((ev && (ev.response || ev.data)) || {}).items || [];
+      return items.map((raw) => ({ raw, p: mapItem(raw) })).filter((o) => o.p && o.p.active && o.p.tradeOwner !== true && o.p.buyNow);
+    }
+    const critMaxBuy = () => { const k = fld(/^max_?(buy|bin|buynow)$/i); return k ? toNum(TC.crit[k]) || 0 : 0; };
+
     // Bester lohnender Deal -> Kaufen-Knopf vorbereiten (dann reicht 1× K / Enter / Klick)
     function autoArm() {
       if (!settings.snipeArm || !settings.buyConfirm || st.arm) return;
       let bi = -1, bv = -Infinity;
-      st.rows.forEach((r, i) => { if (!r.done && r.profBin != null && r.profBin >= settings.snipeMinProfit && r.profBin > bv) { bv = r.profBin; bi = i; } });
+      const mb = critMaxBuy();
+      st.rows.forEach((r, i) => {
+        if (r.done) return;
+        const ok = r.profBin != null ? r.profBin >= settings.snipeMinProfit : (mb > 0 && r.bin <= mb);
+        const score = r.profBin != null ? r.profBin : -r.bin;
+        if (ok && score > bv) { bv = score; bi = i; }
+      });
       if (bi < 0 || Date.now() - st.t > 8000) return;
       st.sel = bi; st.arm = `buy:${bi}`; st.armT = Date.now(); st.armMs = 6000;
       st.stats.hits++;
@@ -5296,6 +5352,8 @@ const SBC = (function () {
     }
     // EAs Feld „Max. Sofortkauf“ auf „lohnt bis“ setzen (Suchseite, 4. Preisfeld)
     async function setMaxBin(v) {
+      const k = fld(/^max_?(buy|bin|buynow)$/i);
+      if (TC.crit && k) { TC.crit[k] = v; st.msg = `Max. Sofortkauf für die Turbo-Suche auf ${fmt(v)} gesetzt – jeder Treffer lohnt sich und ist sofort kaufbereit.`; render(); return; }
       let s = findSearchButton();
       if (!s) { const back = findBackButton(); if (back) { pressButton(back); s = await waitFor(findSearchButton, 1500, 40); } }
       const filters = [...document.querySelectorAll('.search-prices .price-filter, .price-filter')].filter((f) => shown(f));
@@ -5335,6 +5393,22 @@ const SBC = (function () {
       st.busy = true; st.msg = 'Suche …'; st.arm = null; render();
       const t0 = Date.now(); st.lastSearch = t0;
       try {
+        if (settings.snipeTurbo && TC.crit && W.services.Item.bid) {
+          st.stats.n++;
+          const offers = await directSearch();
+          st.t = Date.now(); st.stats.ms += st.lastMs;
+          if (!offers.length) { st.rows = []; st.msg = `Nichts gefunden (${st.lastMs} ms) – nochmal.`; return; }
+          st.rows = offers.map(mk).sort((a, b) => a.bin - b.bin);
+          const names = [...new Set(st.rows.map((r) => r.p.name))];
+          st.label = names.length === 1 ? `${st.rows[0].p.rating ?? ''} ${names[0]}` : `${names.length} verschiedene Karten`;
+          st.msg = '';
+          { let bi = 0, bv = -Infinity; st.rows.forEach((r, i) => { if (r.profBin != null && r.profBin > bv) { bv = r.profBin; bi = i; } }); st.sel = bi; }
+          autoArm();
+          st.rows.filter((r) => r.p.isPlayer && !r.market).slice(0, 2).forEach((r) => {
+            getPrice('futbin', r.p, 'futbin:snipe').then(() => { const n = mk({ raw: r.raw, p: r.p }); Object.assign(r, { market: n.market, maxBid: n.maxBid, profBin: n.profBin, profBid: n.profBid }); autoArm(); render(); }).catch(() => {});
+          });
+          return;
+        }
         let s = findSearchButton();
         if (!s) {
           const back = findBackButton();
@@ -5419,9 +5493,11 @@ const SBC = (function () {
           <span class="by-coins">${coins != null ? `${fmt(coins)} Münzen` : ''}</span></div>
         <div class="by-opts">
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
+          <label title="Sucht direkt über EAs Schnittstelle statt über die Seite – deutlich schneller"><input type="checkbox" data-bo="turbo" ${settings.snipeTurbo ? 'checked' : ''}> Turbo</label>
           <label title="Kurzer Ton, wenn ein lohnender Deal gefunden wurde"><input type="checkbox" data-bo="snd" ${settings.snipeSound ? 'checked' : ''}> Ton</label>
           <label title="Ab diesem Gewinn (nach Steuer) gilt ein Angebot als lohnend">ab <input type="number" min="0" step="50" data-bo="min" value="${settings.snipeMinProfit}"> Gewinn</label>
         </div>
+        <div class="by-mode ${settings.snipeTurbo && TC.crit ? 'on' : ''}">${settings.snipeTurbo ? (TC.crit ? `⚡ Turbo aktiv – sucht direkt bei EA, ohne Seitenwechsel${critMaxBuy() ? ` · Max. SK ${fmt(critMaxBuy())}` : ''}${st.lastMs ? ` · letzte Suche ${st.lastMs} ms` : ''}` : '⚡ Turbo: einmal in der Web App normal auf „Suchen“ klicken – danach übernimmt das Tool die Suche direkt.') : 'Normaler Modus (über die Web-App-Seite)'}</div>
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
         ${st.arm && st.armMs > 4000 ? `<div class="by-ready">Bester Deal bereit – <b>K</b>, <b>Enter</b> oder Klick kauft ihn. <b>Esc</b> = nicht kaufen.</div>` : ''}
@@ -5437,6 +5513,7 @@ const SBC = (function () {
       box.querySelectorAll('[data-bo]').forEach((x) => x.addEventListener('change', (e) => {
         e.stopPropagation();
         if (x.dataset.bo === 'arm') settings.snipeArm = x.checked;
+        if (x.dataset.bo === 'turbo') { settings.snipeTurbo = x.checked; saveSettings(); render(); }
         if (x.dataset.bo === 'snd') { settings.snipeSound = x.checked; if (x.checked) beep(); }
         if (x.dataset.bo === 'min') settings.snipeMinProfit = Math.max(0, parseInt(x.value, 10) || 0);
         saveSettings();
@@ -5463,7 +5540,8 @@ const SBC = (function () {
       if (done) { ev.preventDefault(); ev.stopPropagation(); }
     }, true);
     function mount(el) { box = el; render(); }
-    return { mount, search, render };
+    const diag = () => ({ hooked: TC.hooked, crit: !!TC.crit, keys: TC.keys, critVals: TC.crit ? Object.fromEntries(TC.keys.filter((k) => typeof TC.crit[k] !== 'object' && typeof TC.crit[k] !== 'function').slice(0, 30).map((k) => [k, TC.crit[k]])) : null, lastMs: st.lastMs, stats: st.stats });
+    return { mount, search, render, diag };
   })();
 
   // ==================================================================
@@ -5561,6 +5639,7 @@ const SBC = (function () {
       .by-keys{font-size:11px;color:var(--ink3)}
       .by-opts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink2);align-items:center}
       .by-opts label{display:flex;align-items:center;gap:5px;cursor:pointer}.by-opts input[type=number]{width:70px;padding:3px 6px;border-radius:6px;border:1px solid #2b3654;background:#0f1526;color:var(--ink)}
+      .by-mode{font-size:12px;color:var(--ink2);background:#151c2e;border:1px solid #263049;border-radius:10px;padding:7px 10px}.by-mode.on{color:#fde68a;border-color:#a16207;background:#2a2412}
       .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
       .by-max{border:1px dashed #3a4562;background:transparent;color:var(--ink);border-radius:10px;padding:8px 10px;font:600 12px system-ui,sans-serif;cursor:pointer;text-align:left}
       .by-max b{color:var(--gold)}
