@@ -427,5 +427,5 @@
       });
     }
     function mount(el) { box = el; render(); }
-    return { mount, forecast };
+    return { mount, forecast, search };
   })();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.30.4
+// @version      2.31.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -3542,7 +3542,7 @@ const SBC = (function () {
       const SUBS = [['markt', '📈 Markt'], ['verein', '💼 Verein'], ['futter', '📊 Futter']];
       if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
-        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="guard"></div><div data-el="prognose"></div>' + html() + '<div data-el="watch"></div></div>' +
+        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="watch"></div><div data-el="guard"></div><div data-el="prognose"></div>' + html() + '</div>' +
         '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="fav"></div><div data-el="squadopt"></div><div data-el="evo"></div><div data-el="packs"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
         '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div><div data-el="cons"></div></div>';
       const showSub = () => {
@@ -3594,6 +3594,10 @@ const SBC = (function () {
     if (settings.watchCheck === undefined) settings.watchCheck = true;
     if (settings.watchSound === undefined) settings.watchSound = true;
     if (settings.ntfyTopic === undefined) settings.ntfyTopic = '';
+    if (settings.watchEvery === undefined) settings.watchEvery = 5;   // Minuten je Spieler
+    const st = { q: '', res: null, msg: '', busy: false, checking: null };
+    // Ziel erreicht? „below“ = Preis fällt auf/unter Ziel (kaufen), „above“ = steigt auf/über Ziel (verkaufen)
+    const hit = (w) => w.last != null && (w.dir === 'above' ? w.last >= w.target : w.last <= w.target);
 
     // Push aufs Handy über ntfy.sh (kostenlose App „ntfy“, Thema abonnieren)
     function push(msg, title = 'FC27 Watchlist') {
@@ -3614,9 +3618,9 @@ const SBC = (function () {
 
     function add(r) {
       if (settings.watch.some((w) => w.path === r.path)) return false;
-      settings.watch.push({ path: r.path, name: r.name, rating: r.rating, target: r.buy, sell: r.sell, last: r.current, lastAt: Date.now() });
+      settings.watch.push({ path: r.path, name: r.name, rating: r.rating, ver: r.ver || '', target: r.buy, dir: r.dir || 'below', sell: r.sell, last: r.current, lastAt: r.current != null ? Date.now() : 0 });
       saveSettings(); render();
-      showToast(`⭐ ${r.name} beobachtet – Alarm ab ${fmt(r.buy)}`);
+      showToast(`⭐ ${r.name} wird beobachtet – Alarm ${r.dir === 'above' ? 'ab' : 'bis'} ${fmt(r.buy)}`);
       return true;
     }
     function remove(path) { settings.watch = settings.watch.filter((w) => w.path !== path); saveSettings(); render(); }
@@ -3662,7 +3666,7 @@ const SBC = (function () {
     // Aufruf aus der Listen-Anzeige für fremde Angebote (Transfermarkt/Transferziele)
     function marketChip(p, root) {
       const w = match(p);
-      if (!w) return '';
+      if (!w || w.dir === 'above') return '';
       const nb = p.currentBid ? p.currentBid + (p.currentBid < 1000 ? 50 : p.currentBid < 10000 ? 100 : p.currentBid < 50000 ? 250 : p.currentBid < 100000 ? 500 : 1000) : p.startPrice;
       const binOk = p.buyNow && p.buyNow <= w.target;
       const bidOk = nb && nb <= w.target;
@@ -3674,42 +3678,99 @@ const SBC = (function () {
       return `<span class="fcpt-chip">⭐ Watchlist · Ziel ${fmt(w.target)}</span>`;
     }
 
-    // Futbin-Prüfung: pro Minute höchstens EINE Karte, jede alle 10 Min. -> schonend
-    setInterval(async () => {
-      if (!settings.watchCheck || !settings.watch.length || document.visibilityState !== 'visible' || futbinBlocked()) return;
-      const due = settings.watch.filter((w) => Date.now() - (w.lastAt || 0) > 10 * 60000).sort((a, b) => (a.lastAt || 0) - (b.lastAt || 0))[0];
-      if (!due) return;
+    // Futbin-Preis eines Spielers holen: Preisverlauf (genauer), sonst Suchergebnis
+    async function priceOf(w) {
+      try { const d = await TRADE.analyse(w, Math.max(60000, settings.watchEvery * 60000 - 30000)); if (d && d.current) return { v: d.current, sell: d.sell }; } catch (e) { if (/Schutzseite/.test(e.message)) throw e; }
+      const list = await PROGNOSE.search(w.name);
+      const m = list.find((x) => x.path === w.path) || list.find((x) => x.rating === w.rating);
+      return m && m.price ? { v: m.price } : null;
+    }
+    async function check(w, manual) {
+      st.checking = w.path; render();
       try {
-        const d = await TRADE.analyse(due, 9 * 60000);
-        if (!d) return;
-        due.last = d.current; due.lastAt = Date.now(); due.sell = d.sell; saveSettings(); render();
-        if (d.current <= due.target) alarm(`f${due.path}`, `${due.name} liegt bei ${fmt(d.current)} (Futbin) – dein Ziel ${fmt(due.target)}. Jetzt suchen!`, 60 * 60000);
-      } catch (e) { log('Watch', e); due.lastAt = Date.now(); }
-    }, 60000);
+        const r = await priceOf(w);
+        if (r) {
+          const prev = w.last;
+          w.last = r.v; if (r.sell) w.sell = r.sell;
+          w.hist = (w.hist || []).concat([[Date.now(), r.v]]).slice(-24);
+          if (prev != null && prev !== r.v) w.prev = prev;
+          if (hit(w)) {
+            if (!w.hitAt) w.hitAt = Date.now();
+            alarm(`f${w.path}`, `${w.rating ?? ''} ${w.name}: ${fmt(r.v)} (Futbin) – Ziel ${w.dir === 'above' ? '≥' : '≤'} ${fmt(w.target)} erreicht! ${w.dir === 'above' ? 'Jetzt verkaufen.' : 'Jetzt suchen und kaufen.'}`, 60 * 60000);
+          } else w.hitAt = 0;
+        } else if (manual) showToast(`${w.name}: kein Futbin-Preis gefunden`, true);
+      } catch (e) { log('Watch', e); if (manual) showToast('Futbin: ' + e.message, true); }
+      w.lastAt = Date.now(); saveSettings(); st.checking = null; render();
+    }
+    // Prüfung im Hintergrund: höchstens alle 20 Sek. EINE Karte, jede alle X Min. -> schonend für Futbin
+    setInterval(() => {
+      if (!settings.watchCheck || !settings.watch.length || st.checking || document.visibilityState !== 'visible' || futbinBlocked()) return;
+      const every = Math.max(2, settings.watchEvery) * 60000;
+      const due = settings.watch.filter((w) => !w.paused && Date.now() - (w.lastAt || 0) > every).sort((a, b2) => (a.lastAt || 0) - (b2.lastAt || 0))[0];
+      if (due) check(due, false);
+    }, 20000);
 
+    async function find() {
+      const q = st.q.trim();
+      if (q.length < 2) return;
+      st.busy = true; st.msg = 'Suche bei Futbin …'; st.res = null; render();
+      try { st.res = await PROGNOSE.search(q); st.msg = st.res.length ? '' : 'Nichts gefunden – anders schreiben (z. B. nur Nachname).'; }
+      catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
+    }
+
+    function rowHtml(w) {
+      const h = hit(w);
+      const dist = w.last != null && !h ? Math.abs(w.last - w.target) : null;
+      const trend = w.prev != null && w.last != null && w.prev !== w.last ? (w.last < w.prev ? '<span class="wl-dn">▼</span>' : '<span class="wl-up">▲</span>') : '';
+      const busy = st.checking === w.path;
+      return `<div class="wl-row ${h ? 'hit' : ''} ${w.paused ? 'paused' : ''}">
+        <div class="wl-name"><div class="wl-h"><b>${esc(w.rating ?? '')} ${esc(w.name)}</b>${w.ver ? ` <span class="wl-ver">${esc(w.ver)}</span>` : ''}</div>
+          <small>${busy ? 'prüfe …' : `Futbin <b>${w.last != null ? fmt(w.last) : '–'}</b> ${trend}${w.lastAt ? ' · ' + agoText(w.lastAt) : ''}`}</small>
+          <small class="wl-st">${w.paused ? '⏸ pausiert' : h ? `✓ Ziel erreicht${w.hitAt ? ' · ' + agoText(w.hitAt) : ''}` : dist != null ? `noch ${fmt(dist)} ${w.dir === 'above' ? 'bis zum Ziel (steigen)' : 'bis zum Ziel (fallen)'}` : 'wartet auf ersten Preis'}</small></div>
+        <div class="wl-ctl">
+          <select data-wd="${esc(w.path)}" title="Alarm wenn der Preis …"><option value="below" ${w.dir !== 'above' ? 'selected' : ''}>fällt auf ≤</option><option value="above" ${w.dir === 'above' ? 'selected' : ''}>steigt auf ≥</option></select>
+          <input type="number" step="50" min="0" data-wt="${esc(w.path)}" value="${w.target}" aria-label="Zielpreis">
+          <button class="wl-b" data-wc="${esc(w.path)}" title="Jetzt prüfen" ${busy ? 'disabled' : ''}>↻</button>
+          <button class="wl-b" data-wp="${esc(w.path)}" title="${w.paused ? 'Fortsetzen' : 'Pausieren'}">${w.paused ? '▶' : '⏸'}</button>
+          <button class="wl-b" data-wx="${esc(w.path)}" title="Entfernen">✕</button>
+        </div></div>`;
+    }
     function render() {
       if (!box) return;
       const L = settings.watch;
       box.innerHTML = `
-        <div class="fcpt-sgroup"><h4>⭐ Watchlist & Preis-Alarm</h4>
-          ${L.length ? L.map((w) => {
-            const hit = w.last != null && w.last <= w.target;
-            return `<div class="wl-row ${hit ? 'hit' : ''}">
-              <div class="wl-name"><b>${esc(w.rating ?? '')} ${esc(w.name)}</b><small>Futbin: ${w.last != null ? fmt(w.last) : '–'} · ${w.lastAt ? agoText(w.lastAt) : ''}</small></div>
-              <label class="wl-t">Ziel ≤<input type="number" step="50" min="0" data-wt="${esc(w.path)}" value="${w.target}"></label>
-              <button class="wl-x" data-wx="${esc(w.path)}" title="Entfernen">✕</button></div>`;
-          }).join('') : '<div class="note" style="font-size:12px;color:#7d8aa0">Noch leer. Im Trading-Finder bei einer Karte auf ☆ klicken – das Ziel wird auf „Kaufen bis“ gesetzt.</div>'}
-          <div class="fcpt-set"><span>Futbin-Preis alle 10 Min. prüfen<small>Nur solange die Web App offen ist · 1 Abruf pro Minute</small></span><input type="checkbox" class="fcpt-sw" data-wo="watchCheck"></div>
+        <div class="fcpt-sgroup"><h4>⭐ Spieler-Monitoring</h4>
+          <div class="note" style="font-size:12px;color:var(--ink2)">Spieler eintragen, Zielpreis festlegen – das Tool prüft den Futbin-Preis regelmäßig und meldet sich (Ton, Meldung, optional aufs Handy), sobald das Ziel erreicht ist. Gekauft wird nichts.</div>
+          <div class="ntfy-row"><input type="text" data-wq="q" placeholder="Spieler suchen, z. B. Wirtz" value="${esc(st.q)}"><button class="fcpt-smallbtn go" data-wa="find" ${st.busy ? 'disabled' : ''}>🔎 Suchen</button></div>
+          ${st.msg ? `<div class="fcpt-stand">${esc(st.msg)}</div>` : ''}
+          ${st.res && st.res.length ? `<div class="wl-res">${st.res.map((r, i) => `<button class="wl-pick" data-wr="${i}" ${has(r.path) ? 'disabled' : ''}><b>${esc(r.rating ?? '')} ${esc(r.name)}</b> <small>${esc(r.ver || '')}</small><span>${r.price ? fmt(r.price) : '–'}${has(r.path) ? ' · schon drin' : ' · + beobachten'}</span></button>`).join('')}</div>` : ''}
+          ${L.length ? `<div class="wl-list">${L.map(rowHtml).join('')}</div>` : '<div class="note" style="font-size:12px;color:#7d8aa0">Noch kein Spieler im Monitoring.</div>'}
+          <div class="fcpt-set"><span>Automatisch prüfen<small>Nur solange die Web App offen ist · schonend: max. 1 Futbin-Abruf alle 20 Sek.</small></span><input type="checkbox" class="fcpt-sw" data-wo="watchCheck"></div>
+          <div class="fcpt-set"><span>Jeden Spieler prüfen alle</span><select data-we="1">${[2, 5, 10, 30].map((m) => `<option value="${m}" ${settings.watchEvery === m ? 'selected' : ''}>${m} Min.</option>`).join('')}</select></div>
           <div class="fcpt-set"><span>Ton bei Alarm</span><input type="checkbox" class="fcpt-sw" data-wo="watchSound"></div>
           <button class="fcpt-smallbtn" data-wa="notify">🔔 Browser-Benachrichtigungen erlauben</button>
           <div class="fcpt-set"><span>📱 Push aufs Handy (ntfy)<small>App „ntfy“ installieren und dieses Thema abonnieren</small></span></div>
           <div class="ntfy-row"><input type="text" data-wn="topic" placeholder="Thema, z. B. fc27-abc123" value="${esc(settings.ntfyTopic)}"><button class="fcpt-smallbtn" data-wa="gen">Erzeugen</button><button class="fcpt-smallbtn" data-wa="test">Test senden</button></div>
         </div>`;
-      box.querySelectorAll('[data-wt]').forEach((i) => i.addEventListener('change', () => {
-        const w = settings.watch.find((x) => x.path === i.dataset.wt);
-        if (w) { w.target = Math.max(0, parseInt(i.value, 10) || 0); saveSettings(); }
+      const q = box.querySelector('[data-wq]');
+      q.addEventListener('input', () => { st.q = q.value; });
+      q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); st.q = q.value; find(); } });
+      box.querySelector('[data-wa="find"]').addEventListener('click', (e) => { e.stopPropagation(); st.q = q.value; find(); });
+      box.querySelectorAll('[data-wr]').forEach((b2) => b2.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const r = st.res[+b2.dataset.wr];
+        if (!r || has(r.path)) return;
+        add({ path: r.path, name: r.name, rating: r.rating, ver: r.ver, buy: r.price ? roundPrice(r.price * 0.95) : 0, current: r.price || null, dir: 'below' });
+        st.res = null; st.q = ''; render();
       }));
-      box.querySelectorAll('[data-wx]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); remove(b.dataset.wx); }));
+      const W8 = (sel, ev, fn) => box.querySelectorAll(sel).forEach((x) => x.addEventListener(ev, (e) => { e.stopPropagation(); const w = settings.watch.find((y) => y.path === Object.values(x.dataset)[0]); if (w) fn(w, x); }));
+      W8('[data-wt]', 'change', (w, x) => { w.target = Math.max(0, parseInt(x.value, 10) || 0); w.hitAt = 0; saveSettings(); render(); });
+      W8('[data-wd]', 'change', (w, x) => { w.dir = x.value; w.hitAt = 0; saveSettings(); render(); });
+      W8('[data-wc]', 'click', (w) => check(w, true));
+      W8('[data-wp]', 'click', (w) => { w.paused = !w.paused; saveSettings(); render(); });
+      box.querySelectorAll('[data-wx]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); remove(b2.dataset.wx); }));
+      const we = box.querySelector('[data-we]');
+      we.addEventListener('change', (e) => { e.stopPropagation(); settings.watchEvery = parseInt(we.value, 10) || 5; saveSettings(); });
       box.querySelectorAll('[data-wo]').forEach((c) => { c.checked = !!settings[c.dataset.wo]; c.addEventListener('change', () => { settings[c.dataset.wo] = c.checked; saveSettings(); }); });
       const tp = box.querySelector('[data-wn="topic"]');
       if (tp) tp.addEventListener('change', () => { settings.ntfyTopic = tp.value.trim().replace(/[^A-Za-z0-9_-]/g, ''); tp.value = settings.ntfyTopic; saveSettings(); });
@@ -3723,7 +3784,7 @@ const SBC = (function () {
       if (tb) tb.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (!settings.ntfyTopic) { showToast('Erst ein Thema eintragen oder erzeugen', true); return; }
-        const ok = await push('Test: Watchlist-Alarme kommen hier an ✅', 'FC27 Tool');
+        const ok = await push('Test: Monitoring-Alarme kommen hier an ✅', 'FC27 Tool');
         showToast(ok ? '📱 Test gesendet – kam die Nachricht an?' : 'Senden fehlgeschlagen – Tampermonkey muss ntfy.sh erlauben', !ok);
       });
       const nb = box.querySelector('[data-wa="notify"]');
@@ -3733,7 +3794,7 @@ const SBC = (function () {
       });
     }
     function mount(el) { box = el; render(); }
-    return { add, remove, has, match, marketChip, mount, render, alarm, push };
+    return { add, remove, has, hit, match, marketChip, mount, render, alarm, push };
   })();
 
 
@@ -4166,7 +4227,7 @@ const SBC = (function () {
       });
     }
     function mount(el) { box = el; render(); }
-    return { mount, forecast };
+    return { mount, forecast, search };
   })();
 
   // ==================================================================
@@ -5786,6 +5847,18 @@ const SBC = (function () {
       .by-keys{font-size:11px;color:var(--ink3)}
       .by-opts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink2);align-items:center}
       .by-opts label{display:flex;align-items:center;gap:5px;cursor:pointer}.by-opts input[type=number]{width:70px;padding:3px 6px;border-radius:6px;border:1px solid #2b3654;background:#0f1526;color:var(--ink)}
+      .wl-list{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+      .wl-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:9px 10px}
+      .wl-row.hit{border-color:#16a34a;background:#0d2a1b}.wl-row.paused{opacity:.6}
+      .wl-name{display:flex;flex-direction:column;gap:2px;min-width:150px;flex:1}.wl-name small{font-size:11px;color:var(--ink2)}.wl-name small b{color:var(--ink)}
+      .wl-name small b,.wl-h b{display:inline !important}.wl-h{font-size:14px}.wl-ver{font-size:11px}
+      .wl-row.hit .wl-st{color:#4ade80;font-weight:700}.wl-ver{color:var(--ink3)}
+      .wl-up{color:#4ade80}.wl-dn{color:#f87171}
+      .wl-ctl{display:flex;gap:4px;align-items:center}.wl-ctl select,.wl-ctl input{height:32px;border-radius:8px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font-size:12px;padding:0 6px}.wl-ctl input{width:84px}
+      .wl-b{width:32px;height:32px;border-radius:8px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer}
+      .wl-res{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+      .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
+      .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
       .by-mode{font-size:12px;color:var(--ink2);background:#151c2e;border:1px solid #263049;border-radius:10px;padding:7px 10px}.by-mode.on{color:#fde68a;border-color:#a16207;background:#2a2412}
       .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
@@ -6034,7 +6107,7 @@ const SBC = (function () {
     function alarms() {
       const A = [];
       for (const w of settings.watch || []) {
-        if (w.last != null && w.last <= w.target) A.push({ k: 'g', ic: 'star', t: `${w.rating ?? ''} ${w.name} unter deinem Ziel`, s: `Futbin ${fmt(w.last)} · Ziel ${fmt(w.target)}`, go: 'trade:markt' });
+        if (!w.paused && WATCH.hit(w)) A.push({ k: 'g', ic: 'star', t: `${w.rating ?? ''} ${w.name}: Ziel erreicht`, s: `Futbin ${fmt(w.last)} · Ziel ${w.dir === 'above' ? '≥' : '≤'} ${fmt(w.target)}`, go: 'trade:markt' });
       }
       for (const t of settings.sellTargets || []) {
         if (t.last != null && t.last >= t.target) A.push({ k: 'p', ic: 'target', t: `Verkaufsziel erreicht: ${t.name}`, s: `Futbin ${fmt(t.last)} · Ziel ${fmt(t.target)}`, go: 'list' });

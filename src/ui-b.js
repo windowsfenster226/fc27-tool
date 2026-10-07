@@ -93,6 +93,18 @@
       .by-keys{font-size:11px;color:var(--ink3)}
       .by-opts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink2);align-items:center}
       .by-opts label{display:flex;align-items:center;gap:5px;cursor:pointer}.by-opts input[type=number]{width:70px;padding:3px 6px;border-radius:6px;border:1px solid #2b3654;background:#0f1526;color:var(--ink)}
+      .wl-list{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+      .wl-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:9px 10px}
+      .wl-row.hit{border-color:#16a34a;background:#0d2a1b}.wl-row.paused{opacity:.6}
+      .wl-name{display:flex;flex-direction:column;gap:2px;min-width:150px;flex:1}.wl-name small{font-size:11px;color:var(--ink2)}.wl-name small b{color:var(--ink)}
+      .wl-name small b,.wl-h b{display:inline !important}.wl-h{font-size:14px}.wl-ver{font-size:11px}
+      .wl-row.hit .wl-st{color:#4ade80;font-weight:700}.wl-ver{color:var(--ink3)}
+      .wl-up{color:#4ade80}.wl-dn{color:#f87171}
+      .wl-ctl{display:flex;gap:4px;align-items:center}.wl-ctl select,.wl-ctl input{height:32px;border-radius:8px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font-size:12px;padding:0 6px}.wl-ctl input{width:84px}
+      .wl-b{width:32px;height:32px;border-radius:8px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer}
+      .wl-res{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+      .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
+      .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
       .by-mode{font-size:12px;color:var(--ink2);background:#151c2e;border:1px solid #263049;border-radius:10px;padding:7px 10px}.by-mode.on{color:#fde68a;border-color:#a16207;background:#2a2412}
       .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
@@ -341,7 +353,7 @@
     function alarms() {
       const A = [];
       for (const w of settings.watch || []) {
-        if (w.last != null && w.last <= w.target) A.push({ k: 'g', ic: 'star', t: `${w.rating ?? ''} ${w.name} unter deinem Ziel`, s: `Futbin ${fmt(w.last)} · Ziel ${fmt(w.target)}`, go: 'trade:markt' });
+        if (!w.paused && WATCH.hit(w)) A.push({ k: 'g', ic: 'star', t: `${w.rating ?? ''} ${w.name}: Ziel erreicht`, s: `Futbin ${fmt(w.last)} · Ziel ${w.dir === 'above' ? '≥' : '≤'} ${fmt(w.target)}`, go: 'trade:markt' });
       }
       for (const t of settings.sellTargets || []) {
         if (t.last != null && t.last >= t.target) A.push({ k: 'p', ic: 'target', t: `Verkaufsziel erreicht: ${t.name}`, s: `Futbin ${fmt(t.last)} · Ziel ${fmt(t.target)}`, go: 'list' });
