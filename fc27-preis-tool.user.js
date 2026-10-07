@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.30.3
+// @version      2.30.4
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -1093,6 +1093,21 @@ const SBC = (function () {
     .fcpt-inline .fcpt-chip.nb.over{background:#1f2b3d;color:#8b98aa}
     .fcpt-inline .fcpt-chip.bidok{background:#1d4ed8;color:#fff;font-weight:600}
     .fcpt-inline .fcpt-chip.biderr{background:#7f1d1d;color:#fff}
+    /* Kompakte Leiste unter der EA-Karte: eigene Zeile, deckend, nichts überlappt */
+    .fcpt-has-inline{height:auto !important;max-height:none !important;flex-wrap:wrap !important;overflow:visible !important}
+    .fcpt-has-inline > .fcpt-inline{position:static !important;grid-column:1 / -1 !important;order:99;flex:0 0 100% !important;clear:both;box-sizing:border-box;
+      display:flex !important;flex-wrap:wrap;align-items:center;gap:3px 16px;width:100%;margin:6px 0 2px;padding:6px 10px;border-radius:8px;
+      background:#0c1322 !important;border:1px solid #223049;font:600 12px/1.35 system-ui,-apple-system,'Segoe UI',sans-serif;color:#a9b4c6;z-index:2}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip{background:transparent !important;border-radius:0;padding:0;margin:0;color:#a9b4c6;font-weight:600;white-space:nowrap;outline:0}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip b{color:#eef2f8;font-weight:800}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.profit b{color:#4ade80}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.loss b,.fcpt-has-inline > .fcpt-inline .fcpt-chip.loss{color:#fca5a5}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.warn{color:#fcd34d}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.deal{color:#4ade80;font-weight:800}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.nb.over b{color:#8b98aa}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.bidok{color:#93c5fd}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.biderr{color:#fca5a5}
+    .fcpt-has-inline.fcpt-bargain > .fcpt-inline{background:#0d2a1b !important;border-color:#16a34a}
     @media (max-width: 700px){
       #fcpt-panel{width:100vw;font-size:13px}
       #fcpt-btn{right:12px;bottom:88px;padding:9px 13px;font-size:13px}
@@ -1104,7 +1119,7 @@ const SBC = (function () {
       .fcpt-overview{grid-template-columns:1fr 1fr 1fr}
       .fcpt-overview .v{font-size:13px}
       .fcpt-2col{grid-template-columns:1fr}
-      .fcpt-inline{font-size:11px;gap:4px}
+      .fcpt-inline{font-size:11px}
 
     }
   `);
@@ -1580,6 +1595,7 @@ const SBC = (function () {
     root.querySelectorAll('.fcpt-inline').forEach((e) => e.remove());
     const box = document.createElement('div');
     box.className = 'fcpt-inline';
+    root.classList.add('fcpt-has-inline');
     root.appendChild(box);
     const prices = {};
 
@@ -1596,9 +1612,9 @@ const SBC = (function () {
           const v = afterTax(main) - p.buyNow;
           if (v >= settings.minBargain) {
             root.classList.add('fcpt-bargain');
-            profitHtml = `<span class="fcpt-chip deal">💰 Schnäppchen: ${signed(v)} nach Steuer</span>`;
+            profitHtml = `<span class="fcpt-chip deal" title="Gewinn nach 5 % Steuer">💰 Schnäppchen ${signed(v)}</span>`;
           } else {
-            profitHtml = `<span class="fcpt-chip ${v >= 0 ? 'profit' : 'loss'}">Bei Weiterverkauf: <b>${signed(v)}</b></span>`;
+            profitHtml = `<span class="fcpt-chip ${v >= 0 ? 'profit' : 'loss'}" title="Gewinn bei Weiterverkauf zum Marktpreis, nach 5 % Steuer">Gewinn <b>${signed(v)}</b></span>`;
           }
         }
       } else if (p.sold && p.profit != null) {
@@ -1609,7 +1625,8 @@ const SBC = (function () {
         const v = afterTax(main) - p.bought;
         profitHtml = `<span class="fcpt-chip ${v >= 0 ? 'profit' : 'loss'}">Bei Marktpreis: <b>${signed(v)}</b></span>`;
       }
-      const chips = p.isPlayer ? keys.map((k) => {
+      // In Suchergebnissen nur das Wichtigste (Markt · Gewinn · Gebot) – die Einzelquellen stehen im Tooltip
+      const chips = p.isPlayer && !isMarket ? keys.map((k) => {
         const e = prices[k];
         const val = !e ? '…' : e.err ? '✕' : fmt(e.v);
         const url = k === 'futbin' ? futbinUrl(p.resourceId) : null;
@@ -1626,7 +1643,8 @@ const SBC = (function () {
         else if (v != null && v > 0) root.classList.add('fcpt-good');
         else if (v != null && v < 0) root.classList.add('fcpt-bad');
       }
-      box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main">Markt: <b>${fmt(main)}</b></span>` : consV ? `<span class="fcpt-chip main" title="Futbin – Chemie-Style">🧪 Markt: <b>${fmt(consV)}</b></span>` : '') + chips + profitHtml +
+      const srcTip = keys.map((k) => `${SOURCES[k].label}: ${prices[k] ? (prices[k].err ? '✕' : fmt(prices[k].v)) : '…'}`).join(' · ');
+      box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main" title="${esc(srcTip)}">Markt <b>${fmt(main)}</b></span>` : consV ? `<span class="fcpt-chip main" title="Futbin – Chemie-Style">🧪 Markt: <b>${fmt(consV)}</b></span>` : '') + chips + profitHtml +
         (!isMarket ? listingWarn(p, main) : '') + (isMarket && p.active ? bidChip(p) : '') +
         (!isMarket && p.isPlayer && p.bought && !p.sold ? `<span class="fcpt-chip be">Ohne Verlust ab <b>${fmt(breakEven(p.bought))}</b></span>` : '') +
         (isMarket && p.isPlayer ? WATCH.marketChip(p, root) : '') +
@@ -1657,12 +1675,12 @@ const SBC = (function () {
 
   function bidChip(p) {
     const d = bidDone[p.tradeId];
-    if (d && d.ok && p.bidState !== 'outbid') return `<span class="fcpt-chip bidok">✓ Geboten: ${fmt(d.amount)}</span>`;
-    if (d && d.err) return `<span class="fcpt-chip biderr" title="${esc(d.err)}">✕ Gebot fehlgeschlagen</span>`;
-    if (p.bidState === 'highest') return `<span class="fcpt-chip bidok">✓ Du bist Höchstbietender</span>`;
+    if (d && d.ok && p.bidState !== 'outbid') return `<span class="fcpt-chip bidok">✓ Geboten ${fmt(d.amount)}</span>`;
+    if (d && d.err) return `<span class="fcpt-chip biderr" title="${esc(d.err)}">✕ Gebot abgelehnt</span>`;
+    if (p.bidState === 'highest') return `<span class="fcpt-chip bidok">✓ Höchstbietender</span>`;
     const nb = nextBid(p);
     if (!nb) return '';
-    return `<span class="fcpt-chip nb ${nb > settings.maxBid ? 'over' : ''}">Nächstes Gebot: <b>${fmt(nb)}</b>${nb > settings.maxBid ? ' (über Max)' : ''}</span>`;
+    return `<span class="fcpt-chip nb ${nb > settings.maxBid ? 'over' : ''}" title="${nb > settings.maxBid ? 'Liegt über deinem Max.-Gebot' : 'Nächstes gültiges Gebot'}">Gebot <b>${fmt(nb)}</b>${nb > settings.maxBid ? ' ↑' : ''}</span>`;
   }
 
   function eligibleBids() {
