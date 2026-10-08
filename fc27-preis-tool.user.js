@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.31.0
+// @version      2.32.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5531,6 +5531,63 @@ const SBC = (function () {
       const items = ((ev && (ev.response || ev.data)) || {}).items || [];
       return items.map((raw) => ({ raw, p: mapItem(raw) })).filter((o) => o.p && o.p.active && o.p.tradeOwner !== true && o.p.buyNow);
     }
+    // ---------- Snipe-Ziele: mehrere Turbo-Suchen speichern und per Klick / Shift+1…9 / Q·E wechseln ----------
+    if (!Array.isArray(settings.snipeTargets)) settings.snipeTargets = [];
+    let activeTarget = null;
+    const critFields = (c) => {
+      const o = {};
+      for (const k of Object.keys(c || {})) {
+        const v = c[k];
+        if (v == null || typeof v === 'function') continue;
+        if (typeof v !== 'object' || (Array.isArray(v) && v.every((x) => x == null || typeof x !== 'object'))) o[k] = Array.isArray(v) ? v.slice() : v;
+      }
+      return o;
+    };
+    function saveTarget() {
+      if (!TC.crit) { st.msg = 'Erst einmal in der Web App suchen – dann kann das Tool die Suche speichern.'; render(); return; }
+      const f = critFields(TC.crit);
+      const mbK = fld(/^max_?(buy|bin|buynow)$/i), minK = fld(/^min_?(buy|bin|buynow)$/i);
+      if (minK) f[minK] = 0;
+      const norm = (x) => { const y = Object.assign({}, x); if (minK) y[minK] = 0; if (mbK) delete y[mbK]; return JSON.stringify(y); };
+      const same = settings.snipeTargets.find((t) => norm(t.fields) === norm(f));
+      if (same) { activeTarget = same.id; st.msg = `„${same.label}“ ist schon gespeichert.`; render(); return; }
+      const label = st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1 ? `${st.rows[0].p.rating ?? ''} ${st.rows[0].p.name}`.trim() : `Suche ${settings.snipeTargets.length + 1}`;
+      const t = { id: Date.now().toString(36), label, fields: f, maxBuy: mbK ? toNum(f[mbK]) || 0 : 0 };
+      settings.snipeTargets.push(t);
+      if (settings.snipeTargets.length > 12) settings.snipeTargets.shift();
+      activeTarget = t.id; saveSettings();
+      st.msg = `Gespeichert: „${label}“. Umbenennen per Doppelklick auf den Namen.`; render();
+    }
+    function useTarget(id) {
+      const t = settings.snipeTargets.find((x) => x.id === id);
+      if (!t) return;
+      if (!TC.crit && typeof W.UTSearchCriteriaDTO === 'function') { try { TC.crit = new W.UTSearchCriteriaDTO(); } catch (e) { /* */ } }
+      if (!TC.crit) { st.msg = 'Einmal in der Web App normal suchen (egal was) – danach lassen sich gespeicherte Ziele per Klick laden.'; render(); return; }
+      for (const k of Object.keys(critFields(TC.crit))) if (!(k in t.fields)) { try { delete TC.crit[k]; } catch (e) { /* */ } }
+      Object.assign(TC.crit, JSON.parse(JSON.stringify(t.fields)));
+      const mbK = fld(/^max_?(buy|bin|buynow)$/i);
+      if (mbK && t.maxBuy) TC.crit[mbK] = t.maxBuy;
+      activeTarget = id; st.rows = []; st.arm = null; st.label = t.label;
+      st.msg = `🎯 Ziel „${t.label}“ aktiv${t.maxBuy ? ` · Max. Sofortkauf ${fmt(t.maxBuy)}` : ''} – Leertaste zum Suchen.`;
+      render();
+    }
+    function targetsHtml() {
+      const L = settings.snipeTargets;
+      return `<div class="by-tgts"><div class="by-tgts-h"><b>🎯 Snipe-Ziele</b><button class="by-tsave" data-by="tsave" ${TC.crit ? '' : 'disabled'} title="Aktuelle Suche (Spieler, Qualität, Max. Sofortkauf …) speichern">+ Aktuelle Suche speichern</button></div>
+        ${L.length ? `<div class="by-tlist">${L.map((t, i) => `<div class="by-t ${activeTarget === t.id ? 'on' : ''}">
+          <button class="by-tn" data-tu="${t.id}" title="Laden${i < 9 ? ` (Shift+${i + 1})` : ''} · Doppelklick = umbenennen">${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}${esc(t.label)}</button>
+          <label title="Max. Sofortkauf für dieses Ziel">≤<input type="number" step="50" min="0" data-tm="${t.id}" value="${t.maxBuy || ''}" placeholder="Max"></label>
+          <button class="by-tx" data-tx="${t.id}" title="Löschen">✕</button></div>`).join('')}</div>
+          ${pc() ? '<div class="by-keys"><kbd>Shift</kbd>+<kbd>1</kbd>…<kbd>9</kbd> Ziel laden · <kbd>Q</kbd>/<kbd>E</kbd> vorheriges/nächstes Ziel</div>' : ''}`
+        : '<div class="by-keys">Stell in der Web App eine Suche ein, such einmal und speichere sie hier. Danach wechselst du zwischen deinen Zielen per Klick – ohne die Web App anzufassen.</div>'}</div>`;
+    }
+    function cycleTarget(dir) {
+      const L = settings.snipeTargets;
+      if (!L.length) return;
+      const i = Math.max(-1, L.findIndex((t) => t.id === activeTarget));
+      useTarget(L[(i + dir + L.length) % L.length].id);
+    }
+
     const critMaxBuy = () => { const k = fld(/^max_?(buy|bin|buynow)$/i); return k ? toNum(TC.crit[k]) || 0 : 0; };
 
     // Bester lohnender Deal -> Kaufen-Knopf vorbereiten (dann reicht 1× K / Enter / Klick)
@@ -5700,6 +5757,7 @@ const SBC = (function () {
           <label title="Ab diesem Gewinn (nach Steuer) gilt ein Angebot als lohnend">ab <input type="number" min="0" step="50" data-bo="min" value="${settings.snipeMinProfit}"> Gewinn</label>
         </div>
         <div class="by-mode ${settings.snipeTurbo && TC.crit ? 'on' : ''}">${settings.snipeTurbo ? (TC.crit ? `⚡ Turbo aktiv – sucht direkt bei EA, ohne Seitenwechsel${critMaxBuy() ? ` · Max. SK ${fmt(critMaxBuy())}` : ''}${st.lastMs ? ` · letzte Suche ${st.lastMs} ms` : ''}` : '⚡ Turbo: einmal in der Web App normal auf „Suchen“ klicken – danach übernimmt das Tool die Suche direkt.') : 'Normaler Modus (über die Web-App-Seite)'}</div>
+        ${targetsHtml()}
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
         ${st.arm && st.armMs > 4000 ? `<div class="by-ready">Bester Deal bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder K)' : '<b>K</b>, <b>Enter</b> oder Klick'} kauft ihn. <b>Esc</b> = nicht kaufen.</div>` : ''}
@@ -5714,6 +5772,31 @@ const SBC = (function () {
             return ar ? `<button class="by-go buy" data-by="search">KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}${kb('Leertaste')}</button>`
               : `<button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}${kb('Leertaste')}</button>`;
           })()}${pc() ? `<div class="by-keys">${settings.snipeOneKey ? '<b>Nur Leertaste:</b> suchen – bei Treffer nochmal = kaufen · ' : ''}<kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen${settings.snipeArm ? ' (bester Deal: 1×)' : ' (2×)'} · <kbd>B</kbd> Bieten · <kbd>Esc</kbd> Abbrechen</div>` : ''}</div>`;
+      const ts = box.querySelector('[data-by="tsave"]');
+      if (ts) ts.addEventListener('click', (e) => { e.stopPropagation(); saveTarget(); });
+      box.querySelectorAll('[data-tu]').forEach((b) => {
+        b.addEventListener('click', (e) => { e.stopPropagation(); useTarget(b.dataset.tu); });
+        b.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          const t = settings.snipeTargets.find((x) => x.id === b.dataset.tu);
+          const n = t && W.prompt('Name für dieses Ziel:', t.label);
+          if (t && n && n.trim()) { t.label = n.trim().slice(0, 40); saveSettings(); render(); }
+        });
+      });
+      box.querySelectorAll('[data-tm]').forEach((inp) => inp.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const t = settings.snipeTargets.find((x) => x.id === inp.dataset.tm);
+        if (!t) return;
+        t.maxBuy = Math.max(0, parseInt(inp.value, 10) || 0); saveSettings();
+        if (activeTarget === t.id && TC.crit) { const k = fld(/^max_?(buy|bin|buynow)$/i); if (k) TC.crit[k] = t.maxBuy; }
+        render();
+      }));
+      box.querySelectorAll('[data-tx]').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        settings.snipeTargets = settings.snipeTargets.filter((x) => x.id !== b.dataset.tx);
+        if (activeTarget === b.dataset.tx) activeTarget = null;
+        saveSettings(); render();
+      }));
       const mx = box.querySelector('[data-by="max"]');
       if (mx) mx.addEventListener('click', (e) => { e.stopPropagation(); setMaxBin(+mx.dataset.v); });
       box.querySelectorAll('[data-bo]').forEach((x) => x.addEventListener('change', (e) => {
@@ -5738,7 +5821,10 @@ const SBC = (function () {
       if (a && (/^(input|textarea|select)$/i.test(a.tagName) || a.isContentEditable)) return;
       const k = ev.key;
       let done = true;
-      if (k === ' ') { if (!ev.repeat) mainAction(); }
+      if (ev.shiftKey && /^Digit[1-9]$/.test(ev.code || '')) { const t = settings.snipeTargets[+ev.code.slice(5) - 1]; if (t && !ev.repeat) useTarget(t.id); }
+      else if (k === 'q' || k === 'Q') { if (!ev.repeat) cycleTarget(-1); }
+      else if (k === 'e' || k === 'E') { if (!ev.repeat) cycleTarget(1); }
+      else if (k === ' ') { if (!ev.repeat) mainAction(); }
       else if (k === 's' || k === 'S') { if (!ev.repeat) search(); }
       else if (k === 'ArrowDown' || k === 'ArrowUp') { if (st.rows.length) { st.sel = (st.sel + (k === 'ArrowDown' ? 1 : -1) + st.rows.length) % st.rows.length; st.arm = null; render(); const el = box.querySelector('.by-r.sel'); if (el) el.scrollIntoView({ block: 'nearest' }); } }
       else if (k === 'k' || k === 'K' || k === 'Enter') { if (!ev.repeat) act(st.sel, 'buy'); }
@@ -5860,6 +5946,16 @@ const SBC = (function () {
       .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
       .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
+      .by-tgts{display:flex;flex-direction:column;gap:6px;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:8px 10px}
+      .by-tgts-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
+      .by-tsave{border:1px dashed #3a4562;background:transparent;color:var(--gold);border-radius:8px;padding:5px 9px;font:600 12px system-ui,sans-serif;cursor:pointer}.by-tsave:disabled{opacity:.5;cursor:default}
+      .by-tlist{display:flex;flex-direction:column;gap:4px}
+      .by-t{display:flex;align-items:center;gap:6px;border:1px solid #2b3654;border-radius:10px;padding:3px 4px 3px 3px;background:#0f1526}
+      .by-t.on{border-color:var(--gold);background:#2a2412}
+      .by-tn{flex:1;min-width:0;text-align:left;border:0;background:transparent;color:var(--ink);font:600 13px system-ui,sans-serif;padding:6px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .by-tn kbd{margin:0 6px 0 0 !important}
+      .by-t label{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--ink2)}.by-t input{width:80px;height:28px;border-radius:7px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 6px}
+      .by-tx{width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:var(--ink3);cursor:pointer}
       .by-mode{font-size:12px;color:var(--ink2);background:#151c2e;border:1px solid #263049;border-radius:10px;padding:7px 10px}.by-mode.on{color:#fde68a;border-color:#a16207;background:#2a2412}
       .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
       .by-max{border:1px dashed #3a4562;background:transparent;color:var(--ink);border-radius:10px;padding:8px 10px;font:600 12px system-ui,sans-serif;cursor:pointer;text-align:left}

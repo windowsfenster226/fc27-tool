@@ -106,6 +106,16 @@
       .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
       .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
+      .by-tgts{display:flex;flex-direction:column;gap:6px;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:8px 10px}
+      .by-tgts-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
+      .by-tsave{border:1px dashed #3a4562;background:transparent;color:var(--gold);border-radius:8px;padding:5px 9px;font:600 12px system-ui,sans-serif;cursor:pointer}.by-tsave:disabled{opacity:.5;cursor:default}
+      .by-tlist{display:flex;flex-direction:column;gap:4px}
+      .by-t{display:flex;align-items:center;gap:6px;border:1px solid #2b3654;border-radius:10px;padding:3px 4px 3px 3px;background:#0f1526}
+      .by-t.on{border-color:var(--gold);background:#2a2412}
+      .by-tn{flex:1;min-width:0;text-align:left;border:0;background:transparent;color:var(--ink);font:600 13px system-ui,sans-serif;padding:6px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .by-tn kbd{margin:0 6px 0 0 !important}
+      .by-t label{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--ink2)}.by-t input{width:80px;height:28px;border-radius:7px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 6px}
+      .by-tx{width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:var(--ink3);cursor:pointer}
       .by-mode{font-size:12px;color:var(--ink2);background:#151c2e;border:1px solid #263049;border-radius:10px;padding:7px 10px}.by-mode.on{color:#fde68a;border-color:#a16207;background:#2a2412}
       .by-stats{font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums}
       .by-max{border:1px dashed #3a4562;background:transparent;color:var(--ink);border-radius:10px;padding:8px 10px;font:600 12px system-ui,sans-serif;cursor:pointer;text-align:left}
