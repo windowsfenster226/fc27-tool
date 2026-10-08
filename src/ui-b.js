@@ -243,6 +243,34 @@
       .pt-list{max-height:260px;overflow:auto}
       .pt-note{font-size:11.5px;color:var(--ink3,#7c889e);line-height:1.4}
       #fcpt-btn{width:52px;height:52px;padding:0;border-radius:15px;background:#f2c14e;color:#15120a;font:700 16px 'IBM Plex Sans',system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+      /* ---------- PC-Design: größere Schrift, ruhigere Karten, beschriftete Leiste ---------- */
+      .fcpt-rail .lb{display:none}
+      @media (min-width: 701px){
+        #fcpt-panel{font-size:14.5px}
+        .fcpt-rail{width:76px}
+        .fcpt-rail button{width:64px;height:58px;flex-direction:column;gap:4px;border-radius:14px}
+        .fcpt-rail .lb{display:block;font:600 10.5px/1 system-ui,-apple-system,'Segoe UI',sans-serif;letter-spacing:.01em}
+        .fcpt-rail button .tip{display:none}
+        #fcpt-panel .fcpt-sgroup{border-radius:16px;padding:14px 16px;gap:12px;background:#121a29;border-color:#1f2a40}
+        #fcpt-panel .fcpt-sgroup > h4,#fcpt-panel .fcpt-sgroup > summary h4{font-size:15px;letter-spacing:0;text-transform:none;color:var(--ink);font-weight:700}
+        #fcpt-panel .fcpt-bigbtn{min-height:44px;border-radius:12px;font-size:15px;font-weight:700}
+        #fcpt-panel .fcpt-smallbtn{min-height:34px;border-radius:9px}
+        #fcpt-panel .fcpt-set{min-height:40px}
+        #fcpt-panel .fcpt-set > span{font-size:14px}
+        #fcpt-panel .fcpt-set small{font-size:12px}
+        #fcpt-panel .fcpt-stand{font-size:12.5px}
+        .tr-row{min-height:46px}
+      }
+      /* Aufklappbare Bereiche + Erklärtexte hinter ⓘ */
+      #fcpt-panel .fcpt-sgroup.sg-on > h4{cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none}
+      #fcpt-panel .fcpt-sgroup.sg-on > h4 .sg-chev{margin-left:auto;transition:transform .15s;color:var(--ink3);font-size:12px}
+      #fcpt-panel .fcpt-sgroup.sg-c > h4 .sg-chev{transform:rotate(-90deg)}
+      #fcpt-panel .fcpt-sgroup.sg-c > :not(h4){display:none !important}
+      #fcpt-panel .fcpt-sgroup.sg-c{padding-bottom:12px}
+      #fcpt-panel .fcpt-sgroup .sg-i{width:22px;height:22px;border-radius:11px;border:1px solid #33405e;background:transparent;color:var(--ink3);font:700 12px/1 system-ui,sans-serif;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center}
+      #fcpt-panel .fcpt-sgroup .sg-i.on{background:#24314d;color:var(--ink)}
+      #fcpt-panel:not(.help-all) .fcpt-sgroup.sg-on:not(.sg-help) > .note{display:none}
+      #fcpt-panel .sg-sum{font-size:12px;font-weight:600;color:var(--ink2)}
       @media (max-width: 700px){
         #fcpt-panel{width:100vw;flex-direction:column !important;height:100vh;height:100dvh}
         #fcpt-panel.fcpt-ios .fcpt-rail{padding-bottom:calc(env(safe-area-inset-bottom, 0px) + var(--fcpt-iosb, 80px))}
@@ -275,10 +303,11 @@
       ['home', 'home', 'Übersicht'], ['list', 'list', 'Transferliste'], ['buy', 'buy', 'Kaufen & Bieten'], ['trade:markt', 'market', 'Markt & Prognose'],
       ['trade:verein', 'club', 'Verein & Futter'], ['hist', 'hist', 'Historie & Statistik'], ['sbc', 'sbc', 'SBC-Solver'],
     ];
+    const SHORT = { home: 'Start', list: 'Liste', buy: 'Kaufen', 'trade:markt': 'Markt', 'trade:verein': 'Verein', hist: 'Historie', sbc: 'SBC' };
     rail.innerHTML = `<div class="lg" aria-hidden="true">FC</div>` +
-      R.map(([k, ic, t]) => `<button data-rail="${k}" aria-label="${t}">${svg(ic)}<span class="bd"></span><span class="tip">${t}</span></button>`).join('') +
+      R.map(([k, ic, t]) => `<button data-rail="${k}" aria-label="${t}">${svg(ic)}<span class="bd"></span><span class="lb">${SHORT[k] || t}</span><span class="tip">${t}</span></button>`).join('') +
       `<div class="sp"></div>
-       <button data-rail="settings" aria-label="Einstellungen">${svg('gear')}<span class="tip">Einstellungen</span></button>
+       <button data-rail="settings" aria-label="Einstellungen">${svg('gear')}<span class="lb">Optionen</span><span class="tip">Einstellungen</span></button>
        <button data-rail="mini" aria-label="Einklappen">${svg('collapse')}<span class="tip">Einklappen</span></button>`;
     panel.appendChild(body);
     panel.appendChild(rail);
@@ -505,10 +534,50 @@
       pcRow.className = 'fcpt-set';
       pcRow.innerHTML = '<span>Neben der Web App andocken (PC)<small>Tool rechts, Web App daneben – nichts wird verdeckt. Breite mit dem Rand links am Tool ziehen.</small></span><select data-uib="dock"><option value="auto">Automatisch (großer Bildschirm)</option><option value="on">Immer</option><option value="off">Aus (Tool liegt über der Web App)</option></select>';
       grp.appendChild(pcRow);
+      const hRow = document.createElement('div');
+      hRow.className = 'fcpt-set';
+      hRow.innerHTML = '<span>Erklärtexte immer anzeigen<small>Aus = nur über das kleine „i“ neben der Überschrift</small></span><input type="checkbox" class="fcpt-sw" data-uib="help">';
+      grp.appendChild(hRow);
+      const hc = hRow.querySelector('input');
+      hc.checked = !!settings.helpAll;
+      hc.addEventListener('change', (e) => { e.stopPropagation(); settings.helpAll = hc.checked; saveSettings(); panel.classList.toggle('help-all', settings.helpAll); });
       const ds = pcRow.querySelector('select');
       ds.value = settings.dock;
       ds.addEventListener('change', (e) => { e.stopPropagation(); settings.dock = ds.value; saveSettings(); applyDock(); });
     }
+
+    // ---------- Bereiche aufklappbar machen (Zustand wird gemerkt) ----------
+    if (!settings.sgCollapsed || typeof settings.sgCollapsed !== 'object') settings.sgCollapsed = {};
+    if (settings.helpAll === undefined) settings.helpAll = false;
+    const sgKey = (h) => (h.textContent || '').replace(/[\d.,()·]+/g, '').replace(/[^\p{L}\s-]/gu, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    function enhanceGroups(root) {
+      root.querySelectorAll('.fcpt-sgroup').forEach((g) => {
+        if (g.tagName === 'DETAILS') return;
+        const h = g.querySelector(':scope > h4');
+        if (!h || h.querySelector('.sg-chev')) return;
+        const key = sgKey(h);
+        if (!key) return;
+        g.classList.add('sg-on');
+        g.classList.toggle('sg-c', !!settings.sgCollapsed[key]);
+        if (g.querySelector(':scope > .note')) {
+          const i = document.createElement('button');
+          i.className = 'sg-i'; i.textContent = 'i'; i.title = 'Erklärung anzeigen'; i.setAttribute('aria-label', 'Erklärung anzeigen');
+          h.appendChild(i);
+          i.addEventListener('click', (e) => { e.stopPropagation(); g.classList.toggle('sg-help'); i.classList.toggle('on', g.classList.contains('sg-help')); });
+        }
+        const c = document.createElement('span');
+        c.className = 'sg-chev'; c.textContent = '▾'; c.setAttribute('aria-hidden', 'true');
+        h.appendChild(c);
+        h.setAttribute('role', 'button'); h.tabIndex = 0;
+        const tog = (e) => { e.stopPropagation(); const now = !g.classList.contains('sg-c'); g.classList.toggle('sg-c', now); if (now) settings.sgCollapsed[key] = 1; else delete settings.sgCollapsed[key]; saveSettings(); };
+        h.addEventListener('click', tog);
+        h.addEventListener('keydown', (e) => { if (e.key === 'Enter') tog(e); });
+      });
+    }
+    let sgPending = false;
+    new MutationObserver(() => { if (sgPending) return; sgPending = true; requestAnimationFrame(() => { sgPending = false; enhanceGroups(panel); }); }).observe(panel, { childList: true, subtree: true });
+    enhanceGroups(panel);
+    panel.classList.toggle('help-all', !!settings.helpAll);
 
     // ---------- PC: Breite verstellen + neben der Web App andocken ----------
     if (settings.panelW === undefined) settings.panelW = 560;
