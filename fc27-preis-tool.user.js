@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.33.0
+// @version      2.33.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5597,8 +5597,9 @@ const SBC = (function () {
       const mb = critMaxBuy();
       st.rows.forEach((r, i) => {
         if (r.done) return;
-        const ok = r.profBin != null ? r.profBin >= settings.snipeMinProfit : (mb > 0 && r.bin <= mb);
-        const score = r.profBin != null ? r.profBin : -r.bin;
+        // Eigener Max.-Sofortkauf gesetzt -> jeder Treffer darunter ist gewollt; sonst zählt der Futbin-Gewinn
+        const ok = mb > 0 ? r.bin <= mb : (r.profBin != null && r.profBin >= settings.snipeMinProfit);
+        const score = mb > 0 ? -r.bin : (r.profBin != null ? r.profBin : -r.bin);
         if (ok && score > bv) { bv = score; bi = i; }
       });
       if (bi < 0 || Date.now() - st.t > 8000) return;
@@ -5662,6 +5663,10 @@ const SBC = (function () {
           st.msg = '';
           { let bi = 0, bv = -Infinity; st.rows.forEach((r, i) => { if (r.profBin != null && r.profBin > bv) { bv = r.profBin; bi = i; } }); st.sel = bi; }
           autoArm();
+          if (!st.arm && settings.snipeOneKey) {
+            const b0 = st.rows[0];
+            st.msg = critMaxBuy() ? '' : (b0 && b0.profBin != null ? `Treffer, aber Gewinn ${b0.profBin >= 0 ? '+' : '−'}${fmt(Math.abs(b0.profBin))} liegt unter deinem Minimum (+${fmt(settings.snipeMinProfit)}) – K kauft trotzdem (2×). Tipp: Max. Sofortkauf setzen.` : 'Treffer – Futbin-Preis lädt noch. Tipp: Max. Sofortkauf setzen, dann ist jeder Treffer sofort mit der Leertaste kaufbar.');
+          }
           st.rows.filter((r) => r.p.isPlayer && !r.market).slice(0, 2).forEach((r) => {
             getPrice('futbin', r.p, 'futbin:snipe').then(() => { const n = mk({ raw: r.raw, p: r.p }); Object.assign(r, { market: n.market, maxBid: n.maxBid, profBin: n.profBin, profBid: n.profBid }); autoArm(); render(); }).catch(() => {});
           });
@@ -5818,7 +5823,10 @@ const SBC = (function () {
       if (!box || !panel.classList.contains('open') || !panel.classList.contains('v-buy')) return;
       if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
       const a = document.activeElement;
-      if (a && (/^(input|textarea|select)$/i.test(a.tagName) || a.isContentEditable)) return;
+      const typing = a && (a.tagName === 'TEXTAREA' || a.isContentEditable || a.tagName === 'SELECT' || (a.tagName === 'INPUT' && !/^(checkbox|radio|button|submit)$/i.test(a.type)));
+      if (typing) { if (ev.key === 'Escape') { a.blur(); ev.preventDefault(); } return; }
+      // Fokus auf Häkchen/Knöpfen darf die Leertaste nicht „schlucken“
+      if (a && a !== document.body && (a.tagName === 'INPUT' || a.tagName === 'BUTTON') && panel.contains(a)) { try { a.blur(); } catch (e) { /* */ } }
       const k = ev.key;
       let done = true;
       if (ev.shiftKey && /^Digit[1-9]$/.test(ev.code || '')) { const t = settings.snipeTargets[+ev.code.slice(5) - 1]; if (t && !ev.repeat) useTarget(t.id); }
