@@ -1572,7 +1572,8 @@
   setInterval(() => {
     const want = settings.touchBar === 'on' || (settings.touchBar === 'auto' && touchDev());
     const onMarket = want && !panel.classList.contains('open') && !!(findSearchButton() || findBuyButton() || findConfirmButton() || marketOffers().length);
-    tbar.classList.toggle('show', onMarket);
+    const sbOn = !!(document.getElementById('fcpt-snipebtn') && document.getElementById('fcpt-snipebtn').classList.contains('show'));
+    tbar.classList.toggle('show', onMarket && !sbOn);
     const okb = tbar.querySelector('[data-tb="ok"]');
     if (okb) okb.classList.toggle('pulse', !!(onMarket && findConfirmButton()));
   }, 500);

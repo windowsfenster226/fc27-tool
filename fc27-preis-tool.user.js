@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.36.0
+// @version      2.37.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -2216,7 +2216,8 @@ const SBC = (function () {
   setInterval(() => {
     const want = settings.touchBar === 'on' || (settings.touchBar === 'auto' && touchDev());
     const onMarket = want && !panel.classList.contains('open') && !!(findSearchButton() || findBuyButton() || findConfirmButton() || marketOffers().length);
-    tbar.classList.toggle('show', onMarket);
+    const sbOn = !!(document.getElementById('fcpt-snipebtn') && document.getElementById('fcpt-snipebtn').classList.contains('show'));
+    tbar.classList.toggle('show', onMarket && !sbOn);
     const okb = tbar.querySelector('[data-tb="ok"]');
     if (okb) okb.classList.toggle('pulse', !!(onMarket && findConfirmButton()));
   }, 500);
@@ -5791,7 +5792,46 @@ const SBC = (function () {
       </div>`;
     }
 
+    // ---------- Handy: ein großer Snipe-Knopf unten (auch bei geschlossenem Tool) ----------
+    if (settings.snipeBtn === undefined) settings.snipeBtn = 'auto';   // 'auto' = Touch-Geräte · 'on' · 'off'
+    const fb = document.createElement('div');
+    fb.id = 'fcpt-snipebtn';
+    fb.innerHTML = '<button type="button" data-sb="go"></button><div class="sb-st"></div>';
+    document.body.appendChild(fb);
+    GM_addStyle(`
+      #fcpt-snipebtn{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom, 0px) + var(--fcpt-sbb, 90px));z-index:100001;display:none;flex-direction:column;align-items:center;gap:6px;width:min(340px,86vw)}
+      #fcpt-snipebtn.show{display:flex}
+      #fcpt-snipebtn button{width:100%;height:66px;border:0;border-radius:20px;background:#f2c14e;color:#15120a;font:800 20px system-ui,-apple-system,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.5);touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+      #fcpt-snipebtn button small{font-size:15px;font-weight:700;opacity:.9}
+      #fcpt-snipebtn button.buy{background:#f97316;color:#fff;animation:fcptArm 1s infinite}
+      #fcpt-snipebtn button.busy{opacity:.75}
+      #fcpt-snipebtn button:active{transform:scale(.97)}
+      #fcpt-snipebtn .sb-st{max-width:100%;background:rgba(11,15,23,.92);color:#e9edf5;border:1px solid #263049;border-radius:12px;padding:5px 10px;font:600 12.5px system-ui,sans-serif;text-align:center}
+      #fcpt-snipebtn .sb-st:empty{display:none}
+      @keyframes fcptArm{50%{filter:brightness(1.25)}}`);
+    const touch = () => !!(W.matchMedia && W.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in W;
+    function armedRow() { return st.arm && st.arm.startsWith('buy:') && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null; }
+    function updateFloat() {
+      const want = settings.snipeBtn === 'on' || (settings.snipeBtn === 'auto' && touch());
+      const show = want && settings.snipeTurbo && !!TC.crit && !panel.classList.contains('open');
+      fb.classList.toggle('show', show);
+      if (!show) return;
+      fb.style.setProperty('--fcpt-sbb', `${(settings.iosBottom || 80) + 12}px`);
+      const b = fb.querySelector('button');
+      const ar = armedRow();
+      b.className = ar ? 'buy' : st.busy ? 'busy' : '';
+      b.innerHTML = ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ Snipen${activeTarget ? ` <small>· ${esc((settings.snipeTargets.find((t) => t.id === activeTarget) || {}).label || '')}</small>` : ''}`;
+      const done = st.rows.find((r) => r.done);
+      fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
+        : ar ? 'Nochmal tippen = kaufen · 6 Sek. Zeit'
+          : done ? done.done.t.replace(/ – .*/, '')
+            : st.rows.length ? `${st.rows.length} Treffer – keiner im Max.-Preis (Tool öffnen für Details)` : '';
+    }
+    fb.querySelector('button').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); mainAction(); });
+    setInterval(updateFloat, 1000);
+
     function render() {
+      updateFloat();
       if (!box) return;
       const g = typeof GUARD !== 'undefined' ? GUARD.level() : { level: 'green', text: '' };
       let best = -1, bv = -Infinity;
@@ -5803,6 +5843,7 @@ const SBC = (function () {
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
           <label title="Leertaste sucht – ist ein Deal bereit, kauft dieselbe Taste ihn"><input type="checkbox" data-bo="one" ${settings.snipeOneKey ? 'checked' : ''}> 1-Tasten-Modus</label>
           <label title="Sucht direkt über EAs Schnittstelle statt über die Seite – deutlich schneller"><input type="checkbox" data-bo="turbo" ${settings.snipeTurbo ? 'checked' : ''}> Turbo</label>
+          <label title="Großer Snipe-Knopf unten auf dem Handy – funktioniert auch bei geschlossenem Tool"><input type="checkbox" data-bo="sbtn" ${settings.snipeBtn !== 'off' ? 'checked' : ''}> Handy-Knopf</label>
           <label title="Kurzer Ton, wenn ein lohnender Deal gefunden wurde"><input type="checkbox" data-bo="snd" ${settings.snipeSound ? 'checked' : ''}> Ton</label>
           <label title="Ab diesem Gewinn (nach Steuer) gilt ein Angebot als lohnend">ab <input type="number" min="0" step="50" data-bo="min" value="${settings.snipeMinProfit}"> Gewinn</label>
         </div>
@@ -5852,6 +5893,7 @@ const SBC = (function () {
       box.querySelectorAll('[data-bo]').forEach((x) => x.addEventListener('change', (e) => {
         e.stopPropagation();
         if (x.dataset.bo === 'arm') settings.snipeArm = x.checked;
+        if (x.dataset.bo === 'sbtn') settings.snipeBtn = x.checked ? 'auto' : 'off';
         if (x.dataset.bo === 'one') { settings.snipeOneKey = x.checked; if (x.checked) settings.snipeArm = true; saveSettings(); render(); }
         if (x.dataset.bo === 'turbo') { settings.snipeTurbo = x.checked; saveSettings(); render(); }
         if (x.dataset.bo === 'snd') { settings.snipeSound = x.checked; if (x.checked) beep(); }
