@@ -344,20 +344,22 @@
     if (settings.snipeBtn === undefined) settings.snipeBtn = 'auto';   // 'auto' = Touch-Geräte · 'on' · 'off'
     const fb = document.createElement('div');
     fb.id = 'fcpt-snipebtn';
-    fb.innerHTML = '<button type="button" data-sb="go"></button><div class="sb-st"></div>';
+    fb.innerHTML = '<div style="position:relative"><span class="sb-grip" title="Ziehen zum Verschieben">⋮</span><button type="button" data-sb="go"></button></div><div class="sb-st"></div>';
     document.body.appendChild(fb);
     GM_addStyle(`
-      #fcpt-snipebtn{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom, 0px) + var(--fcpt-sbb, 90px));z-index:100001;display:none;flex-direction:column;align-items:center;gap:6px;width:min(340px,86vw)}
+      #fcpt-snipebtn{position:fixed;right:var(--fcpt-sbr, 12px);bottom:calc(env(safe-area-inset-bottom, 0px) + var(--fcpt-sbb, 90px));z-index:100001;display:none;flex-direction:column;align-items:flex-end;gap:4px;max-width:min(240px,70vw)}
+      #fcpt-snipebtn.typing{display:none !important}
       #fcpt-snipebtn.show{display:flex}
-      #fcpt-snipebtn button{width:100%;height:66px;border:0;border-radius:20px;background:#f2c14e;color:#15120a;font:800 20px system-ui,-apple-system,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.5);touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
-      #fcpt-snipebtn button small{font-size:15px;font-weight:700;opacity:.9}
+      #fcpt-snipebtn button{min-width:96px;height:48px;padding:0 16px;border:0;border-radius:24px;background:#f2c14e;color:#15120a;font:800 16px system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.5);touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+      #fcpt-snipebtn button small{font-size:12px;font-weight:700;opacity:.9}
+      #fcpt-snipebtn .sb-grip{position:absolute;left:-14px;top:50%;width:12px;height:28px;margin-top:-14px;border-radius:6px;background:rgba(11,15,23,.7);color:#a3aec2;font:700 10px/28px system-ui;text-align:center;touch-action:none}
       #fcpt-snipebtn button.buy{background:#f97316;color:#fff;animation:fcptArm 1s infinite}
       #fcpt-snipebtn button.busy{opacity:.75}
       #fcpt-snipebtn button.ok{background:#16a34a;color:#fff}
       #fcpt-snipebtn button.fail{background:#dc2626;color:#fff;animation:fcptShake .35s}
       @keyframes fcptShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
       #fcpt-snipebtn button:active{transform:scale(.97)}
-      #fcpt-snipebtn .sb-st{max-width:100%;background:rgba(11,15,23,.92);color:#e9edf5;border:1px solid #263049;border-radius:12px;padding:5px 10px;font:600 12.5px system-ui,sans-serif;text-align:center}
+      #fcpt-snipebtn .sb-st{max-width:100%;background:rgba(11,15,23,.92);color:#e9edf5;border:1px solid #263049;border-radius:10px;padding:3px 8px;font:600 11px system-ui,sans-serif;text-align:right}
       #fcpt-snipebtn .sb-st:empty{display:none}
       @keyframes fcptArm{50%{filter:brightness(1.25)}}`);
     const touch = () => !!(W.matchMedia && W.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in W;
@@ -367,20 +369,42 @@
       const show = want && settings.snipeTurbo && !!TC.crit && !panel.classList.contains('open');
       fb.classList.toggle('show', show);
       if (!show) return;
-      fb.style.setProperty('--fcpt-sbb', `${(settings.iosBottom || 80) + 12}px`);
+      const pos = settings.sbPos || {};
+      fb.style.setProperty('--fcpt-sbb', `${pos.b != null ? pos.b : (settings.iosBottom || 80) + 12}px`);
+      fb.style.setProperty('--fcpt-sbr', `${pos.r != null ? pos.r : 12}px`);
       const b = fb.querySelector('button');
       const ar = armedRow();
       const fl = st.flash && Date.now() < st.flash.until ? st.flash : null;
       b.className = fl ? (fl.ok ? 'ok' : 'fail') : ar ? 'buy' : st.busy ? 'busy' : '';
-      if (coolLeft() && !fl) { b.className = 'fail'; b.innerHTML = `⛔ Pause <small>· noch ${coolLeft()} Sek.</small>`; fb.querySelector('.sb-st').textContent = `EA hat mit Code ${st.coolCode} geantwortet – kurz warten`; return; }
-      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${settings.snipeInstant && critMaxBuy() ? `Snipen & kaufen <small>≤ ${fmt(critMaxBuy())}</small>` : 'Snipen'}${activeTarget ? ` <small>· ${esc((settings.snipeTargets.find((t) => t.id === activeTarget) || {}).label || '')}</small>` : ''}`;
+      if (coolLeft() && !fl) { b.className = 'fail'; b.innerHTML = `⛔ ${coolLeft()} s`; fb.querySelector('.sb-st').textContent = `EA-Code ${st.coolCode} – Pause`; return; }
+      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ Snipe${settings.snipeInstant && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
       fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
-        : ar ? 'Nochmal tippen = kaufen · 6 Sek. Zeit'
+        : ar ? 'Nochmal tippen = kaufen'
           : done ? done.done.t.replace(/ – .*/, '')
-            : st.rows.length ? `${st.rows.length} Treffer – keiner im Max.-Preis (Tool öffnen für Details)` : '';
+            : st.rows.length ? `${st.rows.length} Treffer, keiner im Max.-Preis` : '';
     }
     fb.querySelector('button').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); mainAction(); });
+    // Verschieben: am Griff ⋮ ziehen (Position wird gemerkt)
+    const grip = fb.querySelector('.sb-grip');
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      try { grip.setPointerCapture(e.pointerId); } catch (er) { /* */ }
+      const r0 = fb.getBoundingClientRect(), sx = e.clientX, sy = e.clientY;
+      const R0 = W.innerWidth - r0.right, B0 = W.innerHeight - r0.bottom;
+      const mv = (ev) => {
+        const r = Math.max(0, Math.min(W.innerWidth - 80, R0 - (ev.clientX - sx)));
+        const b = Math.max(0, Math.min(W.innerHeight - 60, B0 - (ev.clientY - sy)));
+        settings.sbPos = { r: Math.round(r), b: Math.round(b) };
+        fb.style.setProperty('--fcpt-sbr', `${settings.sbPos.r}px`);
+        fb.style.setProperty('--fcpt-sbb', `${settings.sbPos.b}px`);
+      };
+      const up = () => { grip.removeEventListener('pointermove', mv); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up); saveSettings(); };
+      grip.addEventListener('pointermove', mv); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+    });
+    // Beim Eintippen in EAs Felder (Preise usw.) ausblenden – die Tastatur braucht Platz
+    document.addEventListener('focusin', (e) => { const t = e.target; if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && !t.closest('#fcpt-panel')) fb.classList.add('typing'); }, true);
+    document.addEventListener('focusout', () => setTimeout(() => { const a = document.activeElement; if (!a || !/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) fb.classList.remove('typing'); }, 150), true);
     setInterval(updateFloat, 1000);
 
     function render() {
