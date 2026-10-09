@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.38.0
+// @version      2.39.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5510,7 +5510,7 @@ const SBC = (function () {
     if (settings.snipeMinProfit === undefined) settings.snipeMinProfit = 200;
     let box = null;
     const st = { rows: [], msg: '', busy: false, t: 0, arm: null, armT: 0, armMs: 4000, label: '', sel: 0, lastSearch: 0,
-      stats: { n: 0, hits: 0, buys: 0, ms: 0 } };
+      stats: { n: 0, hits: 0, buys: 0, miss: 0, ms: 0 }, log: [], flash: null };
     let actx = null;
     function beep() {
       if (!settings.snipeSound) return;
@@ -5522,6 +5522,27 @@ const SBC = (function () {
         o.frequency.setValueAtTime(1320, actx.currentTime + 0.08);
         o.stop(actx.currentTime + 0.18);
       } catch (e) { /* */ }
+    }
+    function failTone() {
+      if (!settings.snipeSound) return;
+      try {
+        actx = actx || new (W.AudioContext || W.webkitAudioContext)();
+        const o = actx.createOscillator(), g = actx.createGain();
+        o.type = 'square'; o.frequency.value = 220; g.gain.value = 0.06;
+        o.connect(g); g.connect(actx.destination); o.start();
+        o.frequency.setValueAtTime(160, actx.currentTime + 0.12);
+        o.stop(actx.currentTime + 0.3);
+      } catch (e) { /* */ }
+    }
+    // Ergebnis eines Kaufversuchs deutlich anzeigen (Knopf färbt sich, Ton, Meldung, Liste)
+    function result(r, ok, why) {
+      st.log.unshift({ t: Date.now(), name: `${r.p.rating ?? ''} ${r.p.name}`.trim(), price: r.bin, ok, why });
+      st.log = st.log.slice(0, 12);
+      if (ok) st.stats.buys++; else st.stats.miss++;
+      const short = String(why || '').replace(/ – .*/, '').slice(0, 28);
+      st.flash = { ok, text: ok ? `✓ GEKAUFT ${fmt(r.bin)}` : '✗ VERPASST', sub: ok ? '' : short, until: Date.now() + 3500 };
+      if (!ok) { failTone(); showToast(`✗ Nicht bekommen: ${r.p.name} ${fmt(r.bin)} – ${why}`, true); try { if (navigator.vibrate) navigator.vibrate([80, 60, 80]); } catch (e) { /* */ } }
+      setTimeout(() => { if (st.flash && Date.now() >= st.flash.until) { st.flash = null; render(); } }, 3600);
     }
     // Ist gerade ein Deal kaufbereit, der mit derselben Taste gekauft werden darf?
     // (kurze Sperre, damit ein schon „unterwegs“ gedrückter Tastendruck nicht ungesehen kauft)
@@ -5778,10 +5799,13 @@ const SBC = (function () {
         const ev = await pr;
         st.lastBuyMs = Math.round(performance.now() - tb);
         if (st.hitAt) st.hitToBuy = Math.round(tb - st.hitAt);
-        if (ev && ev.success === false) r.done = { bad: true, t: `${kind === 'buy' ? 'Kauf' : 'Gebot'} abgelehnt: ${ERR[ev.status] || `Code ${ev.status || '?'}`}` };
-        else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); st.stats.buys++; }
+        if (ev && ev.success === false) {
+          const why = ERR[ev.status] || `Code ${ev.status || '?'}`;
+          r.done = { bad: true, t: `${kind === 'buy' ? '✗ Nicht bekommen' : 'Gebot abgelehnt'}: ${why}` };
+          if (kind === 'buy') result(r, false, why);
+        } else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); result(r, true); }
         else { r.done = { t: `✓ Höchstbietender mit ${fmt(amount)} – steht unter „Meine Gebote“` }; r.cur = amount; r.nb = amount + stepFor(amount); if (r.market) r.profBid = afterTax(r.market) - r.nb; }
-      } catch (e) { r.done = { bad: true, t: e.message }; }
+      } catch (e) { r.done = { bad: true, t: e.message }; if (kind === 'buy') result(r, false, /Zeitüberschreitung/.test(e.message) ? 'EA antwortet nicht' : e.message); }
       r.busy = false; render();
       if (kind === 'bid' && typeof TARGETS !== 'undefined' && TARGETS.reload) TARGETS.reload();
     }
@@ -5818,6 +5842,9 @@ const SBC = (function () {
       #fcpt-snipebtn button small{font-size:15px;font-weight:700;opacity:.9}
       #fcpt-snipebtn button.buy{background:#f97316;color:#fff;animation:fcptArm 1s infinite}
       #fcpt-snipebtn button.busy{opacity:.75}
+      #fcpt-snipebtn button.ok{background:#16a34a;color:#fff}
+      #fcpt-snipebtn button.fail{background:#dc2626;color:#fff;animation:fcptShake .35s}
+      @keyframes fcptShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
       #fcpt-snipebtn button:active{transform:scale(.97)}
       #fcpt-snipebtn .sb-st{max-width:100%;background:rgba(11,15,23,.92);color:#e9edf5;border:1px solid #263049;border-radius:12px;padding:5px 10px;font:600 12.5px system-ui,sans-serif;text-align:center}
       #fcpt-snipebtn .sb-st:empty{display:none}
@@ -5832,8 +5859,9 @@ const SBC = (function () {
       fb.style.setProperty('--fcpt-sbb', `${(settings.iosBottom || 80) + 12}px`);
       const b = fb.querySelector('button');
       const ar = armedRow();
-      b.className = ar ? 'buy' : st.busy ? 'busy' : '';
-      b.innerHTML = ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${settings.snipeInstant && critMaxBuy() ? `Snipen & kaufen <small>≤ ${fmt(critMaxBuy())}</small>` : 'Snipen'}${activeTarget ? ` <small>· ${esc((settings.snipeTargets.find((t) => t.id === activeTarget) || {}).label || '')}</small>` : ''}`;
+      const fl = st.flash && Date.now() < st.flash.until ? st.flash : null;
+      b.className = fl ? (fl.ok ? 'ok' : 'fail') : ar ? 'buy' : st.busy ? 'busy' : '';
+      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${settings.snipeInstant && critMaxBuy() ? `Snipen & kaufen <small>≤ ${fmt(critMaxBuy())}</small>` : 'Snipen'}${activeTarget ? ` <small>· ${esc((settings.snipeTargets.find((t) => t.id === activeTarget) || {}).label || '')}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
       fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
         : ar ? 'Nochmal tippen = kaufen · 6 Sek. Zeit'
@@ -5863,9 +5891,11 @@ const SBC = (function () {
         </div>
         <div class="by-mode ${settings.snipeTurbo && TC.crit ? 'on' : ''}">${settings.snipeTurbo ? (TC.crit ? `⚡ Turbo aktiv – sucht direkt bei EA, ohne Seitenwechsel${critMaxBuy() ? ` · Max. SK ${fmt(critMaxBuy())}` : ''}${st.lastMs ? ` · letzte Suche ${st.lastMs} ms` : ''}` : '⚡ Turbo: einmal in der Web App normal auf „Suchen“ klicken – danach übernimmt das Tool die Suche direkt.') : 'Normaler Modus (über die Web-App-Seite)'}</div>
         ${settings.snipeInstant ? `<div class="by-ready">⚡ Sofort kaufen ist an: Jede Suche kauft ohne Rückfrage das günstigste Angebot bis <b>${critMaxBuy() ? fmt(critMaxBuy()) : '– (Max. Sofortkauf fehlt, dann wird nichts sofort gekauft)'}</b>. Höchstens 1 Kauf pro Tipp.</div>` : ''}
+        ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
+        ${st.log.length ? `<details class="by-log" ${st.log.length && !st.log[0].ok ? 'open' : ''}><summary>Letzte Snipes: ${st.stats.buys} ✓ · ${st.stats.miss} ✗</summary>${st.log.map((l) => `<div class="pt-r ${l.ok ? '' : 'miss'}"><span>${l.ok ? '✓' : '✗'} ${esc(l.name)} · ${fmt(l.price)}</span><span>${l.ok ? 'gekauft' : esc(l.why)} · ${new Date(l.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div>`).join('')}</details>` : ''}
         ${st.hitToBuy != null || st.lastBuyMs != null ? `<div class="by-stats">Treffer → Kauf-Anfrage: ${st.hitToBuy != null ? fmt(st.hitToBuy) + ' ms' : '–'} · EA-Antwort Kauf: ${st.lastBuyMs != null ? fmt(st.lastBuyMs) + ' ms' : '–'}</div>` : ''}
         ${targetsHtml()}
-        ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
+        ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · ${st.stats.miss} verpasst · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
         ${st.arm && st.armMs > 4000 ? `<div class="by-ready">Bester Deal bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder K)' : '<b>K</b>, <b>Enter</b> oder Klick'} kauft ihn. <b>Esc</b> = nicht kaufen.</div>` : ''}
         ${st.rows.length ? `<div class="by-h"><b>${esc(st.label)}</b><span>${st.rows.length} Angebote · ${agoText(st.t)}</span></div>
@@ -6207,6 +6237,8 @@ const SBC = (function () {
       .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
       .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
+      .by-flash{border-radius:12px;padding:12px;text-align:center;font:800 17px system-ui,sans-serif}.by-flash.ok{background:#14532d;color:#bbf7d0;border:1px solid #16a34a}.by-flash.fail{background:#450a0a;color:#fecaca;border:1px solid #dc2626}
+      .by-log summary{cursor:pointer;font-size:13px;color:var(--ink2);margin:2px 0}.by-log .pt-r{font-size:12px}.by-log .pt-r.miss{color:#fca5a5}
       .by-tgts{display:flex;flex-direction:column;gap:6px;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:8px 10px}
       .by-tgts-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
       .by-tsave{border:1px dashed #3a4562;background:transparent;color:var(--gold);border-radius:8px;padding:5px 9px;font:600 12px system-ui,sans-serif;cursor:pointer}.by-tsave:disabled{opacity:.5;cursor:default}
