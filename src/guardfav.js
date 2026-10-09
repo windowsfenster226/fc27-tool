@@ -68,7 +68,7 @@
       if (/\/trade\/\d+\/bid/.test(url)) ev.bid.push(now);
       if (/\/auctionhouse(\?|$)/.test(url) && method === 'POST') ev.list.push(now);
       Object.values(ev).forEach((a) => prune(a, 3600000));
-      if (BLOCK_CODES.includes(Number(status))) {
+      if (BLOCK_CODES.includes(Number(status)) || (Number(status) === 403 && /\/transfermarket|\/trade\/|\/bid/.test(url))) {
         lastBlock = { t: now, status };
         showToast(`⛔ EA bremst (Code ${status}) – mach jetzt 5–10 Min. Pause, sonst droht eine Markt-Sperre.`, true);
         try { if (typeof WATCH !== 'undefined') WATCH.push(`EA bremst dein Konto (Code ${status}) – Pause machen!`, 'FC27 Sperren-Schutz'); } catch (e) { /* */ }

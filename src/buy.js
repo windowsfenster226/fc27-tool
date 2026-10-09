@@ -53,7 +53,12 @@
     // (kurze Sperre, damit ein schon „unterwegs“ gedrückter Tastendruck nicht ungesehen kauft)
     const readyBuy = () => settings.snipeOneKey && st.arm && st.arm.startsWith('buy:') && st.armMs > 4000
       && Date.now() - st.armT > 180 && Date.now() - st.armT < st.armMs;
+    // Nach einer Sperr-Antwort von EA: Zwangspause, damit das Konto nicht gesperrt wird
+    const BLOCK = [403, 429, 458, 459, 460, 512, 521];
+    function cooldown(status) { if (BLOCK.includes(Number(status))) { st.cool = Date.now() + (Number(status) === 458 ? 30000 : 90000); st.coolCode = status; } }
+    const coolLeft = () => Math.max(0, Math.ceil(((st.cool || 0) - Date.now()) / 1000));
     function mainAction() {
+      if (coolLeft()) { st.msg = `⛔ EA hat mit Code ${st.coolCode} geantwortet – Pause, noch ${coolLeft()} Sek. ${st.coolCode === 458 ? 'Bitte in der Web App die Prüfung (Captcha) erledigen.' : 'Danach langsamer suchen.'}`; render(); return; }
       if (readyBuy()) act(+st.arm.split(':')[1], 'buy');
       else if (!(settings.snipeOneKey && st.arm && st.armMs > 4000 && Date.now() - st.armT <= 180)) search();
     }
@@ -100,7 +105,7 @@
       const fn = S.searchTransferMarket.orig || S.searchTransferMarket;
       const ev = await obs(fn.call(S, TC.crit, 1), 8000);
       st.lastMs = Math.round(performance.now() - t0);
-      if (ev && ev.success === false) throw Object.assign(new Error(ERR[ev.status] || `EA-Code ${ev.status || '?'}`), { status: ev.status });
+      if (ev && ev.success === false) { cooldown(ev.status); throw Object.assign(new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`), { status: ev.status }); }
       const items = ((ev && (ev.response || ev.data)) || {}).items || [];
       return items.map((raw) => ({ raw, p: mapItem(raw) })).filter((o) => o.p && o.p.active && o.p.tradeOwner !== true && o.p.buyNow);
     }
@@ -203,7 +208,7 @@
       const t = setTimeout(() => reject(new Error('Zeitüberschreitung bei EA')), ms);
       o.observe(sub, (ob, ev) => { clearTimeout(t); try { ob.unobserve(sub); } catch (e) { /* */ } resolve(ev || {}); });
     });
-    const ERR = { 461: 'zu spät – schon verkauft oder überboten', 470: 'nicht genug Münzen', 478: 'Gebot zu niedrig', 473: 'eigene Karte', 409: 'schon vergeben', 429: 'EA bremst – kurz Pause', 512: 'EA bremst – Pause machen', 521: 'EA bremst – Pause machen' };
+    const ERR = { 403: 'EA verweigert den Zugriff (zu viele Anfragen oder Markt kurz gesperrt) – Pause machen', 458: 'EA will eine Prüfung (Captcha) – in der Web App bestätigen', 461: 'zu spät – schon verkauft oder überboten', 470: 'nicht genug Münzen', 478: 'Gebot zu niedrig', 473: 'eigene Karte', 409: 'schon vergeben', 429: 'EA bremst – kurz Pause', 512: 'EA bremst – Pause machen', 521: 'EA bremst – Pause machen' };
 
     function mk(o) {
       const raw = o.raw, p = o.p;
@@ -306,6 +311,7 @@
         if (st.hitAt) st.hitToBuy = Math.round(tb - st.hitAt);
         if (ev && ev.success === false) {
           const why = ERR[ev.status] || `Code ${ev.status || '?'}`;
+          cooldown(ev.status);
           r.done = { bad: true, t: `${kind === 'buy' ? '✗ Nicht bekommen' : 'Gebot abgelehnt'}: ${why}` };
           if (kind === 'buy') result(r, false, why);
         } else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); result(r, true); }
@@ -366,6 +372,7 @@
       const ar = armedRow();
       const fl = st.flash && Date.now() < st.flash.until ? st.flash : null;
       b.className = fl ? (fl.ok ? 'ok' : 'fail') : ar ? 'buy' : st.busy ? 'busy' : '';
+      if (coolLeft() && !fl) { b.className = 'fail'; b.innerHTML = `⛔ Pause <small>· noch ${coolLeft()} Sek.</small>`; fb.querySelector('.sb-st').textContent = `EA hat mit Code ${st.coolCode} geantwortet – kurz warten`; return; }
       b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${settings.snipeInstant && critMaxBuy() ? `Snipen & kaufen <small>≤ ${fmt(critMaxBuy())}</small>` : 'Snipen'}${activeTarget ? ` <small>· ${esc((settings.snipeTargets.find((t) => t.id === activeTarget) || {}).label || '')}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
       fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
