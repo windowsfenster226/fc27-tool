@@ -282,5 +282,5 @@
     }
 
     function mount(el) { box = el; render(); }
-    return { mount, solve, base, render };
+    return { baseScore: base, mount, solve, base, render };
   })();
