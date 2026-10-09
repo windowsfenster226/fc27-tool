@@ -10,6 +10,7 @@
     if (settings.bidConfirm === undefined) settings.bidConfirm = false;  // Bieten: ein Tipp (Betrag steht drauf)
     if (settings.snipeArm === undefined) settings.snipeArm = true;       // bester Deal nach der Suche sofort kaufbereit (1× K)
     if (settings.snipeSound === undefined) settings.snipeSound = true;   // Ton bei lohnendem Treffer
+    if (settings.snipeInstant === undefined) settings.snipeInstant = false;   // Treffer bis Max.-Sofortkauf sofort kaufen (1 Tipp)
     if (settings.snipeOneKey === undefined) settings.snipeOneKey = true;  // Leertaste: suchen – bei bereitem Deal kaufen
     if (settings.snipeMinProfit === undefined) settings.snipeMinProfit = 200;
     let box = null;
@@ -30,10 +31,10 @@
     // Ist gerade ein Deal kaufbereit, der mit derselben Taste gekauft werden darf?
     // (kurze Sperre, damit ein schon „unterwegs“ gedrückter Tastendruck nicht ungesehen kauft)
     const readyBuy = () => settings.snipeOneKey && st.arm && st.arm.startsWith('buy:') && st.armMs > 4000
-      && Date.now() - st.armT > 350 && Date.now() - st.armT < st.armMs;
+      && Date.now() - st.armT > 180 && Date.now() - st.armT < st.armMs;
     function mainAction() {
       if (readyBuy()) act(+st.arm.split(':')[1], 'buy');
-      else if (!(settings.snipeOneKey && st.arm && st.armMs > 4000 && Date.now() - st.armT <= 350)) search();
+      else if (!(settings.snipeOneKey && st.arm && st.armMs > 4000 && Date.now() - st.armT <= 180)) search();
     }
     // ---------- TURBO: EAs eigene Marktsuche direkt aufrufen (ohne Seitenwechsel) ----------
     // Die Suchkriterien übernimmt das Tool, sobald du in der Web App einmal normal suchst.
@@ -213,6 +214,13 @@
           st.label = names.length === 1 ? `${st.rows[0].p.rating ?? ''} ${names[0]}` : `${names.length} verschiedene Karten`;
           st.msg = '';
           { let bi = 0, bv = -Infinity; st.rows.forEach((r, i) => { if (r.profBin != null && r.profBin > bv) { bv = r.profBin; bi = i; } }); st.sel = bi; }
+          st.hitAt = performance.now();
+          // Sofort-Kauf (nur wenn eingeschaltet UND eigener Max.-Sofortkauf gesetzt): günstigster Treffer im Limit, max. 1 Kauf pro Tipp
+          const mbI = critMaxBuy();
+          if (settings.snipeInstant && mbI > 0) {
+            const bi = st.rows.findIndex((r) => r.bin <= mbI);
+            if (bi >= 0) { st.sel = bi; st.msg = ''; act(bi, 'buy', true); beep(); return; }
+          }
           autoArm();
           if (!st.arm && settings.snipeOneKey) {
             const b0 = st.rows[0];
@@ -252,13 +260,13 @@
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
     }
 
-    async function act(i, kind) {
+    async function act(i, kind, force) {
       const r = st.rows[i];
       if (!r || r.busy || (r.done && !r.done.bad && kind === 'buy')) return;
       const amount = kind === 'buy' ? r.bin : r.nb;
       const key = `${kind}:${i}`;
       const needConfirm = kind === 'buy' ? settings.buyConfirm : settings.bidConfirm;
-      if (needConfirm && (st.arm !== key || Date.now() - st.armT > st.armMs)) {
+      if (!force && needConfirm && (st.arm !== key || Date.now() - st.armT > st.armMs)) {
         st.arm = key; st.armT = Date.now(); st.armMs = 4000; render();
         setTimeout(() => { if (st.arm === key) { st.arm = null; render(); } }, 4000);
         return;
@@ -267,9 +275,14 @@
       const S = W.services && W.services.Item;
       if (!S || typeof S.bid !== 'function') { r.done = { bad: true, t: 'EA-Funktion zum Bieten nicht gefunden' }; render(); return; }
       if ((SBCUI.userCoins() ?? Infinity) < amount) { r.done = { bad: true, t: 'nicht genug Münzen' }; render(); return; }
-      r.busy = true; render();
+      r.busy = true;
+      const tb = performance.now();
+      const pr = obs(S.bid(r.raw, amount));   // Anfrage sofort raus, erst danach zeichnen
+      render();
       try {
-        const ev = await obs(S.bid(r.raw, amount));
+        const ev = await pr;
+        st.lastBuyMs = Math.round(performance.now() - tb);
+        if (st.hitAt) st.hitToBuy = Math.round(tb - st.hitAt);
         if (ev && ev.success === false) r.done = { bad: true, t: `${kind === 'buy' ? 'Kauf' : 'Gebot'} abgelehnt: ${ERR[ev.status] || `Code ${ev.status || '?'}`}` };
         else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); st.stats.buys++; }
         else { r.done = { t: `✓ Höchstbietender mit ${fmt(amount)} – steht unter „Meine Gebote“` }; r.cur = amount; r.nb = amount + stepFor(amount); if (r.market) r.profBid = afterTax(r.market) - r.nb; }
@@ -325,7 +338,7 @@
       const b = fb.querySelector('button');
       const ar = armedRow();
       b.className = ar ? 'buy' : st.busy ? 'busy' : '';
-      b.innerHTML = ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ Snipen${activeTarget ? ` <small>· ${esc((settings.snipeTargets.find((t) => t.id === activeTarget) || {}).label || '')}</small>` : ''}`;
+      b.innerHTML = ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${settings.snipeInstant && critMaxBuy() ? `Snipen & kaufen <small>≤ ${fmt(critMaxBuy())}</small>` : 'Snipen'}${activeTarget ? ` <small>· ${esc((settings.snipeTargets.find((t) => t.id === activeTarget) || {}).label || '')}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
       fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
         : ar ? 'Nochmal tippen = kaufen · 6 Sek. Zeit'
@@ -346,6 +359,7 @@
           <span class="by-coins">${coins != null ? `${fmt(coins)} Münzen` : ''}</span></div>
         <div class="by-opts">
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
+          <label title="Tipp/Leertaste = suchen UND bei Treffer bis zu deinem Max.-Sofortkauf sofort kaufen – ohne zweiten Tipp"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label>
           <label title="Leertaste sucht – ist ein Deal bereit, kauft dieselbe Taste ihn"><input type="checkbox" data-bo="one" ${settings.snipeOneKey ? 'checked' : ''}> 1-Tasten-Modus</label>
           <label title="Sucht direkt über EAs Schnittstelle statt über die Seite – deutlich schneller"><input type="checkbox" data-bo="turbo" ${settings.snipeTurbo ? 'checked' : ''}> Turbo</label>
           <label title="Großer Snipe-Knopf unten auf dem Handy – funktioniert auch bei geschlossenem Tool"><input type="checkbox" data-bo="sbtn" ${settings.snipeBtn !== 'off' ? 'checked' : ''}> Handy-Knopf</label>
@@ -353,6 +367,8 @@
           <label title="Ab diesem Gewinn (nach Steuer) gilt ein Angebot als lohnend">ab <input type="number" min="0" step="50" data-bo="min" value="${settings.snipeMinProfit}"> Gewinn</label>
         </div>
         <div class="by-mode ${settings.snipeTurbo && TC.crit ? 'on' : ''}">${settings.snipeTurbo ? (TC.crit ? `⚡ Turbo aktiv – sucht direkt bei EA, ohne Seitenwechsel${critMaxBuy() ? ` · Max. SK ${fmt(critMaxBuy())}` : ''}${st.lastMs ? ` · letzte Suche ${st.lastMs} ms` : ''}` : '⚡ Turbo: einmal in der Web App normal auf „Suchen“ klicken – danach übernimmt das Tool die Suche direkt.') : 'Normaler Modus (über die Web-App-Seite)'}</div>
+        ${settings.snipeInstant ? `<div class="by-ready">⚡ Sofort kaufen ist an: Jede Suche kauft ohne Rückfrage das günstigste Angebot bis <b>${critMaxBuy() ? fmt(critMaxBuy()) : '– (Max. Sofortkauf fehlt, dann wird nichts sofort gekauft)'}</b>. Höchstens 1 Kauf pro Tipp.</div>` : ''}
+        ${st.hitToBuy != null || st.lastBuyMs != null ? `<div class="by-stats">Treffer → Kauf-Anfrage: ${st.hitToBuy != null ? fmt(st.hitToBuy) + ' ms' : '–'} · EA-Antwort Kauf: ${st.lastBuyMs != null ? fmt(st.lastBuyMs) + ' ms' : '–'}</div>` : ''}
         ${targetsHtml()}
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
@@ -398,6 +414,7 @@
       box.querySelectorAll('[data-bo]').forEach((x) => x.addEventListener('change', (e) => {
         e.stopPropagation();
         if (x.dataset.bo === 'arm') settings.snipeArm = x.checked;
+        if (x.dataset.bo === 'inst') { settings.snipeInstant = x.checked; saveSettings(); render(); }
         if (x.dataset.bo === 'sbtn') settings.snipeBtn = x.checked ? 'auto' : 'off';
         if (x.dataset.bo === 'one') { settings.snipeOneKey = x.checked; if (x.checked) settings.snipeArm = true; saveSettings(); render(); }
         if (x.dataset.bo === 'turbo') { settings.snipeTurbo = x.checked; saveSettings(); render(); }
