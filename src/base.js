@@ -58,6 +58,7 @@
   if (settings.autoRefresh === undefined) settings.autoRefresh = true;
   if (settings.sort === undefined) settings.sort = 'status';
   if (settings.ampel === undefined) settings.ampel = true;
+  if (settings.showBought === undefined) settings.showBought = true;
   if (settings.hotkeys === undefined) settings.hotkeys = true;
   if (settings.bumpMinBin === undefined) settings.bumpMinBin = true;
   if (settings.bumpField === undefined) settings.bumpField = 'minBin';     // 'minBin' = Min.-Sofortkauf hoch/runter, 'maxBid' = Max.-Gebot hochzählen
@@ -471,6 +472,10 @@
     .fcpt-inline .fcpt-chip.bidok{background:#1d4ed8;color:#fff;font-weight:600}
     .fcpt-inline .fcpt-chip.biderr{background:#7f1d1d;color:#fff}
     /* Kompakte Leiste unter der EA-Karte: eigene Zeile, deckend, nichts überlappt */
+.fcpt-buybadge{position:absolute;top:-4px;left:50%;transform:translateX(-50%);z-index:3;display:flex;align-items:center;gap:4px;background:#111827;color:#fff;border:2px solid #22c55e;border-radius:8px;padding:1px 7px 1px 4px;font:700 13px/1.4 system-ui,-apple-system,'Segoe UI',sans-serif;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.5);pointer-events:auto}
+    .fcpt-buybadge .ck{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#22c55e;color:#fff;font-size:10px}
+    .fcpt-buybadge.man{border-color:#f59e0b}.fcpt-buybadge.man .ck{background:#f59e0b}
+    .fcpt-pct{font-weight:700;margin-left:2px}.fcpt-pct.pos{color:#4ade80}.fcpt-pct.neg{color:#f87171}
     .fcpt-has-inline{height:auto !important;max-height:none !important;flex-wrap:wrap !important;overflow:visible !important}
     .fcpt-has-inline > .fcpt-inline{position:static !important;grid-column:1 / -1 !important;order:99;flex:0 0 100% !important;clear:both;box-sizing:border-box;
       display:flex !important;flex-wrap:wrap;align-items:center;gap:3px 16px;width:100%;margin:6px 0 2px;padding:6px 10px;border-radius:8px;
@@ -540,6 +545,7 @@
       </div>
       <div class="fcpt-sgroup"><h4>Anzeige</h4>
         <div class="fcpt-set"><span>Preise in EAs Liste anzeigen</span><input type="checkbox" class="fcpt-sw" data-opt="inline"></div>
+        <div class="fcpt-set"><span>Einkaufspreis auf den Karten<small>Kaufpreis oben auf der Karte + Gewinn in % (nach Steuer) neben Startpreis, Sofortkauf und Gebot</small></span><input type="checkbox" class="fcpt-sw" data-opt="showBought"></div>
         <div class="fcpt-set"><span>Ampel-Farben<small>Grün = Gewinn, Rot = Verlust, Orange = Preis falsch</small></span><input type="checkbox" class="fcpt-sw" data-opt="ampel"></div>
         <div class="fcpt-set"><span>Schnäppchen ab<small>Mindest-Profit nach Steuer auf dem Transfermarkt</small></span><input type="number" min="0" step="100" data-num="minBargain"></div>
       </div>
@@ -580,6 +586,7 @@
   panel.querySelector('[data-num="minBargain"]').value = settings.minBargain;
   panel.querySelector('[data-opt="autoRefresh"]').checked = !!settings.autoRefresh;
   panel.querySelector('[data-opt="ampel"]').checked = !!settings.ampel;
+  panel.querySelector('[data-opt="showBought"]').checked = !!settings.showBought;
   panel.querySelector('[data-opt="hotkeys"]').checked = !!settings.hotkeys;
   panel.querySelector('[data-opt="bumpMinBin"]').checked = !!settings.bumpMinBin;
   panel.querySelector('[data-set="bumpField"]').value = settings.bumpField;
@@ -918,6 +925,7 @@
     if (t.dataset.set === 'stepField') { settings.stepField = parseInt(t.value, 10); saveSettings(); return; }
     if (t.dataset.key) return;
     if (t.dataset.opt === 'ampel') { settings.ampel = t.checked; saveSettings(); redecorateAll(); return; }
+    if (t.dataset.opt === 'showBought') { settings.showBought = t.checked; saveSettings(); redecorateAll(); return; }
     if (t.dataset.set === 'sort') { settings.sort = t.value; saveSettings(); if (items.length) render(); return; }
     if (t.dataset.num) { settings[t.dataset.num] = Math.max(0, parseInt(t.value, 10) || 0); saveSettings(); return; }
     saveSettings();
@@ -934,6 +942,40 @@
     for (const [root, raw] of decorated) {
       if (!root.isConnected) { decorated.delete(root); continue; }
       decorateRow(root, raw);
+    }
+  }
+
+  // Einkaufspreis oben auf der Karte + Gewinn-% (nach 5 % Steuer) neben Startpreis / Sofortkauf / Gebot
+  const LBL_RE = { start: /^(startpreis|start price|startgebot|min\.? ?gebot)\b/i, bin: /^(sofortkauf|buy now)\b/i, bid: /^(gebot|aktuelles gebot|bid|current bid)\b/i };
+  function boughtOnCard(root, p, isMarket) {
+    root.querySelectorAll('.fcpt-buybadge,.fcpt-pct').forEach((e) => e.remove());
+    if (!settings.showBought || isMarket || !p.isPlayer || !p.bought) return;
+    // Plakette auf das Kartenbild (Fallback: Zeile selbst)
+    const card = root.querySelector('.entityContainer, .ut-item-view, .player.item, .small.player, [class*="item-view"], .rowContent > div') || root;
+    if (!/^(relative|absolute|fixed|sticky)$/.test(card.style.position || getComputedStyle(card).position || '')) card.style.position = 'relative';
+    const bd = document.createElement('div');
+    bd.className = 'fcpt-buybadge' + (p.boughtManual ? ' man' : '');
+    bd.title = p.boughtManual ? 'Kaufpreis (von dir eingetragen)' : 'Kaufpreis';
+    bd.innerHTML = `<span class="ck">✓</span>${fmt(p.bought)}`;
+    card.appendChild(bd);
+    // Prozente neben EAs Beschriftungen
+    const pct = (v) => (v ? Math.round(((afterTax(v) - p.bought) / p.bought) * 100) : null);
+    const vals = { start: p.startPrice, bin: p.buyNow, bid: p.currentBid || p.startPrice };
+    const seen = new Set();
+    for (const el of root.querySelectorAll('span, div, label, p')) {
+      if (el.children.length || el.closest('.fcpt-inline, .fcpt-buybadge')) continue;
+      const t = (el.textContent || '').replace(/\s+/g, ' ').trim().replace(/:$/, '');
+      if (!t || t.length > 22) continue;
+      const k = Object.keys(LBL_RE).find((x) => LBL_RE[x].test(t));
+      if (!k || seen.has(k)) continue;
+      const v = pct(vals[k]);
+      if (v == null) continue;
+      seen.add(k);
+      const s2 = document.createElement('span');
+      s2.className = 'fcpt-pct ' + (v >= 0 ? 'pos' : 'neg');
+      s2.textContent = ` (${v > 0 ? '' : ''}${v}%)`;
+      s2.title = `Gewinn nach 5 % Steuer, bezogen auf deinen Kaufpreis ${fmt(p.bought)}`;
+      el.appendChild(s2);
     }
   }
 
@@ -955,6 +997,7 @@
     if (isMarket && p.active && p.tradeId != null) marketRows.set(p.tradeId, { raw, root });
     root.classList.remove('fcpt-bargain', 'fcpt-good', 'fcpt-bad', 'fcpt-meh');
     root.querySelectorAll('.fcpt-inline').forEach((e) => e.remove());
+    boughtOnCard(root, p, isMarket);
     const box = document.createElement('div');
     box.className = 'fcpt-inline';
     root.classList.add('fcpt-has-inline');
