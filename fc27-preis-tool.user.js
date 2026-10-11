@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.40.1
+// @version      2.41.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5564,7 +5564,33 @@ const SBC = (function () {
     if (settings.rfMin === undefined) settings.rfMin = 0;      // 0 = aus
     if (settings.rfMax === undefined) settings.rfMax = 0;      // 0 = keine Obergrenze
     if (settings.rfWin === undefined || (settings.rfWin === 35 && !settings.rfWinSet)) settings.rfWin = 15;   // Preisfenster in % unter dem Max.-Sofortkauf (klein = weniger fremde Karten)
-    if (settings.rfPages === undefined) settings.rfPages = 1;   // Ergebnisseiten pro Suche (mehr = mehr Anfragen!)
+    if (settings.rfPages === undefined) settings.rfPages = 1;
+    if (settings.rfMode === undefined) settings.rfMode = 'rot';   // 'rot' = Spieler-Rotation (fängt neue Angebote) · 'win' = Preisfenster
+    const ROT = { list: [], i: 0, cur: null, loading: false };
+    const rotOn = () => rfOn() && settings.rfMode === 'rot';
+    async function loadRotation() {
+      ROT.loading = true; st.msg = 'Lade alle Spieler mit diesem Rating (einmal pro Sitzung, ca. 1–2 Min.) …'; render();
+      try {
+        const con = await SBCUI.loadConcepts((m) => { st.msg = m; render(); });
+        const lo = settings.rfMin, hi = settings.rfMax || settings.rfMin;
+        const seen = new Set();
+        ROT.list = con.players.filter((p) => p.rating >= lo && p.rating <= hi && p.assetId != null && !seen.has(p.assetId) && seen.add(p.assetId))
+          .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; })
+          .sort((a, b) => b.price - a.price);
+        ROT.i = 0; ROT.cur = null; ROT.key = `${lo}-${hi}`;
+        st.msg = ROT.list.length ? `${ROT.list.length} Spieler mit Rating ${lo}${hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.` : 'Keine Spieler mit diesem Rating gefunden.';
+      } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { ROT.loading = false; render(); }
+    }
+    function rotRestore() { if (ROT.k && TC.crit) { TC.crit[ROT.k] = ROT.orig; ROT.k = null; ROT.cur = null; } }
+    // Pro Suche den nächsten Spieler einsetzen (Feld für den Spieler in EAs Suchkriterien)
+    function rotApply() {
+      if (!rotOn() || !ROT.list.length || ROT.key !== `${settings.rfMin}-${settings.rfMax || settings.rfMin}`) return false;
+      const k = fld(/^masked_?def_?id$/i) || fld(/^def_?id$/i) || 'maskedDefId';
+      if (ROT.k !== k) { ROT.k = k; ROT.orig = TC.crit[k]; }
+      ROT.cur = ROT.list[ROT.i % ROT.list.length]; ROT.i++;
+      TC.crit[k] = ROT.cur.asset;
+      return true;
+    }   // Ergebnisseiten pro Suche (mehr = mehr Anfragen!)
     const rfOn = () => settings.rfMin > 0;
     const rfOk = (p) => !rfOn() || (p.isPlayer && p.rating >= settings.rfMin && (!settings.rfMax || p.rating <= settings.rfMax));
     const TC = { crit: null, at: 0, keys: [], hooked: false };
@@ -5594,7 +5620,7 @@ const SBC = (function () {
       } else {
         const k = fld(/^min_?(buy|bin|buynow)$/i); if (!k) return;
         const mb = critMaxBuy();
-        if (rfOn() && mb > 0) {
+        if (rfOn() && !rotOn() && mb > 0) {
           // Preisfenster: billigere (niedriger bewertete) Karten gar nicht erst laden
           const base = roundPrice(mb * (1 - settings.rfWin / 100));
           // Cache-Trick nach UNTEN: Fenster deckt immer mindestens [base, Max.] ab – kein Angebot im Fenster geht verloren
@@ -5610,10 +5636,11 @@ const SBC = (function () {
     }
     async function directSearch() {
       const S = W.services.Item;
+      if (rotOn() && !rotApply()) throw new Error('Erst „Spielerliste laden“ tippen (Rating-Snipe).');
       bumpCrit();
       const t0 = performance.now();
       const fn = S.searchTransferMarket.orig || S.searchTransferMarket;
-      const pages = rfOn() ? Math.max(1, Math.min(3, settings.rfPages || 1)) : 1;
+      const pages = rfOn() && !rotOn() ? Math.max(1, Math.min(3, settings.rfPages || 1)) : 1;
       let items = [];
       st.pageFull = false;
       for (let pg = 1; pg <= pages; pg++) {
@@ -5647,6 +5674,7 @@ const SBC = (function () {
     function saveTarget() {
       if (!TC.crit) { st.msg = 'Erst einmal in der Web App suchen – dann kann das Tool die Suche speichern.'; render(); return; }
       const f = critFields(TC.crit);
+      if (rotOn() && ROT.k) f[ROT.k] = ROT.orig;
       const mbK = fld(/^max_?(buy|bin|buynow)$/i), minK = fld(/^min_?(buy|bin|buynow)$/i);
       if (minK) f[minK] = 0;
       const norm = (x) => { const y = Object.assign({}, x); if (minK) y[minK] = 0; if (mbK) delete y[mbK]; return JSON.stringify(y); };
@@ -5760,7 +5788,7 @@ const SBC = (function () {
           const offers = await directSearch();
           st.t = Date.now(); st.stats.ms += st.lastMs;
           const fullHint = st.pageFull ? ' ⚠ Seite voll: EA zeigt nur die ersten ~20 Angebote (die bald endenden). Neue, günstige Angebote stehen weiter hinten – Preisfenster kleiner machen, Liga/Nation filtern oder 2 Seiten laden.' : '';
-          if (!offers.length) { st.rows = []; st.msg = (st.rfSkipped ? `${st.rfSkipped} Angebote, aber keins mit Rating ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'} (${st.lastMs} ms).` : `Nichts gefunden (${st.lastMs} ms) – nochmal.`) + fullHint; return; }
+          if (!offers.length) { st.rows = []; st.msg = (rotOn() && ROT.cur ? `${ROT.cur.name}: ` : '') + (st.rfSkipped ? `${st.rfSkipped} Angebote, aber keins mit Rating ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'} (${st.lastMs} ms).` : `Nichts gefunden (${st.lastMs} ms) – nochmal.`) + fullHint; return; }
           if (st.pageFull && rfOn()) st.msg = fullHint.trim();
           st.rows = offers.map(mk).sort((a, b) => a.bin - b.bin);
           const names = [...new Set(st.rows.map((r) => r.p.name))];
@@ -5908,6 +5936,7 @@ const SBC = (function () {
       const done = st.rows.find((r) => r.done);
       fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
         : ar ? 'Nochmal tippen = kaufen'
+          : rotOn() && ROT.cur && !st.rows.length ? `zuletzt: ${ROT.cur.name}`
           : done ? done.done.t.replace(/ – .*/, '')
             : st.rows.length ? `${st.rows.length} Treffer, keiner im Max.-Preis` : '';
     }
@@ -5957,13 +5986,15 @@ const SBC = (function () {
         ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
         ${st.log.length ? `<details class="by-log" ${st.log.length && !st.log[0].ok ? 'open' : ''}><summary>Letzte Snipes: ${st.stats.buys} ✓ · ${st.stats.miss} ✗</summary>${st.log.map((l) => `<div class="pt-r ${l.ok ? '' : 'miss'}"><span>${l.ok ? '✓' : '✗'} ${esc(l.name)} · ${fmt(l.price)}</span><span>${l.ok ? 'gekauft' : esc(l.why)} · ${new Date(l.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div>`).join('')}</details>` : ''}
         ${st.hitToBuy != null || st.lastBuyMs != null ? `<div class="by-stats">Treffer → Kauf-Anfrage: ${st.hitToBuy != null ? fmt(st.hitToBuy) + ' ms' : '–'} · EA-Antwort Kauf: ${st.lastBuyMs != null ? fmt(st.lastBuyMs) + ' ms' : '–'}</div>` : ''}
-        <div class="by-rf ${rfOn() ? 'on' : ''}"><div class="by-tgts-h"><b>⭐ Rating-Snipe</b><span class="by-keys">${rfOn() ? `aktiv: ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}${critMaxBuy() ? ` · Preise ${fmt(roundPrice(critMaxBuy() * (1 - settings.rfWin / 100)))}–${fmt(critMaxBuy())}` : ' · Max. Sofortkauf fehlt!'}` : 'aus'}</span></div>
+        <div class="by-rf ${rfOn() ? 'on' : ''}"><div class="by-tgts-h"><b>⭐ Rating-Snipe</b><span class="by-keys">${rfOn() ? `aktiv: ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}${critMaxBuy() ? (rotOn() ? ` · je Spieler bis ${fmt(critMaxBuy())}` : ` · Preise ${fmt(roundPrice(critMaxBuy() * (1 - settings.rfWin / 100)))}–${fmt(critMaxBuy())}`) : ' · Max. Sofortkauf fehlt!'}` : 'aus'}</span></div>
           <div class="by-rf-in"><label>Rating ab<input type="number" min="0" max="99" data-rf="rfMin" value="${settings.rfMin || ''}" placeholder="z. B. 88"></label>
             <label>bis<input type="number" min="0" max="99" data-rf="rfMax" value="${settings.rfMax || ''}" placeholder="egal"></label>
-            <label>Fenster %<input type="number" min="5" max="90" data-rf="rfWin" value="${settings.rfWin}"></label>
-            <label>Seiten<select data-rfp="1">${[1, 2, 3].map((n) => `<option value="${n}" ${settings.rfPages === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+            <label>Methode<select data-rfm="1"><option value="rot" ${settings.rfMode === 'rot' ? 'selected' : ''}>Spieler-Rotation</option><option value="win" ${settings.rfMode === 'win' ? 'selected' : ''}>Preisfenster</option></select></label>
+            ${settings.rfMode === 'win' ? `<label>Fenster %<input type="number" min="5" max="90" data-rf="rfWin" value="${settings.rfWin}"></label>
+            <label>Seiten<select data-rfp="1">${[1, 2, 3].map((n) => `<option value="${n}" ${settings.rfPages === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>` : ''}
             ${rfOn() ? '<button class="fcpt-smallbtn" data-rf="off">Aus</button>' : ''}</div>
-          ${rfOn() && settings.rfPages > 1 ? `<div class="by-keys">⚠ ${settings.rfPages} Seiten = ${settings.rfPages} Anfragen pro Tipp – langsamer tippen, sonst bremst EA.</div>` : ''}
+          ${rotOn() ? `<div class="by-keys">${ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || settings.rfMin}` ? `🔄 ${ROT.list.length} Spieler · jeder Tipp = 1 Spieler gezielt bis ${critMaxBuy() ? fmt(critMaxBuy()) : '– (Max. Sofortkauf fehlt!)'}${ROT.cur ? ` · zuletzt: <b>${esc(ROT.cur.name)}</b> (${ROT.i % ROT.list.length || ROT.list.length}/${ROT.list.length})` : ''}` : 'Spieler-Rotation: Das Tool sucht reihum jeden Spieler mit diesem Rating einzeln – so ist die Ergebnisliste klein und ein neues, günstiges Angebot steht sofort oben.'} <button class="fcpt-smallbtn" data-rfl="1" ${ROT.loading ? 'disabled' : ''}>${ROT.list.length ? '↻ Liste neu' : '📋 Spielerliste laden'}</button></div>` : ''}
+          ${rfOn() && !rotOn() && settings.rfPages > 1 ? `<div class="by-keys">⚠ ${settings.rfPages} Seiten = ${settings.rfPages} Anfragen pro Tipp – langsamer tippen, sonst bremst EA.</div>` : ''}
           ${rfOn() && st.rfTotal != null ? `<div class="by-keys">Letzte Suche: ${st.rfTotal} Angebote im Fenster, davon ${st.rfTotal - (st.rfSkipped || 0)} mit passendem Rating${st.pageFull ? ' · Seite voll' : ''}</div>` : ''}
           ${rfOn() ? '' : '<div class="by-keys">Für „alle 88er bis 14.000“: In der Web App <b>ohne Spielernamen</b> suchen (z. B. Qualität Gold, Max. Sofortkauf 14.000), einmal Suchen drücken, hier „Rating ab 88“ eintragen. Das Tool sucht dann nur im Preisfenster knapp unter deinem Max.-Preis und nimmt nur Karten mit passendem Rating.</div>'}</div>
         ${targetsHtml()}
@@ -5985,13 +6016,18 @@ const SBC = (function () {
         e.stopPropagation();
         const k = inp.dataset.rf; const v = Math.max(0, parseInt(inp.value, 10) || 0);
         settings[k] = k === 'rfWin' ? Math.max(5, Math.min(90, v || 15)) : Math.min(99, v);
+        if (k === 'rfMin' && !settings.rfMin) rotRestore();
         if (k === 'rfWin') settings.rfWinSet = true;
         saveSettings(); st.rows = []; st.arm = null; setTimeout(render, 0);
       }));
+      const rfm = box.querySelector('[data-rfm]');
+      if (rfm) rfm.addEventListener('change', (e) => { e.stopPropagation(); settings.rfMode = rfm.value; if (settings.rfMode !== 'rot') rotRestore(); saveSettings(); setTimeout(render, 0); });
+      const rfl = box.querySelector('[data-rfl]');
+      if (rfl) rfl.addEventListener('click', (e) => { e.stopPropagation(); loadRotation(); });
       const rfp = box.querySelector('[data-rfp]');
       if (rfp) rfp.addEventListener('change', (e) => { e.stopPropagation(); settings.rfPages = parseInt(rfp.value, 10) || 1; saveSettings(); setTimeout(render, 0); });
       const rfo = box.querySelector('[data-rf="off"]');
-      if (rfo) rfo.addEventListener('click', (e) => { e.stopPropagation(); settings.rfMin = 0; settings.rfMax = 0; saveSettings(); render(); });
+      if (rfo) rfo.addEventListener('click', (e) => { e.stopPropagation(); settings.rfMin = 0; settings.rfMax = 0; rotRestore(); saveSettings(); render(); });
       const ts = box.querySelector('[data-by="tsave"]');
       if (ts) ts.addEventListener('click', (e) => { e.stopPropagation(); saveTarget(); });
       box.querySelectorAll('[data-tu]').forEach((b) => {
