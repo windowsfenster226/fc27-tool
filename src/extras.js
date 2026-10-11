@@ -36,7 +36,7 @@
     function parse(html, plat) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const heads = [...doc.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].filter((e) => e.children.length === 0 && /^\s*\d{2}\s+Rated Players\s*$/i.test(e.textContent));
-      const prices = {}, names = {};
+      const prices = {}, names = {}, players = {};
       heads.forEach((h, idx) => {
         const r = parseInt(h.textContent, 10);
         let box = h.parentElement;
@@ -51,8 +51,22 @@
         const vals = [...box.querySelectorAll(`.platform-${plat}-only`)].filter(inBlock).map((e) => parseK(e.textContent)).filter((v) => v && v >= 150);
         const nm = [...box.querySelectorAll('a[href*="/player/"]')].filter(inBlock).map((a) => a.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
         if (vals.length) { prices[r] = Math.min(...vals); names[r] = [...new Set(nm)].slice(0, 3); }
+        // Spieler mit EA-ID (aus dem Futbin-Bild) – für die Rating-Snipe-Rotation
+        const seenIds = new Set();
+        players[r] = [];
+        for (const a of box.querySelectorAll('a[href*="/player/"]')) {
+          if (!inBlock(a)) continue;
+          let row = a, img = null;
+          for (let i = 0; i < 6 && row; i++, row = row.parentElement) { img = row.querySelector('img[src*="/players/"], img[data-src*="/players/"]'); if (img) break; }
+          const src = img ? (img.getAttribute('src') || img.getAttribute('data-src') || '') : '';
+          const m = src.match(/\/players\/(?:p)?(\d{3,})\.(?:png|webp)/);
+          if (!m || seenIds.has(m[1])) continue;
+          seenIds.add(m[1]);
+          const pe = row && row.querySelector(`.platform-${plat}-only`);
+          players[r].push({ name: a.textContent.replace(/\s+/g, ' ').trim(), id: Number(m[1]), price: pe ? parseK(pe.textContent) : null });
+        }
       });
-      return { prices, names };
+      return { prices, names, players };
     }
 
     async function load(force) {
@@ -62,7 +76,7 @@
       if (isCfPage(html)) throw new Error(CHECK_MSG);
       const res = parse(html, plat);
       if (!Object.keys(res.prices).length) throw new Error('Futbin-Seite konnte nicht gelesen werden (Aufbau geändert?)');
-      data = { t: Date.now(), plat, prices: res.prices, names: res.names };
+      data = { t: Date.now(), plat, prices: res.prices, names: res.names, players: res.players };
       GM_setValue(RC_KEY, data);
       return data;
     }

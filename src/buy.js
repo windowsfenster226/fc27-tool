@@ -81,12 +81,26 @@
         const lo = settings.rfMin, hi = settings.rfMax || 99;
         const seen = new Set();
         ROT.list = con.players.filter((p) => p.rating >= lo && p.rating <= hi && p.assetId != null && !seen.has(p.assetId) && seen.add(p.assetId))
-          .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; })
-          .sort((a, b) => b.price - a.price);
+          .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; });
+        // Zusätzlich: günstigste Spieler je Rating von Futbin (EAs Katalog liefert oft nur die Top-Karten)
+        let fb = 0;
+        try {
+          st.msg = 'Lade günstigste Spieler je Rating von Futbin …'; render();
+          const rd = await RATINGS.load(true);
+          for (let r = lo; r <= Math.min(hi, 99); r++) {
+            for (const x of ((rd && rd.players && rd.players[r]) || [])) {
+              if (seen.has(x.id)) continue;
+              seen.add(x.id); fb++;
+              ROT.list.push({ name: x.name, rating: r, asset: x.id, price: x.price || 0 });
+            }
+          }
+        } catch (e) { log('Rotation Futbin', e); }
+        ROT.list.sort((a, b) => b.price - a.price);
+        ROT.fromFutbin = fb;
         ROT.i = 0; ROT.cur = null; ROT.key = `${lo}-${hi}`;
         const dist = {};
         con.players.forEach((p) => { if (p.rating >= 80) dist[p.rating] = (dist[p.rating] || 0) + 1; });
-        st.msg = ROT.list.length ? `${ROT.list.length} Spieler mit Rating ${lo}${hi === 99 ? '+' : hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.`
+        st.msg = ROT.list.length ? `${ROT.list.length} Spieler${fb ? ` (davon ${fb} von Futbin)` : ''} mit Rating ${lo}${hi === 99 ? '+' : hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.`
           : `Keine Spieler mit Rating ${lo}${hi === 99 ? '+' : ''} gefunden. EA hat ${con.raw ?? '?'} Karten geliefert, ${con.players.length} normale, höchstes Rating ${con.maxRating || '–'}. ${Object.keys(dist).length ? 'Ab 80: ' + Object.keys(dist).sort().map((r) => `${r}er×${dist[r]}`).join(', ') : ''} – bitte Screenshot an Claude.`;
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { ROT.loading = false; render(); }
     }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.41.1
+// @version      2.41.2
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -3883,7 +3883,7 @@ const SBC = (function () {
     function parse(html, plat) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const heads = [...doc.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].filter((e) => e.children.length === 0 && /^\s*\d{2}\s+Rated Players\s*$/i.test(e.textContent));
-      const prices = {}, names = {};
+      const prices = {}, names = {}, players = {};
       heads.forEach((h, idx) => {
         const r = parseInt(h.textContent, 10);
         let box = h.parentElement;
@@ -3898,8 +3898,22 @@ const SBC = (function () {
         const vals = [...box.querySelectorAll(`.platform-${plat}-only`)].filter(inBlock).map((e) => parseK(e.textContent)).filter((v) => v && v >= 150);
         const nm = [...box.querySelectorAll('a[href*="/player/"]')].filter(inBlock).map((a) => a.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
         if (vals.length) { prices[r] = Math.min(...vals); names[r] = [...new Set(nm)].slice(0, 3); }
+        // Spieler mit EA-ID (aus dem Futbin-Bild) – für die Rating-Snipe-Rotation
+        const seenIds = new Set();
+        players[r] = [];
+        for (const a of box.querySelectorAll('a[href*="/player/"]')) {
+          if (!inBlock(a)) continue;
+          let row = a, img = null;
+          for (let i = 0; i < 6 && row; i++, row = row.parentElement) { img = row.querySelector('img[src*="/players/"], img[data-src*="/players/"]'); if (img) break; }
+          const src = img ? (img.getAttribute('src') || img.getAttribute('data-src') || '') : '';
+          const m = src.match(/\/players\/(?:p)?(\d{3,})\.(?:png|webp)/);
+          if (!m || seenIds.has(m[1])) continue;
+          seenIds.add(m[1]);
+          const pe = row && row.querySelector(`.platform-${plat}-only`);
+          players[r].push({ name: a.textContent.replace(/\s+/g, ' ').trim(), id: Number(m[1]), price: pe ? parseK(pe.textContent) : null });
+        }
       });
-      return { prices, names };
+      return { prices, names, players };
     }
 
     async function load(force) {
@@ -3909,7 +3923,7 @@ const SBC = (function () {
       if (isCfPage(html)) throw new Error(CHECK_MSG);
       const res = parse(html, plat);
       if (!Object.keys(res.prices).length) throw new Error('Futbin-Seite konnte nicht gelesen werden (Aufbau geändert?)');
-      data = { t: Date.now(), plat, prices: res.prices, names: res.names };
+      data = { t: Date.now(), plat, prices: res.prices, names: res.names, players: res.players };
       GM_setValue(RC_KEY, data);
       return data;
     }
@@ -5577,12 +5591,26 @@ const SBC = (function () {
         const lo = settings.rfMin, hi = settings.rfMax || 99;
         const seen = new Set();
         ROT.list = con.players.filter((p) => p.rating >= lo && p.rating <= hi && p.assetId != null && !seen.has(p.assetId) && seen.add(p.assetId))
-          .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; })
-          .sort((a, b) => b.price - a.price);
+          .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; });
+        // Zusätzlich: günstigste Spieler je Rating von Futbin (EAs Katalog liefert oft nur die Top-Karten)
+        let fb = 0;
+        try {
+          st.msg = 'Lade günstigste Spieler je Rating von Futbin …'; render();
+          const rd = await RATINGS.load(true);
+          for (let r = lo; r <= Math.min(hi, 99); r++) {
+            for (const x of ((rd && rd.players && rd.players[r]) || [])) {
+              if (seen.has(x.id)) continue;
+              seen.add(x.id); fb++;
+              ROT.list.push({ name: x.name, rating: r, asset: x.id, price: x.price || 0 });
+            }
+          }
+        } catch (e) { log('Rotation Futbin', e); }
+        ROT.list.sort((a, b) => b.price - a.price);
+        ROT.fromFutbin = fb;
         ROT.i = 0; ROT.cur = null; ROT.key = `${lo}-${hi}`;
         const dist = {};
         con.players.forEach((p) => { if (p.rating >= 80) dist[p.rating] = (dist[p.rating] || 0) + 1; });
-        st.msg = ROT.list.length ? `${ROT.list.length} Spieler mit Rating ${lo}${hi === 99 ? '+' : hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.`
+        st.msg = ROT.list.length ? `${ROT.list.length} Spieler${fb ? ` (davon ${fb} von Futbin)` : ''} mit Rating ${lo}${hi === 99 ? '+' : hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.`
           : `Keine Spieler mit Rating ${lo}${hi === 99 ? '+' : ''} gefunden. EA hat ${con.raw ?? '?'} Karten geliefert, ${con.players.length} normale, höchstes Rating ${con.maxRating || '–'}. ${Object.keys(dist).length ? 'Ab 80: ' + Object.keys(dist).sort().map((r) => `${r}er×${dist[r]}`).join(', ') : ''} – bitte Screenshot an Claude.`;
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { ROT.loading = false; render(); }
     }
