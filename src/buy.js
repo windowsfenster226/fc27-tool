@@ -68,7 +68,8 @@
     // Rating-Snipe: nur Karten mit bestimmtem Rating aus einer Suche OHNE Spielernamen (z. B. „Gold, alle Spieler“)
     if (settings.rfMin === undefined) settings.rfMin = 0;      // 0 = aus
     if (settings.rfMax === undefined) settings.rfMax = 0;      // 0 = keine Obergrenze
-    if (settings.rfWin === undefined) settings.rfWin = 35;     // Preisfenster in % unter dem Max.-Sofortkauf
+    if (settings.rfWin === undefined || (settings.rfWin === 35 && !settings.rfWinSet)) settings.rfWin = 15;   // Preisfenster in % unter dem Max.-Sofortkauf (klein = weniger fremde Karten)
+    if (settings.rfPages === undefined) settings.rfPages = 1;   // Ergebnisseiten pro Suche (mehr = mehr Anfragen!)
     const rfOn = () => settings.rfMin > 0;
     const rfOk = (p) => !rfOn() || (p.isPlayer && p.rating >= settings.rfMin && (!settings.rfMax || p.rating <= settings.rfMax));
     const TC = { crit: null, at: 0, keys: [], hooked: false };
@@ -101,8 +102,9 @@
         if (rfOn() && mb > 0) {
           // Preisfenster: billigere (niedriger bewertete) Karten gar nicht erst laden
           const base = roundPrice(mb * (1 - settings.rfWin / 100));
-          const cur0 = toNum(c[k]) || 0;
-          c[k] = cur0 < base || cur0 >= base + 6 * stepFor(base) ? base : cur0 + stepFor(cur0);
+          // Cache-Trick nach UNTEN: Fenster deckt immer mindestens [base, Max.] ab – kein Angebot im Fenster geht verloren
+          const cur0 = toNum(c[k]) || 0, lo = Math.max(150, base - 6 * stepFor(base));
+          c[k] = cur0 > base || cur0 <= lo ? base : cur0 - stepFor(cur0 - 1);
           return;
         }
         let lim = Math.max(200, settings.bumpMinMax || 1000);
@@ -116,12 +118,23 @@
       bumpCrit();
       const t0 = performance.now();
       const fn = S.searchTransferMarket.orig || S.searchTransferMarket;
-      const ev = await obs(fn.call(S, TC.crit, 1), 8000);
-      st.lastMs = Math.round(performance.now() - t0);
-      if (ev && ev.success === false) { cooldown(ev.status); throw Object.assign(new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`), { status: ev.status }); }
-      const items = ((ev && (ev.response || ev.data)) || {}).items || [];
+      const pages = rfOn() ? Math.max(1, Math.min(3, settings.rfPages || 1)) : 1;
+      let items = [];
+      st.pageFull = false;
+      for (let pg = 1; pg <= pages; pg++) {
+        if (pg > 1) await sleep(250 + Math.random() * 200);
+        const ev = await obs(fn.call(S, TC.crit, pg), 8000);
+        if (pg === 1) st.lastMs = Math.round(performance.now() - t0);
+        if (ev && ev.success === false) { cooldown(ev.status); if (pg === 1) throw Object.assign(new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`), { status: ev.status }); break; }
+        const got = ((ev && (ev.response || ev.data)) || {}).items || [];
+        items = items.concat(got);
+        st.pageSize = Math.max(st.pageSize || 0, got.length);
+        st.pageFull = got.length >= 20;   // volle Seite -> es gibt vermutlich noch mehr Angebote
+        if (!st.pageFull) break;
+      }
       const all = items.map((raw) => ({ raw, p: mapItem(raw) })).filter((o) => o.p && o.p.active && o.p.tradeOwner !== true && o.p.buyNow);
       st.rfSkipped = rfOn() ? all.filter((o) => !rfOk(o.p)).length : 0;
+      st.rfTotal = all.length;
       return all.filter((o) => rfOk(o.p));
     }
     // ---------- Snipe-Ziele: mehrere Turbo-Suchen speichern und per Klick / Shift+1…9 / Q·E wechseln ----------
@@ -251,7 +264,9 @@
           st.stats.n++;
           const offers = await directSearch();
           st.t = Date.now(); st.stats.ms += st.lastMs;
-          if (!offers.length) { st.rows = []; st.msg = st.rfSkipped ? `${st.rfSkipped} Angebote, aber keins mit Rating ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'} (${st.lastMs} ms) – nochmal.` : `Nichts gefunden (${st.lastMs} ms) – nochmal.`; return; }
+          const fullHint = st.pageFull ? ' ⚠ Seite voll: EA zeigt nur die ersten ~20 Angebote (die bald endenden). Neue, günstige Angebote stehen weiter hinten – Preisfenster kleiner machen, Liga/Nation filtern oder 2 Seiten laden.' : '';
+          if (!offers.length) { st.rows = []; st.msg = (st.rfSkipped ? `${st.rfSkipped} Angebote, aber keins mit Rating ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'} (${st.lastMs} ms).` : `Nichts gefunden (${st.lastMs} ms) – nochmal.`) + fullHint; return; }
+          if (st.pageFull && rfOn()) st.msg = fullHint.trim();
           st.rows = offers.map(mk).sort((a, b) => a.bin - b.bin);
           const names = [...new Set(st.rows.map((r) => r.p.name))];
           st.label = names.length === 1 ? `${st.rows[0].p.rating ?? ''} ${names[0]}` : `${names.length} verschiedene Karten`;
@@ -451,7 +466,10 @@
           <div class="by-rf-in"><label>Rating ab<input type="number" min="0" max="99" data-rf="rfMin" value="${settings.rfMin || ''}" placeholder="z. B. 88"></label>
             <label>bis<input type="number" min="0" max="99" data-rf="rfMax" value="${settings.rfMax || ''}" placeholder="egal"></label>
             <label>Fenster %<input type="number" min="5" max="90" data-rf="rfWin" value="${settings.rfWin}"></label>
+            <label>Seiten<select data-rfp="1">${[1, 2, 3].map((n) => `<option value="${n}" ${settings.rfPages === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
             ${rfOn() ? '<button class="fcpt-smallbtn" data-rf="off">Aus</button>' : ''}</div>
+          ${rfOn() && settings.rfPages > 1 ? `<div class="by-keys">⚠ ${settings.rfPages} Seiten = ${settings.rfPages} Anfragen pro Tipp – langsamer tippen, sonst bremst EA.</div>` : ''}
+          ${rfOn() && st.rfTotal != null ? `<div class="by-keys">Letzte Suche: ${st.rfTotal} Angebote im Fenster, davon ${st.rfTotal - (st.rfSkipped || 0)} mit passendem Rating${st.pageFull ? ' · Seite voll' : ''}</div>` : ''}
           ${rfOn() ? '' : '<div class="by-keys">Für „alle 88er bis 14.000“: In der Web App <b>ohne Spielernamen</b> suchen (z. B. Qualität Gold, Max. Sofortkauf 14.000), einmal Suchen drücken, hier „Rating ab 88“ eintragen. Das Tool sucht dann nur im Preisfenster knapp unter deinem Max.-Preis und nimmt nur Karten mit passendem Rating.</div>'}</div>
         ${targetsHtml()}
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · ${st.stats.miss} verpasst · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
@@ -471,9 +489,12 @@
       box.querySelectorAll('input[data-rf]').forEach((inp) => inp.addEventListener('change', (e) => {
         e.stopPropagation();
         const k = inp.dataset.rf; const v = Math.max(0, parseInt(inp.value, 10) || 0);
-        settings[k] = k === 'rfWin' ? Math.max(5, Math.min(90, v || 35)) : Math.min(99, v);
+        settings[k] = k === 'rfWin' ? Math.max(5, Math.min(90, v || 15)) : Math.min(99, v);
+        if (k === 'rfWin') settings.rfWinSet = true;
         saveSettings(); st.rows = []; st.arm = null; setTimeout(render, 0);
       }));
+      const rfp = box.querySelector('[data-rfp]');
+      if (rfp) rfp.addEventListener('change', (e) => { e.stopPropagation(); settings.rfPages = parseInt(rfp.value, 10) || 1; saveSettings(); setTimeout(render, 0); });
       const rfo = box.querySelector('[data-rf="off"]');
       if (rfo) rfo.addEventListener('click', (e) => { e.stopPropagation(); settings.rfMin = 0; settings.rfMax = 0; saveSettings(); render(); });
       const ts = box.querySelector('[data-by="tsave"]');
