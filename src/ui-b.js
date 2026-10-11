@@ -110,6 +110,11 @@
       .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
       .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
+      .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
+      .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}
+      .by-sin{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.by-sin label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--ink2)}.by-sin label.ck{flex-direction:row;align-items:center;gap:5px;height:34px;color:var(--ink);font-size:13px}
+      .by-sin input[type=number]{width:110px;height:34px;border-radius:8px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 8px;font-size:15px}
+      .by-adv > summary{cursor:pointer;font-size:13px;color:var(--ink2);padding:4px 2px}.by-adv[open]{display:flex;flex-direction:column;gap:10px}
       .by-flash{border-radius:12px;padding:12px;text-align:center;font:800 17px system-ui,sans-serif}.by-flash.ok{background:#14532d;color:#bbf7d0;border:1px solid #16a34a}.by-flash.fail{background:#450a0a;color:#fecaca;border:1px solid #dc2626}
       .by-log summary{cursor:pointer;font-size:13px;color:var(--ink2);margin:2px 0}.by-log .pt-r{font-size:12px}.by-log .pt-r.miss{color:#fca5a5}
       .by-rf{display:flex;flex-direction:column;gap:6px;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:8px 10px}.by-rf.on{border-color:var(--gold)}

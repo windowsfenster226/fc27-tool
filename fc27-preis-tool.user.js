@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.41.3
+// @version      2.42.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5665,7 +5665,7 @@ const SBC = (function () {
       if (S.searchTransferMarket.__fcpt) { TC.hooked = true; return; }
       const orig = S.searchTransferMarket;
       const f = function (crit) {
-        try { if (crit && typeof crit === 'object' && !f.own) { TC.crit = crit; TC.at = Date.now(); TC.keys = Object.keys(crit).slice(0, 40); render(); } } catch (e) { /* */ }
+        try { if (crit && typeof crit === 'object' && !f.own) { TC.crit = crit; TC.own = false; TC.at = Date.now(); TC.keys = Object.keys(crit).slice(0, 40); render(); } } catch (e) { /* */ }
         return orig.apply(this, arguments);
       };
       f.__fcpt = true; f.orig = orig;
@@ -5682,7 +5682,7 @@ const SBC = (function () {
         const start = Math.max(1000, settings.bumpStart || 1000000), cur = toNum(c[k]) || 0;
         c[k] = cur < start || cur >= 14900000 ? start : cur + stepFor(cur);
       } else {
-        const k = fld(/^min_?(buy|bin|buynow)$/i); if (!k) return;
+        const k = fld(/^min_?(buy|bin|buynow)$/i) || 'minBuy';
         const mb = critMaxBuy();
         if (rfOn() && !rotOn() && mb > 0) {
           // Preisfenster: billigere (niedriger bewertete) Karten gar nicht erst laden
@@ -5847,6 +5847,9 @@ const SBC = (function () {
       st.busy = true; st.msg = 'Suche …'; st.arm = null; render();
       const t0 = Date.now(); st.lastSearch = t0;
       try {
+        const why = applySimple();
+        if (why) { st.msg = why; return; }
+        if (rotOn() && (!ROT.list.length || ROT.key !== `${settings.rfMin}-${settings.rfMax || 99}`)) { st.busy = false; await loadRotation(); return; }
         if (settings.snipeTurbo && TC.crit && W.services.Item.bid) {
           st.stats.n++;
           const offers = await directSearch();
@@ -5985,7 +5988,7 @@ const SBC = (function () {
     function armedRow() { return st.arm && st.arm.startsWith('buy:') && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null; }
     function updateFloat() {
       const want = settings.snipeBtn === 'on' || (settings.snipeBtn === 'auto' && touch());
-      const show = want && settings.snipeTurbo && !!TC.crit && !panel.classList.contains('open');
+      const show = want && settings.snipeTurbo && (!!TC.crit || settings.snMode === 'rating') && !panel.classList.contains('open');
       fb.classList.toggle('show', show);
       if (!show) return;
       const pos = settings.sbPos || {};
@@ -6027,6 +6030,43 @@ const SBC = (function () {
     document.addEventListener('focusout', () => setTimeout(() => { const a = document.activeElement; if (!a || !/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) fb.classList.remove('typing'); }, 150), true);
     setInterval(updateFloat, 1000);
 
+    // ---------- EINFACH: Was snipen? + Max. Preis – der Rest passiert automatisch ----------
+    if (settings.snMode === undefined) settings.snMode = settings.rfMin > 0 ? 'rating' : 'ea';
+    if (settings.snRating === undefined) settings.snRating = settings.rfMin || 88;
+    if (settings.snRatingUp === undefined) settings.snRatingUp = false;
+    if (settings.snMax === undefined) settings.snMax = 0;
+    function ensureCrit() {
+      if (TC.crit) return true;
+      try { const VM = W.UTBucketedItemSearchViewModel; if (VM) { TC.crit = new VM().searchCriteria; } } catch (e) { /* */ }
+      if (!TC.crit && typeof W.UTSearchCriteriaDTO === 'function') { try { TC.crit = new W.UTSearchCriteriaDTO(); } catch (e) { /* */ } }
+      if (TC.crit) { try { if (W.SearchType && W.SearchType.PLAYER) TC.crit.type = W.SearchType.PLAYER; } catch (e) { /* */ } TC.keys = Object.keys(TC.crit); TC.own = true; }
+      return !!TC.crit;
+    }
+    function applySimple() {
+      if (settings.snMode === 'rating') {
+        if (!ensureCrit()) return 'EA-Suche nicht verfügbar – Web App neu laden.';
+        settings.rfMin = settings.snRating; settings.rfMax = settings.snRatingUp ? 0 : settings.snRating; settings.rfMode = 'rot';
+      } else {
+        if (settings.rfMin) { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); }
+        if (!TC.crit || TC.own) return 'Such in der Web App einmal nach dem Spieler (Transfermarkt → Spielername → Suchen). Danach reicht hier die Leertaste.';
+      }
+      if (settings.snMax > 0) { const k = fld(/^max_?(buy|bin|buynow)$/i) || 'maxBuy'; TC.crit[k] = settings.snMax; }
+      return '';
+    }
+    function simpleHtml() {
+      const rot = settings.snMode === 'rating';
+      const ready = rot ? (ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${ROT.list.length} Spieler mit Rating ${settings.snRating}${settings.snRatingUp ? '+' : ''} – jeder Tipp prüft einen gezielt${ROT.cur ? ` · zuletzt: ${esc(ROT.cur.name)}` : ''}` : 'Beim ersten Tipp lädt das Tool alle passenden Spieler (einmalig 1–2 Min.).')
+        : (TC.crit && !TC.own ? `Spieler aus deiner letzten EA-Suche${critMaxBuy() ? ` · bis ${fmt(critMaxBuy())}` : ''}` : 'Such in der Web App einmal nach dem Spieler – dann hier nur noch Leertaste/Knopf.');
+      return `<div class="by-simple">
+        <div class="by-seg"><button data-sm="ea" class="${rot ? '' : 'on'}">👤 Spieler</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button></div>
+        <div class="by-sin">
+          ${rot ? `<label>Rating<input type="number" min="45" max="99" data-sn="snRating" value="${settings.snRating}"></label><label class="ck"><input type="checkbox" data-sn="snRatingUp" ${settings.snRatingUp ? 'checked' : ''}> und höher</label>` : ''}
+          <label>Max. Preis<input type="number" min="0" step="50" data-sn="snMax" value="${settings.snMax || ''}" placeholder="${critMaxBuy() ? fmt(critMaxBuy()) : 'z. B. 12000'}"></label>
+          <label class="ck"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label>
+        </div>
+        <div class="by-keys">${ready}</div></div>`;
+    }
+
     function render() {
       updateFloat();
       if (!box) return;
@@ -6036,6 +6076,8 @@ const SBC = (function () {
       const coins = SBCUI.userCoins();
       box.innerHTML = `<div class="by-top"><span class="by-g ${g.level}">${g.level === 'red' ? 'Pause empfohlen' : g.level === 'yellow' ? 'Langsamer suchen' : 'Sicher'}</span>
           <span class="by-coins">${coins != null ? `${fmt(coins)} Münzen` : ''}</span></div>
+        ${simpleHtml()}
+        <details class="by-adv"><summary>⚙ Erweitert</summary>
         <div class="by-opts">
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
           <label title="Tipp/Leertaste = suchen UND bei Treffer bis zu deinem Max.-Sofortkauf sofort kaufen – ohne zweiten Tipp"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label>
@@ -6047,8 +6089,6 @@ const SBC = (function () {
         </div>
         <div class="by-mode ${settings.snipeTurbo && TC.crit ? 'on' : ''}">${settings.snipeTurbo ? (TC.crit ? `⚡ Turbo aktiv – sucht direkt bei EA, ohne Seitenwechsel${critMaxBuy() ? ` · Max. SK ${fmt(critMaxBuy())}` : ''}${st.lastMs ? ` · letzte Suche ${st.lastMs} ms` : ''}` : '⚡ Turbo: einmal in der Web App normal auf „Suchen“ klicken – danach übernimmt das Tool die Suche direkt.') : 'Normaler Modus (über die Web-App-Seite)'}</div>
         ${settings.snipeInstant ? `<div class="by-ready">⚡ Sofort kaufen ist an: Jede Suche kauft ohne Rückfrage das günstigste Angebot bis <b>${critMaxBuy() ? fmt(critMaxBuy()) : '– (Max. Sofortkauf fehlt, dann wird nichts sofort gekauft)'}</b>. Höchstens 1 Kauf pro Tipp.</div>` : ''}
-        ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
-        ${st.log.length ? `<details class="by-log" ${st.log.length && !st.log[0].ok ? 'open' : ''}><summary>Letzte Snipes: ${st.stats.buys} ✓ · ${st.stats.miss} ✗</summary>${st.log.map((l) => `<div class="pt-r ${l.ok ? '' : 'miss'}"><span>${l.ok ? '✓' : '✗'} ${esc(l.name)} · ${fmt(l.price)}</span><span>${l.ok ? 'gekauft' : esc(l.why)} · ${new Date(l.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div>`).join('')}</details>` : ''}
         ${st.hitToBuy != null || st.lastBuyMs != null ? `<div class="by-stats">Treffer → Kauf-Anfrage: ${st.hitToBuy != null ? fmt(st.hitToBuy) + ' ms' : '–'} · EA-Antwort Kauf: ${st.lastBuyMs != null ? fmt(st.lastBuyMs) + ' ms' : '–'}</div>` : ''}
         <div class="by-rf ${rfOn() ? 'on' : ''}"><div class="by-tgts-h"><b>⭐ Rating-Snipe</b><span class="by-keys">${rfOn() ? `aktiv: ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}${critMaxBuy() ? (rotOn() ? ` · je Spieler bis ${fmt(critMaxBuy())}` : ` · Preise ${fmt(roundPrice(critMaxBuy() * (1 - settings.rfWin / 100)))}–${fmt(critMaxBuy())}`) : ' · Max. Sofortkauf fehlt!'}` : 'aus'}</span></div>
           <div class="by-rf-in"><label>Rating ab<input type="number" min="0" max="99" data-rf="rfMin" value="${settings.rfMin || ''}" placeholder="z. B. 88"></label>
@@ -6062,13 +6102,16 @@ const SBC = (function () {
           ${rfOn() && st.rfTotal != null ? `<div class="by-keys">Letzte Suche: ${st.rfTotal} Angebote im Fenster, davon ${st.rfTotal - (st.rfSkipped || 0)} mit passendem Rating${st.pageFull ? ' · Seite voll' : ''}</div>` : ''}
           ${rfOn() ? '' : '<div class="by-keys">Für „alle 88er bis 14.000“: In der Web App <b>ohne Spielernamen</b> suchen (z. B. Qualität Gold, Max. Sofortkauf 14.000), einmal Suchen drücken, hier „Rating ab 88“ eintragen. Das Tool sucht dann nur im Preisfenster knapp unter deinem Max.-Preis und nimmt nur Karten mit passendem Rating.</div>'}</div>
         ${targetsHtml()}
+        </details>
+        ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
+        ${st.log.length ? `<details class="by-log" ${st.log.length && !st.log[0].ok ? 'open' : ''}><summary>Letzte Snipes: ${st.stats.buys} ✓ · ${st.stats.miss} ✗</summary>${st.log.map((l) => `<div class="pt-r ${l.ok ? '' : 'miss'}"><span>${l.ok ? '✓' : '✗'} ${esc(l.name)} · ${fmt(l.price)}</span><span>${l.ok ? 'gekauft' : esc(l.why)} · ${new Date(l.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div>`).join('')}</details>` : ''}
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · ${st.stats.miss} verpasst · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
         ${st.arm && st.armMs > 4000 ? `<div class="by-ready">Bester Deal bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder K)' : '<b>K</b>, <b>Enter</b> oder Klick'} kauft ihn. <b>Esc</b> = nicht kaufen.</div>` : ''}
         ${st.rows.length ? `<div class="by-h"><b>${esc(st.label)}</b><span>${st.rows.length} Angebote · ${agoText(st.t)}</span></div>
           <div class="by-list">${st.rows.map((r, i) => rowHtml(r, i, best)).join('')}</div>
           <div class="by-note">Kaufen: ${settings.buyConfirm ? (settings.snipeArm ? `bester Deal ab +${fmt(settings.snipeMinProfit)} ist sofort bereit (1×), sonst zweimal tippen` : 'zweimal tippen (Sicherheit)') : 'ein Tipp'} · Bieten: ${settings.bidConfirm ? 'zweimal tippen' : 'ein Tipp, der Betrag steht auf dem Knopf'} · Gewinn = Marktpreis nach 5 % Steuer minus Preis</div>`
-        : `<div class="by-empty">${st.busy ? '' : 'Tippe auf <b>Suchen</b>. Das Tool nutzt deine Suche aus der Web App und zeigt die Angebote hier – mit Gewinn, Kaufen und Bieten.'}</div>`}
+        : `<div class="by-empty">${st.busy ? '' : 'Oben wählen, was du snipen willst, Max. Preis eintragen – dann nur noch <b>Suchen</b> bzw. Leertaste.'}</div>`}
         <div class="by-tg" data-el="bytg"></div>
         <div class="by-bar">${st.msg ? `<div class="by-msg">${esc(st.msg)}</div>` : ''}
           ${(() => {
@@ -6082,6 +6125,15 @@ const SBC = (function () {
         settings[k] = k === 'rfWin' ? Math.max(5, Math.min(90, v || 15)) : Math.min(99, v);
         if (k === 'rfMin' && !settings.rfMin) rotRestore();
         if (k === 'rfWin') settings.rfWinSet = true;
+        saveSettings(); st.rows = []; st.arm = null; setTimeout(render, 0);
+      }));
+      box.querySelectorAll('[data-sm]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snMode = b2.dataset.sm; if (settings.snMode !== 'rating') { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); } st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
+      box.querySelectorAll('[data-sn]').forEach((inp) => inp.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const k = inp.dataset.sn;
+        if (k === 'snRatingUp') settings.snRatingUp = inp.checked;
+        else settings[k] = Math.max(0, parseInt(inp.value, 10) || 0);
+        if (k === 'snRating') settings.snRating = Math.max(45, Math.min(99, settings.snRating || 88));
         saveSettings(); st.rows = []; st.arm = null; setTimeout(render, 0);
       }));
       const rfm = box.querySelector('[data-rfm]');
@@ -6420,6 +6472,11 @@ const SBC = (function () {
       .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
       .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
+      .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
+      .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}
+      .by-sin{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.by-sin label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--ink2)}.by-sin label.ck{flex-direction:row;align-items:center;gap:5px;height:34px;color:var(--ink);font-size:13px}
+      .by-sin input[type=number]{width:110px;height:34px;border-radius:8px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 8px;font-size:15px}
+      .by-adv > summary{cursor:pointer;font-size:13px;color:var(--ink2);padding:4px 2px}.by-adv[open]{display:flex;flex-direction:column;gap:10px}
       .by-flash{border-radius:12px;padding:12px;text-align:center;font:800 17px system-ui,sans-serif}.by-flash.ok{background:#14532d;color:#bbf7d0;border:1px solid #16a34a}.by-flash.fail{background:#450a0a;color:#fecaca;border:1px solid #dc2626}
       .by-log summary{cursor:pointer;font-size:13px;color:var(--ink2);margin:2px 0}.by-log .pt-r{font-size:12px}.by-log .pt-r.miss{color:#fca5a5}
       .by-rf{display:flex;flex-direction:column;gap:6px;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:8px 10px}.by-rf.on{border-color:var(--gold)}
