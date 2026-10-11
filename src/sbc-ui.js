@@ -245,11 +245,12 @@
       };
     }
 
-    async function pagedSearch(fnName, service, label, setStatus, extra, maxPages = 50) {
+    async function pagedSearch(fnName, service, label, setStatus, extra, maxPages = 50, patch) {
       const VM = W.UTBucketedItemSearchViewModel;
       const crit = VM ? new VM().searchCriteria : null;
       if (!crit) throw new Error('EA-Suchobjekt nicht gefunden (UTBucketedItemSearchViewModel)');
       try { if (W.SearchType && W.SearchType.PLAYER) crit.type = W.SearchType.PLAYER; } catch (e) { /* */ }
+      if (patch) Object.assign(crit, patch);
       crit.count = 91;
       const ents = [];
       for (let page = 0, offset = 0; page < maxPages; page++) {
@@ -325,6 +326,19 @@
       return concept;
     }
 
+    // Konzept-Spieler einer Liga (EAs Katalog liefert pro Abfrage nur ~180 Karten, höchstes Rating zuerst)
+    async function conceptsByLeague(leagueId, setStatus) {
+      const S = W.services;
+      if (!S || !S.Item || typeof S.Item.searchConceptItems !== 'function') return [];
+      const all = await pagedSearch('searchConceptItems', S.Item, `Liga ${leagueId}`, setStatus || (() => {}), null, 4, { league: leagueId });
+      const out = [];
+      for (const [ent] of all) {
+        if (!ent) continue;
+        const p = toPlayer(ent);
+        if (p && !p.special && p.rating != null) out.push(p);
+      }
+      return out;
+    }
     // Kaufpreis schätzen: Futbin-Preis (falls schon geprüft) > günstigste Karte des Ratings (Futbin) > Schätzung
     const conceptFail = new Set();
     // Aus geprüften Preisen lernen: Verhältnis echter Preis / Schätzung je Rating (Median)
@@ -1037,6 +1051,6 @@
         return { formation: f ? String(f) : null, ids };
       } catch (e) { return null; }
     }
-    return { diagnose, applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    return { conceptsByLeague, diagnose, applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 

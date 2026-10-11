@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.41.2
+// @version      2.41.3
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -2483,11 +2483,12 @@ const SBC = (function () {
       };
     }
 
-    async function pagedSearch(fnName, service, label, setStatus, extra, maxPages = 50) {
+    async function pagedSearch(fnName, service, label, setStatus, extra, maxPages = 50, patch) {
       const VM = W.UTBucketedItemSearchViewModel;
       const crit = VM ? new VM().searchCriteria : null;
       if (!crit) throw new Error('EA-Suchobjekt nicht gefunden (UTBucketedItemSearchViewModel)');
       try { if (W.SearchType && W.SearchType.PLAYER) crit.type = W.SearchType.PLAYER; } catch (e) { /* */ }
+      if (patch) Object.assign(crit, patch);
       crit.count = 91;
       const ents = [];
       for (let page = 0, offset = 0; page < maxPages; page++) {
@@ -2563,6 +2564,19 @@ const SBC = (function () {
       return concept;
     }
 
+    // Konzept-Spieler einer Liga (EAs Katalog liefert pro Abfrage nur ~180 Karten, höchstes Rating zuerst)
+    async function conceptsByLeague(leagueId, setStatus) {
+      const S = W.services;
+      if (!S || !S.Item || typeof S.Item.searchConceptItems !== 'function') return [];
+      const all = await pagedSearch('searchConceptItems', S.Item, `Liga ${leagueId}`, setStatus || (() => {}), null, 4, { league: leagueId });
+      const out = [];
+      for (const [ent] of all) {
+        if (!ent) continue;
+        const p = toPlayer(ent);
+        if (p && !p.special && p.rating != null) out.push(p);
+      }
+      return out;
+    }
     // Kaufpreis schätzen: Futbin-Preis (falls schon geprüft) > günstigste Karte des Ratings (Futbin) > Schätzung
     const conceptFail = new Set();
     // Aus geprüften Preisen lernen: Verhältnis echter Preis / Schätzung je Rating (Median)
@@ -3275,7 +3289,7 @@ const SBC = (function () {
         return { formation: f ? String(f) : null, ids };
       } catch (e) { return null; }
     }
-    return { diagnose, applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
+    return { conceptsByLeague, diagnose, applyPlayers, activeSquadInfo, loadConcepts, conceptPrice: (p) => { priceConcept(p); return p; }, CAP, readChallenge, findSbcContext, loadClub, activeSquadIds, userCoins: () => { try { const u = W.services.User.getUser(); return toNum(u.coins && (u.coins.amount ?? u.coins)); } catch (e) { return null; } } };
   })();
 
 
@@ -5592,7 +5606,24 @@ const SBC = (function () {
         const seen = new Set();
         ROT.list = con.players.filter((p) => p.rating >= lo && p.rating <= hi && p.assetId != null && !seen.has(p.assetId) && seen.add(p.assetId))
           .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; });
-        // Zusätzlich: günstigste Spieler je Rating von Futbin (EAs Katalog liefert oft nur die Top-Karten)
+        // EAs Katalog liefert pro Abfrage nur ~180 Karten (höchstes Rating zuerst) -> zusätzlich je Liga abfragen
+        const LEAGUES = [13, 53, 19, 31, 16, 350, 308, 10, 39, 14, 4, 68, 2216, 2222, 2215, 2228, 2218];
+        let lg = 0;
+        for (const id of LEAGUES) {
+          st.msg = `Lade Spieler je Liga … (${LEAGUES.indexOf(id) + 1}/${LEAGUES.length}, bisher ${ROT.list.length})`; render();
+          try {
+            const ps = await SBCUI.conceptsByLeague(id);
+            for (const p of ps) {
+              if (p.rating < lo || p.rating > hi || p.assetId == null || seen.has(p.assetId)) continue;
+              seen.add(p.assetId); lg++;
+              SBCUI.conceptPrice(p);
+              ROT.list.push({ name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) });
+            }
+          } catch (e) { log('Rotation Liga', id, e); }
+          await sleep(250);
+        }
+        ROT.fromLeagues = lg;
+        // Zusätzlich: günstigste Spieler je Rating von Futbin
         let fb = 0;
         try {
           st.msg = 'Lade günstigste Spieler je Rating von Futbin …'; render();
@@ -5604,14 +5635,14 @@ const SBC = (function () {
               ROT.list.push({ name: x.name, rating: r, asset: x.id, price: x.price || 0 });
             }
           }
-        } catch (e) { log('Rotation Futbin', e); }
+        } catch (e) { log('Rotation Futbin', e); ROT.fbErr = e.message; }
         ROT.list.sort((a, b) => b.price - a.price);
         ROT.fromFutbin = fb;
         ROT.i = 0; ROT.cur = null; ROT.key = `${lo}-${hi}`;
         const dist = {};
         con.players.forEach((p) => { if (p.rating >= 80) dist[p.rating] = (dist[p.rating] || 0) + 1; });
-        st.msg = ROT.list.length ? `${ROT.list.length} Spieler${fb ? ` (davon ${fb} von Futbin)` : ''} mit Rating ${lo}${hi === 99 ? '+' : hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.`
-          : `Keine Spieler mit Rating ${lo}${hi === 99 ? '+' : ''} gefunden. EA hat ${con.raw ?? '?'} Karten geliefert, ${con.players.length} normale, höchstes Rating ${con.maxRating || '–'}. ${Object.keys(dist).length ? 'Ab 80: ' + Object.keys(dist).sort().map((r) => `${r}er×${dist[r]}`).join(', ') : ''} – bitte Screenshot an Claude.`;
+        st.msg = ROT.list.length ? `${ROT.list.length} Spieler${lg || fb ? ` (${lg} aus Liga-Suche, ${fb} von Futbin)` : ''} mit Rating ${lo}${hi === 99 ? '+' : hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.`
+          : `Keine Spieler mit Rating ${lo}${hi === 99 ? '+' : ''} gefunden. EA hat ${con.raw ?? '?'} Karten geliefert, ${con.players.length} normale, höchstes Rating ${con.maxRating || '–'}. ${Object.keys(dist).length ? 'Ab 80: ' + Object.keys(dist).sort().map((r) => `${r}er×${dist[r]}`).join(', ') : ''} · Liga-Suche: ${ROT.fromLeagues ?? 0} · Futbin: ${fb}${ROT.fbErr ? ` (${ROT.fbErr})` : ''} – bitte Screenshot an Claude.`;
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { ROT.loading = false; render(); }
     }
     function rotRestore() { if (ROT.k && TC.crit) { TC.crit[ROT.k] = ROT.orig; ROT.k = null; ROT.cur = null; } }
