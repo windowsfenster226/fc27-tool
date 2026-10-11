@@ -252,13 +252,14 @@
       try { if (W.SearchType && W.SearchType.PLAYER) crit.type = W.SearchType.PLAYER; } catch (e) { /* */ }
       crit.count = 91;
       const ents = [];
-      for (let page = 0, offset = 0; page < maxPages; page++, offset += 91) {
+      for (let page = 0, offset = 0; page < maxPages; page++) {
         crit.offset = offset;
         setStatus(`${label}: Seite ${page + 1} … (${ents.length} Karten)`);
         const ev = await observeOnce(service[fnName](crit));
         const payload = ev.response || ev.data || {};
         const items = payload.items || payload.itemData || [];
         items.forEach((it) => ents.push([it, extra]));
+        offset += items.length;   // EA liefert evtl. weniger als 91 pro Seite – nichts überspringen
         if (!items.length || payload.retrievedAll === true || payload.endOfList === true) break;
         await sleep(300 + Math.random() * 300);
       }
@@ -301,8 +302,8 @@
     let concept = null; // { at, players, ents }
     const nrm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z ]/g, ' ').trim();
 
-    async function loadConcepts(setStatus) {
-      if (concept && Date.now() - concept.at < 3 * 3600000) return concept;
+    async function loadConcepts(setStatus, force) {
+      if (!force && concept && Date.now() - concept.at < 3 * 3600000) return concept;
       const S = W.services;
       if (!S || !S.Item || typeof S.Item.searchConceptItems !== 'function') throw new Error('EA-Konzeptsuche nicht gefunden – bitte „Diagnose kopieren“ schicken');
       const owned = new Set((club ? club.players : []).map((p) => p.def).filter((x) => x != null));
@@ -320,7 +321,7 @@
         ents.set(key, ent);
         players.push(p);
       }
-      concept = { at: Date.now(), players, ents };
+      concept = { at: Date.now(), players, ents, raw: all.length, maxRating: players.reduce((m, p) => Math.max(m, p.rating || 0), 0) };
       return concept;
     }
 

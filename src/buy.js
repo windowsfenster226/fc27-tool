@@ -76,20 +76,24 @@
     async function loadRotation() {
       ROT.loading = true; st.msg = 'Lade alle Spieler mit diesem Rating (einmal pro Sitzung, ca. 1–2 Min.) …'; render();
       try {
-        const con = await SBCUI.loadConcepts((m) => { st.msg = m; render(); });
-        const lo = settings.rfMin, hi = settings.rfMax || settings.rfMin;
+        const con = await SBCUI.loadConcepts((m) => { st.msg = m; render(); }, ROT.reload);
+        ROT.reload = true;   // beim nächsten „Liste neu“ wirklich neu laden
+        const lo = settings.rfMin, hi = settings.rfMax || 99;
         const seen = new Set();
         ROT.list = con.players.filter((p) => p.rating >= lo && p.rating <= hi && p.assetId != null && !seen.has(p.assetId) && seen.add(p.assetId))
           .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; })
           .sort((a, b) => b.price - a.price);
         ROT.i = 0; ROT.cur = null; ROT.key = `${lo}-${hi}`;
-        st.msg = ROT.list.length ? `${ROT.list.length} Spieler mit Rating ${lo}${hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.` : 'Keine Spieler mit diesem Rating gefunden.';
+        const dist = {};
+        con.players.forEach((p) => { if (p.rating >= 80) dist[p.rating] = (dist[p.rating] || 0) + 1; });
+        st.msg = ROT.list.length ? `${ROT.list.length} Spieler mit Rating ${lo}${hi === 99 ? '+' : hi !== lo ? `–${hi}` : ''} geladen – jeder Tipp sucht den nächsten Spieler gezielt.`
+          : `Keine Spieler mit Rating ${lo}${hi === 99 ? '+' : ''} gefunden. EA hat ${con.raw ?? '?'} Karten geliefert, ${con.players.length} normale, höchstes Rating ${con.maxRating || '–'}. ${Object.keys(dist).length ? 'Ab 80: ' + Object.keys(dist).sort().map((r) => `${r}er×${dist[r]}`).join(', ') : ''} – bitte Screenshot an Claude.`;
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { ROT.loading = false; render(); }
     }
     function rotRestore() { if (ROT.k && TC.crit) { TC.crit[ROT.k] = ROT.orig; ROT.k = null; ROT.cur = null; } }
     // Pro Suche den nächsten Spieler einsetzen (Feld für den Spieler in EAs Suchkriterien)
     function rotApply() {
-      if (!rotOn() || !ROT.list.length || ROT.key !== `${settings.rfMin}-${settings.rfMax || settings.rfMin}`) return false;
+      if (!rotOn() || !ROT.list.length || ROT.key !== `${settings.rfMin}-${settings.rfMax || 99}`) return false;
       const k = fld(/^masked_?def_?id$/i) || fld(/^def_?id$/i) || 'maskedDefId';
       if (ROT.k !== k) { ROT.k = k; ROT.orig = TC.crit[k]; }
       ROT.cur = ROT.list[ROT.i % ROT.list.length]; ROT.i++;
@@ -498,7 +502,7 @@
             ${settings.rfMode === 'win' ? `<label>Fenster %<input type="number" min="5" max="90" data-rf="rfWin" value="${settings.rfWin}"></label>
             <label>Seiten<select data-rfp="1">${[1, 2, 3].map((n) => `<option value="${n}" ${settings.rfPages === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>` : ''}
             ${rfOn() ? '<button class="fcpt-smallbtn" data-rf="off">Aus</button>' : ''}</div>
-          ${rotOn() ? `<div class="by-keys">${ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || settings.rfMin}` ? `🔄 ${ROT.list.length} Spieler · jeder Tipp = 1 Spieler gezielt bis ${critMaxBuy() ? fmt(critMaxBuy()) : '– (Max. Sofortkauf fehlt!)'}${ROT.cur ? ` · zuletzt: <b>${esc(ROT.cur.name)}</b> (${ROT.i % ROT.list.length || ROT.list.length}/${ROT.list.length})` : ''}` : 'Spieler-Rotation: Das Tool sucht reihum jeden Spieler mit diesem Rating einzeln – so ist die Ergebnisliste klein und ein neues, günstiges Angebot steht sofort oben.'} <button class="fcpt-smallbtn" data-rfl="1" ${ROT.loading ? 'disabled' : ''}>${ROT.list.length ? '↻ Liste neu' : '📋 Spielerliste laden'}</button></div>` : ''}
+          ${rotOn() ? `<div class="by-keys">${ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${ROT.list.length} Spieler · jeder Tipp = 1 Spieler gezielt bis ${critMaxBuy() ? fmt(critMaxBuy()) : '– (Max. Sofortkauf fehlt!)'}${ROT.cur ? ` · zuletzt: <b>${esc(ROT.cur.name)}</b> (${ROT.i % ROT.list.length || ROT.list.length}/${ROT.list.length})` : ''}` : 'Spieler-Rotation: Das Tool sucht reihum jeden Spieler mit diesem Rating einzeln – so ist die Ergebnisliste klein und ein neues, günstiges Angebot steht sofort oben.'} <button class="fcpt-smallbtn" data-rfl="1" ${ROT.loading ? 'disabled' : ''}>${ROT.list.length ? '↻ Liste neu' : '📋 Spielerliste laden'}</button></div>` : ''}
           ${rfOn() && !rotOn() && settings.rfPages > 1 ? `<div class="by-keys">⚠ ${settings.rfPages} Seiten = ${settings.rfPages} Anfragen pro Tipp – langsamer tippen, sonst bremst EA.</div>` : ''}
           ${rfOn() && st.rfTotal != null ? `<div class="by-keys">Letzte Suche: ${st.rfTotal} Angebote im Fenster, davon ${st.rfTotal - (st.rfSkipped || 0)} mit passendem Rating${st.pageFull ? ' · Seite voll' : ''}</div>` : ''}
           ${rfOn() ? '' : '<div class="by-keys">Für „alle 88er bis 14.000“: In der Web App <b>ohne Spielernamen</b> suchen (z. B. Qualität Gold, Max. Sofortkauf 14.000), einmal Suchen drücken, hier „Rating ab 88“ eintragen. Das Tool sucht dann nur im Preisfenster knapp unter deinem Max.-Preis und nimmt nur Karten mit passendem Rating.</div>'}</div>
