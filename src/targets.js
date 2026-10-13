@@ -74,6 +74,8 @@
         st.list.forEach((r) => {
           const was = st.prev[r.tid];
           if (r.status === 'outbid' && was && was !== 'outbid') fresh.push(r);
+          if (r.status === 'won' && (was === 'lead' || was === 'outbid') && settings.tgWatch) { showToast(`🏆 Gewonnen: ${r.p.name} für ${fmt(r.cur)} – liegt in „Nicht zugewiesen“ bzw. Transferzielen`); try { if (typeof WATCH !== 'undefined' && document.visibilityState !== 'visible') WATCH.push(`Gewonnen: ${r.p.name} für ${fmt(r.cur)}`, 'FC27 Gebote'); } catch (e) { /* */ } }
+          if (r.status === 'lost' && was === 'outbid' && settings.tgWatch) showToast(`Auktion verloren: ${r.p.name} (${fmt(r.cur)})`, true);
           st.prev[r.tid] = r.status;
         });
         fresh.forEach((r) => st.aTids.add(r.tid));
@@ -94,16 +96,26 @@
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
     }
 
-    async function bid(i) {
+    // gültiges Gebot auf EA-Preisstufe abrunden
+    const floorStep = (v) => { const s0 = stepFor(v); return Math.floor(v / s0) * s0; };
+    // Sprung-Gebot: statt +1 Schritt direkt ein höheres Gebot (Mitte bis Limit oder Limit selbst)
+    function jumpOf(r, how) {
+      if (r.limit == null || r.limit <= r.nb) return null;
+      const v = how === 'limit' ? floorStep(r.limit) : floorStep(r.nb + (r.limit - r.nb) / 2);
+      return v > r.nb ? Math.min(v, floorStep(r.limit)) : null;
+    }
+    async function bid(i, amount) {
       const r = st.list[i];
       if (!r || r.busy) return;
-      if (r.limit != null && r.nb > r.limit) { showToast(`${r.p.name}: ${fmt(r.nb)} liegt über deinem Limit ${fmt(r.limit)} – nicht geboten.`, true); return; }
+      const amt = amount && amount >= r.nb ? amount : r.nb;
+      if (r.limit != null && amt > r.limit) { showToast(`${r.p.name}: ${fmt(amt)} liegt über deinem Limit ${fmt(r.limit)} – nicht geboten.`, true); return; }
+      if ((SBCUI.userCoins() ?? Infinity) < amt) { showToast(`Nicht genug Münzen für ${fmt(amt)}.`, true); return; }
       st.alerts = st.alerts.filter((x) => x.tid !== r.tid); st.aTids.delete(r.tid);
       const S = W.services.Item;
       r.busy = true; render();
       try {
-        const ev = await obs(S.bid(r.ent, r.nb));
-        showToast(ev && ev.success === false ? `Gebot abgelehnt (${ev.status || '?'})` : `✓ ${r.p.name}: ${fmt(r.nb)} geboten`, ev && ev.success === false);
+        const ev = await obs(S.bid(r.ent, amt));
+        showToast(ev && ev.success === false ? `Gebot abgelehnt (${ev.status || '?'})` : `✓ ${r.p.name}: ${fmt(amt)} geboten`, ev && ev.success === false);
         if (!(ev && ev.success === false)) { st.prev[r.tid] = 'lead'; st.watchUntil = Date.now() + 70 * 60000; }
       } catch (e) { showToast('Gebot fehlgeschlagen: ' + e.message, true); }
       r.busy = false;
@@ -126,7 +138,7 @@
         <div class="ni-list">${L.map((r, i) => `<div class="ni-r tg-${r.status}">
           <span class="ni-n"><b>${esc(r.p.rating ?? '')}</b> ${esc(r.p.name)} <span class="trel ${LBL[r.status][1]}">${LBL[r.status][0]}</span>
             <small>Gebot ${fmt(r.cur)}${r.bin ? ` · SK ${fmt(r.bin)}` : ''}${r.market ? ` · Futbin ${fmt(r.market)}` : ''}${r.limit != null ? ` · ${r.own ? 'dein Limit' : 'lohnt bis'} <b>${fmt(r.limit)}</b>` : ''}${r.status === 'outbid' || r.status === 'lead' || r.status === 'watch' ? ` · ${fmtTime(r.exp)}` : ''}</small></span>
-          ${r.status === 'outbid' || r.status === 'watch' ? (r.worth ? `<button class="fcpt-smallbtn go" data-tg-bid="${i}" ${r.busy ? 'disabled' : ''}>Bieten ${fmt(r.nb)}</button>` : `<span class="tg-no">${r.limit != null ? (r.own ? 'über deinem Limit' : 'lohnt nicht mehr') : 'Preis fehlt'}</span>`) : ''}
+          ${r.status === 'outbid' || r.status === 'watch' ? (r.worth ? `<button class="fcpt-smallbtn go" data-tg-bid="${i}" ${r.busy ? 'disabled' : ''}>Bieten ${fmt(r.nb)}</button>${jumpOf(r, 'limit') ? `<button class="fcpt-smallbtn" data-tg-jump="${i}" title="Direkt bis zu deinem Limit bieten">⤒ ${fmt(jumpOf(r, 'limit'))}</button>` : ''}` : `<span class="tg-no">${r.limit != null ? (r.own ? 'über deinem Limit' : 'lohnt nicht mehr') : 'Preis fehlt'}</span>`) : ''}
         </div>`).join('')}</div>` : ''}
       </div>`;
       const on = (sel, ev, fn) => box.querySelectorAll(sel).forEach((x) => x.addEventListener(ev, (e) => { e.stopPropagation(); fn(x); }));
@@ -135,6 +147,7 @@
       on('[data-tg="auto"]', 'change', (x) => { settings.tgAuto = x.checked; saveSettings(); });
       on('[data-tg="watch"]', 'change', (x) => { settings.tgWatch = x.checked; saveSettings(); });
       on('[data-tg-bid]', 'click', (x) => bid(+x.dataset.tgBid));
+      on('[data-tg-jump]', 'click', (x) => { const r = st.list[+x.dataset.tgJump]; if (r) bid(+x.dataset.tgJump, jumpOf(r, 'limit')); });
     }
 
     timer = setInterval(() => {
@@ -154,8 +167,22 @@
       st.alerts = st.alerts.filter((r) => r.endAt > Date.now() && r.status === 'outbid');
       return st.alerts[0] || null;
     }
-    function rebid() { const a = alert(); if (!a) return false; const i = st.list.indexOf(a); if (i >= 0) bid(i); return true; }
-    function dismiss() { const a = alert(); if (a) { st.alerts = st.alerts.filter((x) => x !== a); st.aTids.delete(a.tid); } }
+    function alerts() { alert(); return st.alerts.slice(0, 3); }
+    // tid = welche Auktion (leer = erste Meldung) · how: 'step' | 'half' | 'limit'
+    function rebid(tid, how) {
+      const a = tid != null ? st.alerts.find((x) => String(x.tid) === String(tid)) : alert();
+      if (!a) return false;
+      const i = st.list.indexOf(a); if (i < 0) return false;
+      bid(i, how && how !== 'step' ? jumpOf(a, how) : null);
+      return true;
+    }
+    function dismiss(tid) { const a = tid != null ? st.alerts.find((x) => String(x.tid) === String(tid)) : alert(); if (a) { st.alerts = st.alerts.filter((x) => x !== a); st.aTids.delete(a.tid); } }
+    // Überblick für „Kaufen & Bieten“
+    function summary() {
+      const L = (st.list || []).filter((r) => r.endAt > Date.now() || r.status === 'won');
+      const lead = L.filter((r) => r.status === 'lead'), out = L.filter((r) => r.status === 'outbid'), won = L.filter((r) => r.status === 'won');
+      return { lead: lead.length, outbid: out.length, won: won.length, tied: lead.reduce((a, r) => a + (r.cur || 0), 0), next: lead.concat(out).sort((a, b) => a.endAt - b.endAt)[0] || null, loaded: !!st.list };
+    }
     function mount(el) { box = el; render(); }
-    return { mount, reload: () => load(true), track, alert, rebid, dismiss };
+    return { mount, reload: () => load(true), track, alert, alerts, rebid, dismiss, summary, jumpOf };
   })();

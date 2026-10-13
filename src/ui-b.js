@@ -133,7 +133,10 @@
       .by-cd{font-variant-numeric:tabular-nums}.by-cd.hot{color:#ff6b6b;font-weight:700}
       .by-ob{display:flex;align-items:center;gap:8px;background:#2a1640;border:2px solid #a78bfa;border-radius:14px;padding:8px 10px;animation:fcptArm 1.2s infinite}.by-ob.no{background:#1b2336;border-color:#475069;animation:none}
       .by-ob>div{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}.by-ob b{font-size:13px;color:var(--ink)}.by-ob small{font-size:12px;color:var(--ink2)}
-      .by-obb{height:40px;padding:0 14px;border:0;border-radius:12px;background:#a78bfa;color:#140b24;font:800 14px inherit;cursor:pointer;white-space:nowrap}
+      .by-obs{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.by-obb.alt{background:#2a1f45;color:#ddd6fe;border:1px solid #a78bfa}
+      .by-bids{font-size:12px;color:var(--ink2);background:#0f1526;border:1px solid #232c45;border-radius:10px;padding:6px 10px}.by-bids b{color:var(--ink)}.by-bids b.neg{color:#ff6b6b}.by-bids b.pos{color:#34D399}
+      .by-ob{flex-wrap:wrap;position:relative;padding-right:40px}.by-ob>.by-rx{position:absolute;top:8px;right:8px;margin:0}.by-ob>div:first-child{flex:1 1 100%}.by-ob>div.by-obs{flex:1 1 100%;flex-direction:row;justify-content:flex-start}.by-obs .by-obb{flex:1 1 0;min-width:0}.by-obs .by-obb{height:36px;padding:0 12px}
+      .by-r:has(.by-a button.j){flex-wrap:wrap}.by-r:has(.by-a button.j) .by-a{flex:1 1 100%;flex-direction:row}.by-r:has(.by-a button.j) .by-a button{flex:1 1 0;min-width:0}.by-obb{height:40px;padding:0 14px;border:0;border-radius:12px;background:#a78bfa;color:#140b24;font:800 14px inherit;cursor:pointer;white-space:nowrap}
       .by-rx{width:26px;height:26px;border-radius:7px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer;margin-left:4px}
       .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
       .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}

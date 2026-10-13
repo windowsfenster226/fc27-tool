@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.46.0
+// @version      2.47.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5264,6 +5264,8 @@ const SBC = (function () {
         st.list.forEach((r) => {
           const was = st.prev[r.tid];
           if (r.status === 'outbid' && was && was !== 'outbid') fresh.push(r);
+          if (r.status === 'won' && (was === 'lead' || was === 'outbid') && settings.tgWatch) { showToast(`🏆 Gewonnen: ${r.p.name} für ${fmt(r.cur)} – liegt in „Nicht zugewiesen“ bzw. Transferzielen`); try { if (typeof WATCH !== 'undefined' && document.visibilityState !== 'visible') WATCH.push(`Gewonnen: ${r.p.name} für ${fmt(r.cur)}`, 'FC27 Gebote'); } catch (e) { /* */ } }
+          if (r.status === 'lost' && was === 'outbid' && settings.tgWatch) showToast(`Auktion verloren: ${r.p.name} (${fmt(r.cur)})`, true);
           st.prev[r.tid] = r.status;
         });
         fresh.forEach((r) => st.aTids.add(r.tid));
@@ -5284,16 +5286,26 @@ const SBC = (function () {
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
     }
 
-    async function bid(i) {
+    // gültiges Gebot auf EA-Preisstufe abrunden
+    const floorStep = (v) => { const s0 = stepFor(v); return Math.floor(v / s0) * s0; };
+    // Sprung-Gebot: statt +1 Schritt direkt ein höheres Gebot (Mitte bis Limit oder Limit selbst)
+    function jumpOf(r, how) {
+      if (r.limit == null || r.limit <= r.nb) return null;
+      const v = how === 'limit' ? floorStep(r.limit) : floorStep(r.nb + (r.limit - r.nb) / 2);
+      return v > r.nb ? Math.min(v, floorStep(r.limit)) : null;
+    }
+    async function bid(i, amount) {
       const r = st.list[i];
       if (!r || r.busy) return;
-      if (r.limit != null && r.nb > r.limit) { showToast(`${r.p.name}: ${fmt(r.nb)} liegt über deinem Limit ${fmt(r.limit)} – nicht geboten.`, true); return; }
+      const amt = amount && amount >= r.nb ? amount : r.nb;
+      if (r.limit != null && amt > r.limit) { showToast(`${r.p.name}: ${fmt(amt)} liegt über deinem Limit ${fmt(r.limit)} – nicht geboten.`, true); return; }
+      if ((SBCUI.userCoins() ?? Infinity) < amt) { showToast(`Nicht genug Münzen für ${fmt(amt)}.`, true); return; }
       st.alerts = st.alerts.filter((x) => x.tid !== r.tid); st.aTids.delete(r.tid);
       const S = W.services.Item;
       r.busy = true; render();
       try {
-        const ev = await obs(S.bid(r.ent, r.nb));
-        showToast(ev && ev.success === false ? `Gebot abgelehnt (${ev.status || '?'})` : `✓ ${r.p.name}: ${fmt(r.nb)} geboten`, ev && ev.success === false);
+        const ev = await obs(S.bid(r.ent, amt));
+        showToast(ev && ev.success === false ? `Gebot abgelehnt (${ev.status || '?'})` : `✓ ${r.p.name}: ${fmt(amt)} geboten`, ev && ev.success === false);
         if (!(ev && ev.success === false)) { st.prev[r.tid] = 'lead'; st.watchUntil = Date.now() + 70 * 60000; }
       } catch (e) { showToast('Gebot fehlgeschlagen: ' + e.message, true); }
       r.busy = false;
@@ -5316,7 +5328,7 @@ const SBC = (function () {
         <div class="ni-list">${L.map((r, i) => `<div class="ni-r tg-${r.status}">
           <span class="ni-n"><b>${esc(r.p.rating ?? '')}</b> ${esc(r.p.name)} <span class="trel ${LBL[r.status][1]}">${LBL[r.status][0]}</span>
             <small>Gebot ${fmt(r.cur)}${r.bin ? ` · SK ${fmt(r.bin)}` : ''}${r.market ? ` · Futbin ${fmt(r.market)}` : ''}${r.limit != null ? ` · ${r.own ? 'dein Limit' : 'lohnt bis'} <b>${fmt(r.limit)}</b>` : ''}${r.status === 'outbid' || r.status === 'lead' || r.status === 'watch' ? ` · ${fmtTime(r.exp)}` : ''}</small></span>
-          ${r.status === 'outbid' || r.status === 'watch' ? (r.worth ? `<button class="fcpt-smallbtn go" data-tg-bid="${i}" ${r.busy ? 'disabled' : ''}>Bieten ${fmt(r.nb)}</button>` : `<span class="tg-no">${r.limit != null ? (r.own ? 'über deinem Limit' : 'lohnt nicht mehr') : 'Preis fehlt'}</span>`) : ''}
+          ${r.status === 'outbid' || r.status === 'watch' ? (r.worth ? `<button class="fcpt-smallbtn go" data-tg-bid="${i}" ${r.busy ? 'disabled' : ''}>Bieten ${fmt(r.nb)}</button>${jumpOf(r, 'limit') ? `<button class="fcpt-smallbtn" data-tg-jump="${i}" title="Direkt bis zu deinem Limit bieten">⤒ ${fmt(jumpOf(r, 'limit'))}</button>` : ''}` : `<span class="tg-no">${r.limit != null ? (r.own ? 'über deinem Limit' : 'lohnt nicht mehr') : 'Preis fehlt'}</span>`) : ''}
         </div>`).join('')}</div>` : ''}
       </div>`;
       const on = (sel, ev, fn) => box.querySelectorAll(sel).forEach((x) => x.addEventListener(ev, (e) => { e.stopPropagation(); fn(x); }));
@@ -5325,6 +5337,7 @@ const SBC = (function () {
       on('[data-tg="auto"]', 'change', (x) => { settings.tgAuto = x.checked; saveSettings(); });
       on('[data-tg="watch"]', 'change', (x) => { settings.tgWatch = x.checked; saveSettings(); });
       on('[data-tg-bid]', 'click', (x) => bid(+x.dataset.tgBid));
+      on('[data-tg-jump]', 'click', (x) => { const r = st.list[+x.dataset.tgJump]; if (r) bid(+x.dataset.tgJump, jumpOf(r, 'limit')); });
     }
 
     timer = setInterval(() => {
@@ -5344,10 +5357,24 @@ const SBC = (function () {
       st.alerts = st.alerts.filter((r) => r.endAt > Date.now() && r.status === 'outbid');
       return st.alerts[0] || null;
     }
-    function rebid() { const a = alert(); if (!a) return false; const i = st.list.indexOf(a); if (i >= 0) bid(i); return true; }
-    function dismiss() { const a = alert(); if (a) { st.alerts = st.alerts.filter((x) => x !== a); st.aTids.delete(a.tid); } }
+    function alerts() { alert(); return st.alerts.slice(0, 3); }
+    // tid = welche Auktion (leer = erste Meldung) · how: 'step' | 'half' | 'limit'
+    function rebid(tid, how) {
+      const a = tid != null ? st.alerts.find((x) => String(x.tid) === String(tid)) : alert();
+      if (!a) return false;
+      const i = st.list.indexOf(a); if (i < 0) return false;
+      bid(i, how && how !== 'step' ? jumpOf(a, how) : null);
+      return true;
+    }
+    function dismiss(tid) { const a = tid != null ? st.alerts.find((x) => String(x.tid) === String(tid)) : alert(); if (a) { st.alerts = st.alerts.filter((x) => x !== a); st.aTids.delete(a.tid); } }
+    // Überblick für „Kaufen & Bieten“
+    function summary() {
+      const L = (st.list || []).filter((r) => r.endAt > Date.now() || r.status === 'won');
+      const lead = L.filter((r) => r.status === 'lead'), out = L.filter((r) => r.status === 'outbid'), won = L.filter((r) => r.status === 'won');
+      return { lead: lead.length, outbid: out.length, won: won.length, tied: lead.reduce((a, r) => a + (r.cur || 0), 0), next: lead.concat(out).sort((a, b) => a.endAt - b.endAt)[0] || null, loaded: !!st.list };
+    }
     function mount(el) { box = el; render(); }
-    return { mount, reload: () => load(true), track, alert, rebid, dismiss };
+    return { mount, reload: () => load(true), track, alert, alerts, rebid, dismiss, summary, jumpOf };
   })();
 
   // ==================================================================
@@ -5936,7 +5963,7 @@ const SBC = (function () {
       if (bidMode()) {
         if (!settings.snipeArm || st.arm) return;
         let bi = -1;
-        st.rows.forEach((r, i) => { const L = rowLimit(r); if (bi < 0 && !r.done && r.nb < r.bin && L && r.nb <= L && r.endAt > Date.now() + 3000) bi = i; });
+        st.rows.forEach((r, i) => { const L = rowLimit(r); if (bi < 0 && !r.done && !r.lead && r.nb < r.bin && L && r.nb <= L && r.endAt > Date.now() + 3000) bi = i; });
         if (bi < 0) return;
         st.sel = bi; st.arm = `bid:${bi}`; st.armT = Date.now(); st.armMs = 6000; st.stats.hits++; beep();
         const key = st.arm; setTimeout(() => { if (st.arm === key) { st.arm = null; render(); } }, 6000);
@@ -5991,7 +6018,7 @@ const SBC = (function () {
       const nb = cur ? cur + stepFor(cur) : (toNum(a.startingBid) || 150);
       const bin = toNum(a.buyNowPrice) || p.buyNow;
       const maxBid = market ? Math.floor((afterTax(market) - settings.tgMinProfit) / stepFor(market)) * stepFor(market) : null;
-      return { raw, p, bin, cur, nb, exp: a.expires, endAt: Date.now() + (toNum(a.expires) || 0) * 1000, tid: a.tradeId, market, maxBid, profBin: market ? afterTax(market) - bin : null, profBid: market ? afterTax(market) - nb : null, done: null, busy: false };
+      return { raw, p, bin, cur, nb, lead: String(a.bidState || '').toLowerCase() === 'highest', exp: a.expires, endAt: Date.now() + (toNum(a.expires) || 0) * 1000, tid: a.tradeId, market, maxBid, profBin: market ? afterTax(market) - bin : null, profBid: market ? afterTax(market) - nb : null, done: null, busy: false };
     }
 
     async function search() {
@@ -6069,10 +6096,11 @@ const SBC = (function () {
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
     }
 
-    async function act(i, kind, force) {
+    async function act(i, kind, force, amt) {
       const r = st.rows[i];
       if (!r || r.busy || (r.done && !r.done.bad && kind === 'buy')) return;
-      const amount = kind === 'buy' ? r.bin : r.nb;
+      if (kind === 'bid' && r.lead && !amt) { r.done = { t: 'Du bist schon Höchstbietender' }; render(); return; }
+      const amount = kind === 'buy' ? r.bin : (amt && amt >= r.nb ? amt : r.nb);
       const key = `${kind}:${i}`;
       const needConfirm = kind === 'buy' ? settings.buyConfirm : settings.bidConfirm;
       if (!force && needConfirm && (st.arm !== key || Date.now() - st.armT > st.armMs)) {
@@ -6098,7 +6126,7 @@ const SBC = (function () {
           r.done = { bad: true, t: `${kind === 'buy' ? '✗ Nicht bekommen' : 'Gebot abgelehnt'}: ${why}` };
           if (kind === 'buy') result(r, false, why);
         } else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); result(r, true); }
-        else { r.done = { t: `✓ Höchstbietender mit ${fmt(amount)} – Überboten-Alarm ist an` }; try { if (typeof TARGETS !== 'undefined' && TARGETS.track) TARGETS.track(r.tid, rowLimit(r)); } catch (e) { /* */ } r.cur = amount; r.nb = amount + stepFor(amount); if (r.market) r.profBid = afterTax(r.market) - r.nb; }
+        else { r.lead = true; r.done = { t: `✓ Höchstbietender mit ${fmt(amount)} – Überboten-Alarm ist an` }; try { if (typeof TARGETS !== 'undefined' && TARGETS.track) TARGETS.track(r.tid, rowLimit(r)); } catch (e) { /* */ } r.cur = amount; r.nb = amount + stepFor(amount); if (r.market) r.profBid = afterTax(r.market) - r.nb; }
       } catch (e) { r.done = { bad: true, t: e.message }; if (kind === 'buy') result(r, false, /Zeitüberschreitung/.test(e.message) ? 'EA antwortet nicht' : e.message); }
       r.busy = false; render();
     }
@@ -6114,13 +6142,15 @@ const SBC = (function () {
         <div class="by-c"><b>${esc(r.p.isCons ? '🧪' : r.p.rating ?? '')}</b><small>${esc(r.p.position || '')}</small></div>
         <div class="by-n"><div class="nm">${esc(r.p.name)}${i === best ? ' <span class="by-best">Bester Deal</span>' : ''}</div>
           <small><span class="by-cd ${r.endAt - Date.now() < 60000 ? 'hot' : ''}" data-end="${r.endAt}">${fmtTime(Math.max(0, Math.round((r.endAt - Date.now()) / 1000)))}</span> · Gebot ${r.cur ? fmt(r.cur) : '–'} · Markt ${r.market ? fmt(r.market) : '…'}${bidMode() && rowLimit(r) ? ` · Limit ${fmt(rowLimit(r))}` : ''}</small>
-          ${r.done ? `<small class="${r.done.bad ? 'neg' : 'pos'}">${esc(r.done.t)}</small>` : ''}</div>
+          ${r.done ? `<small class="${r.done.bad ? 'neg' : 'pos'}">${esc(r.done.t)}</small>` : r.lead ? '<small class="pos">✓ Du führst</small>' : ''}</div>
         ${bought ? '' : `<div class="by-a">
           <button data-by="buy" data-i="${i}" class="b ${armB ? 'arm' : ''}" ${r.busy ? 'disabled' : ''}><span class="l">${armB ? 'Sicher?' : 'Kaufen'}${sel ? kb('K') : ''}</span><b>${fmt(r.bin)}</b><small class="${r.profBin == null ? '' : r.profBin >= 0 ? 'pos' : 'neg'}">${r.profBin == null ? '&nbsp;' : sign(r.profBin)}</small></button>
           ${bidOk ? `<button data-by="bid" data-i="${i}" class="d ${armD ? 'arm' : ''} ${worthBid ? '' : 'no'}" ${r.busy ? 'disabled' : ''}><span class="l">${armD ? 'Sicher?' : 'Bieten'}${sel ? kb('B') : ''}</span><b>${fmt(r.nb)}</b><small class="${r.profBid == null ? '' : r.profBid >= 0 ? 'pos' : 'neg'}">${r.profBid == null ? '&nbsp;' : worthBid ? sign(r.profBid) : 'lohnt nicht'}</small></button>` : ''}
+          ${bidMode() && bidOk && !r.lead && rowJump(r) ? `<button data-by="bidmax" data-i="${i}" class="d j" ${r.busy ? 'disabled' : ''} title="Sprung-Gebot: direkt dein Limit bieten – viele Mitbieter steigen dann aus"><span class="l">Limit</span><b>${fmt(rowJump(r))}</b><small class="${r.market ? (afterTax(r.market) - rowJump(r) >= 0 ? 'pos' : 'neg') : ''}">${r.market ? sign(afterTax(r.market) - rowJump(r)) : '&nbsp;'}</small></button>` : ''}
         </div>`}
       </div>`;
     }
+    function rowJump(r) { const L = rowLimit(r); if (!L || L <= r.nb || L >= r.bin) return null; const s0 = stepFor(L); const v = Math.floor(L / s0) * s0; return v > r.nb ? v : null; }
 
     // ---------- Handy: ein großer Snipe-Knopf unten (auch bei geschlossenem Tool) ----------
     if (settings.snipeBtn === undefined) settings.snipeBtn = 'auto';   // 'auto' = Touch-Geräte · 'on' · 'off'
@@ -6358,10 +6388,15 @@ const SBC = (function () {
     // Überboten-Meldung (aus „Meine Gebote“): 1 Tipp / Taste N = nachbieten bis zu deinem Limit
     function obAlert() { return typeof TARGETS !== 'undefined' && TARGETS.alert ? TARGETS.alert() : null; }
     function outbidHtml() {
-      const a = obAlert();
-      if (!a) return '';
-      return `<div class="by-ob ${a.worth ? '' : 'no'}"><div><b>🔔 Überboten: ${esc(a.p.rating ?? '')} ${esc(a.p.name)}</b><small>jetzt ${fmt(a.cur)} · <span class="by-cd" data-end="${a.endAt}">${fmtTime(Math.max(0, Math.round((a.endAt - Date.now()) / 1000)))}</span>${a.limit != null ? ` · Limit ${fmt(a.limit)}` : ''}</small></div>
-        ${a.worth ? `<button class="by-obb" data-ob="bid">Nachbieten ${fmt(a.nb)}${kb('N')}</button>` : '<span class="tg-no">über deinem Limit</span>'}<button class="by-rx" data-ob="x" title="ausblenden">✕</button></div>`;
+      if (typeof TARGETS === 'undefined' || !TARGETS.alerts) return '';
+      const A = TARGETS.alerts();
+      const sm = TARGETS.summary ? TARGETS.summary() : null;
+      const strip = sm && sm.loaded && (sm.lead || sm.outbid || sm.won) ? `<div class="by-bids">🎯 Gebote: <b>${sm.lead}</b> führend${sm.outbid ? ` · <b class="neg">${sm.outbid}</b> überboten` : ''}${sm.won ? ` · <b class="pos">${sm.won}</b> gewonnen` : ''}${sm.tied ? ` · ${fmt(sm.tied)} gebunden` : ''}${sm.next ? ` · nächstes Ende <span class="by-cd" data-end="${sm.next.endAt}">${fmtTime(Math.max(0, Math.round((sm.next.endAt - Date.now()) / 1000)))}</span>` : ''}</div>` : '';
+      return strip + A.map((a, n) => {
+        const half = TARGETS.jumpOf(a, 'half'), lim = TARGETS.jumpOf(a, 'limit');
+        return `<div class="by-ob ${a.worth ? '' : 'no'}"><div><b>🔔 Überboten: ${esc(a.p.rating ?? '')} ${esc(a.p.name)}</b><small>jetzt ${fmt(a.cur)} · <span class="by-cd" data-end="${a.endAt}">${fmtTime(Math.max(0, Math.round((a.endAt - Date.now()) / 1000)))}</span>${a.limit != null ? ` · Limit ${fmt(a.limit)}` : ''}</small></div>
+        ${a.worth ? `<div class="by-obs"><button class="by-obb" data-ob="step" data-obt="${a.tid}">+ ${fmt(a.nb)}${n === 0 ? kb('N') : ''}</button>${half && half !== lim ? `<button class="by-obb alt" data-ob="half" data-obt="${a.tid}" title="Sprung-Gebot: Mitte bis zu deinem Limit">⤒ ${fmt(half)}</button>` : ''}${lim ? `<button class="by-obb alt" data-ob="limit" data-obt="${a.tid}" title="Direkt dein Limit bieten">Limit ${fmt(lim)}${n === 0 ? kb('⇧N') : ''}</button>` : ''}</div>` : '<span class="tg-no">über deinem Limit</span>'}<button class="by-rx" data-ob="x" data-obt="${a.tid}" title="ausblenden">✕</button></div>`;
+      }).join('');
     }
     function render() {
       updateFloat();
@@ -6415,7 +6450,7 @@ const SBC = (function () {
             if (ar && st.arm.startsWith('bid:')) return `<button class="by-go buy" data-by="search">BIETEN ${fmt(ar.nb)}${ar.profBid != null ? ` <small>(${sign(ar.profBid)})</small>` : ''}${kb('Leertaste')}</button>`;
             return ar ? `<button class="by-go buy" data-by="search">KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}${kb('Leertaste')}</button>`
               : `<button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}${kb('Leertaste')}</button>`;
-          })()}${pc() ? `<div class="by-keys">${settings.snipeOneKey ? '<b>Nur Leertaste:</b> suchen – bei Treffer nochmal = kaufen · ' : ''}<kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen${settings.snipeArm ? ' (bester Deal: 1×)' : ' (2×)'} · <kbd>B</kbd> Bieten · <kbd>N</kbd> Nachbieten · <kbd>Esc</kbd> Abbrechen</div>` : ''}</div>`;
+          })()}${pc() ? `<div class="by-keys">${settings.snipeOneKey ? '<b>Nur Leertaste:</b> suchen – bei Treffer nochmal = kaufen · ' : ''}<kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen${settings.snipeArm ? ' (bester Deal: 1×)' : ' (2×)'} · <kbd>B</kbd> Bieten · <kbd>N</kbd> Nachbieten (<kbd>⇧N</kbd> bis Limit) · <kbd>Esc</kbd> Abbrechen</div>` : ''}</div>`;
       box.querySelectorAll('input[data-rf]').forEach((inp) => inp.addEventListener('change', (e) => {
         e.stopPropagation();
         const k = inp.dataset.rf; const v = Math.max(0, parseInt(inp.value, 10) || 0);
@@ -6472,7 +6507,7 @@ const SBC = (function () {
       });
       box.querySelectorAll('[data-lo]').forEach((c) => c.addEventListener('change', (e) => { e.stopPropagation(); const en = settings.snList[+c.dataset.lo]; if (en) { en.off = !c.checked; saveSettings(); setTimeout(render, 0); } }));
       box.querySelectorAll('[data-ld]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.ld]; settings.snList.splice(+b2.dataset.ld, 1); if (LST.cur === en) LST.cur = null; saveSettings(); render(); }));
-      box.querySelectorAll('[data-ob]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); if (b2.dataset.ob === 'bid') TARGETS.rebid(); else TARGETS.dismiss(); render(); }));
+      box.querySelectorAll('[data-ob]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const k = b2.dataset.ob, t = b2.dataset.obt; if (k === 'x') TARGETS.dismiss(t); else TARGETS.rebid(t, k); render(); }));
       box.querySelectorAll('[data-sk]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snKind = b2.dataset.sk; st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
       box.querySelectorAll('[data-sm]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snMode = b2.dataset.sm; if (settings.snMode !== 'rating') { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); } if (settings.snMode !== 'list') leaveList(); st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
       box.querySelectorAll('[data-sn]').forEach((inp) => inp.addEventListener('change', (e) => {
@@ -6532,6 +6567,7 @@ const SBC = (function () {
       box.querySelector('[data-by="search"]').addEventListener('click', (e) => { e.stopPropagation(); mainAction(); });
       box.querySelectorAll('[data-row]').forEach((rw) => rw.addEventListener('mouseenter', () => { if (pc() && st.sel !== +rw.dataset.row) { st.sel = +rw.dataset.row; box.querySelectorAll('.by-r.sel').forEach((x) => x.classList.remove('sel')); rw.classList.add('sel'); } }));
       box.querySelectorAll('[data-by="buy"],[data-by="bid"]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); act(+b.dataset.i, b.dataset.by); }));
+      box.querySelectorAll('[data-by="bidmax"]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); const r = st.rows[+b.dataset.i]; if (r) act(+b.dataset.i, 'bid', true, rowJump(r)); }));
       if (typeof TARGETS !== 'undefined') TARGETS.mount(box.querySelector('[data-el="bytg"]'));
     }
     // Tastatur (PC): nur wenn das Tool offen ist und „Kaufen & Bieten“ angezeigt wird
@@ -6553,7 +6589,7 @@ const SBC = (function () {
       else if (k === 'ArrowDown' || k === 'ArrowUp') { if (st.rows.length) { st.sel = (st.sel + (k === 'ArrowDown' ? 1 : -1) + st.rows.length) % st.rows.length; st.arm = null; render(); const el = box.querySelector('.by-r.sel'); if (el) el.scrollIntoView({ block: 'nearest' }); } }
       else if (k === 'k' || k === 'K' || k === 'Enter') { if (!ev.repeat) act(st.sel, 'buy'); }
       else if (k === 'b' || k === 'B') { if (!ev.repeat) act(st.sel, 'bid'); }
-      else if (k === 'n' || k === 'N') { if (!ev.repeat && typeof TARGETS !== 'undefined' && TARGETS.rebid()) setTimeout(render, 50); }
+      else if (k === 'n' || k === 'N') { if (!ev.repeat && typeof TARGETS !== 'undefined' && TARGETS.rebid(null, ev.shiftKey ? 'limit' : 'step')) setTimeout(render, 50); }
       else if (k === 'Escape' && st.arm) { st.arm = null; render(); }
       else done = false;
       if (done) { ev.preventDefault(); ev.stopPropagation(); }
@@ -6843,7 +6879,10 @@ const SBC = (function () {
       .by-cd{font-variant-numeric:tabular-nums}.by-cd.hot{color:#ff6b6b;font-weight:700}
       .by-ob{display:flex;align-items:center;gap:8px;background:#2a1640;border:2px solid #a78bfa;border-radius:14px;padding:8px 10px;animation:fcptArm 1.2s infinite}.by-ob.no{background:#1b2336;border-color:#475069;animation:none}
       .by-ob>div{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}.by-ob b{font-size:13px;color:var(--ink)}.by-ob small{font-size:12px;color:var(--ink2)}
-      .by-obb{height:40px;padding:0 14px;border:0;border-radius:12px;background:#a78bfa;color:#140b24;font:800 14px inherit;cursor:pointer;white-space:nowrap}
+      .by-obs{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.by-obb.alt{background:#2a1f45;color:#ddd6fe;border:1px solid #a78bfa}
+      .by-bids{font-size:12px;color:var(--ink2);background:#0f1526;border:1px solid #232c45;border-radius:10px;padding:6px 10px}.by-bids b{color:var(--ink)}.by-bids b.neg{color:#ff6b6b}.by-bids b.pos{color:#34D399}
+      .by-ob{flex-wrap:wrap;position:relative;padding-right:40px}.by-ob>.by-rx{position:absolute;top:8px;right:8px;margin:0}.by-ob>div:first-child{flex:1 1 100%}.by-ob>div.by-obs{flex:1 1 100%;flex-direction:row;justify-content:flex-start}.by-obs .by-obb{flex:1 1 0;min-width:0}.by-obs .by-obb{height:36px;padding:0 12px}
+      .by-r:has(.by-a button.j){flex-wrap:wrap}.by-r:has(.by-a button.j) .by-a{flex:1 1 100%;flex-direction:row}.by-r:has(.by-a button.j) .by-a button{flex:1 1 0;min-width:0}.by-obb{height:40px;padding:0 14px;border:0;border-radius:12px;background:#a78bfa;color:#140b24;font:800 14px inherit;cursor:pointer;white-space:nowrap}
       .by-rx{width:26px;height:26px;border-radius:7px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer;margin-left:4px}
       .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
       .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}
