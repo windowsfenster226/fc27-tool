@@ -102,7 +102,7 @@
         <div class="by-rot-tools"><button class="fcpt-smallbtn" data-rc="1">${RCHK.run ? `⏹ Stopp (${RCHK.done}/${RCHK.total})` : '💰 Preise prüfen (Futbin)'}</button>
           <label>zu teuer ab<input type="number" step="0.1" min="0" max="10" data-rf2="1" value="${settings.rotFactor}">× Max.-Preis${mx ? ` (> ${fmt(Math.round(mx * settings.rotFactor))})` : ''}</label>
           <button class="fcpt-smallbtn" data-rall="1">alle wieder rein</button></div>
-        <div class="by-rot-list">${ROT.list.map((x) => { const e = settings.rotExcl[x.asset]; return `<div class="pt-r ${e ? 'ex' : ''}"><span><b>${x.rating}</b> ${esc(x.name)}</span><span>${x.fb ? fmt(x.fb) : x.fbErr ? '–' : `≈ ${fmt(x.price)}`}${e === 'auto' ? ' · zu teuer' : ''} <button class="by-rx" data-rx="${x.asset}" title="${e ? 'wieder aufnehmen' : 'entfernen'}">${e ? '↺' : '✕'}</button></span></div>`; }).join('')}</div></details>`;
+        <div class="by-rot-list">${ROT.list.map((x) => { const e = settings.rotExcl[x.asset]; return `<div class="pt-r ${e ? 'ex' : ''}"><span><b>${x.rating}</b> ${esc(x.name)}</span><span>${x.fb ? fmt(x.fb) : x.fbErr ? '–' : `≈ ${fmt(x.price)}`}${e === 'auto' ? ' · zu teuer' : ''} <button class="by-rx" data-ra="${x.asset}" title="in „Meine Liste“ übernehmen (eigener Preis)">＋</button><button class="by-rx" data-rx="${x.asset}" title="${e ? 'wieder aufnehmen' : 'entfernen'}">${e ? '↺' : '✕'}</button></span></div>`; }).join('')}</div></details>`;
     }
     const rotOn = () => rfOn() && settings.rfMode === 'rot';
     async function loadRotation() {
@@ -232,7 +232,8 @@
       const all = items.map((raw) => ({ raw, p: mapItem(raw) })).filter((o) => o.p && o.p.active && o.p.tradeOwner !== true && o.p.buyNow);
       st.rfSkipped = rfOn() ? all.filter((o) => !rfOk(o.p)).length : 0;
       st.rfTotal = all.length;
-      return all.filter((o) => rfOk(o.p));
+      st.lstSkipped = all.filter((o) => rfOk(o.p) && !lstOk(o.p)).length;
+      return all.filter((o) => rfOk(o.p) && lstOk(o.p));
     }
     // ---------- Snipe-Ziele: mehrere Turbo-Suchen speichern und per Klick / Shift+1…9 / Q·E wechseln ----------
     if (!Array.isArray(settings.snipeTargets)) settings.snipeTargets = [];
@@ -366,7 +367,7 @@
           const offers = await directSearch();
           st.t = Date.now(); st.stats.ms += st.lastMs;
           const fullHint = st.pageFull ? ' ⚠ Seite voll: EA zeigt nur die ersten ~20 Angebote (die bald endenden). Neue, günstige Angebote stehen weiter hinten – Preisfenster kleiner machen, Liga/Nation filtern oder 2 Seiten laden.' : '';
-          if (!offers.length) { st.rows = []; st.msg = (rotOn() && ROT.cur ? `${ROT.cur.name}: ` : '') + (st.rfSkipped ? `${st.rfSkipped} Angebote, aber keins mit Rating ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'} (${st.lastMs} ms).` : `Nichts gefunden (${st.lastMs} ms) – nochmal.`) + fullHint; return; }
+          if (!offers.length) { st.rows = []; st.msg = settings.snMode === 'list' && LST.cur ? `${LST.cur.name} bis ${fmt(LST.cur.max)}: nichts${st.lstSkipped ? ` (${st.lstSkipped} andere Version${st.lstSkipped > 1 ? 'en' : ''})` : ''} – ${st.lastMs} ms.` : (rotOn() && ROT.cur ? `${ROT.cur.name}: ` : '') + (st.rfSkipped ? `${st.rfSkipped} Angebote, aber keins mit Rating ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'} (${st.lastMs} ms).` : `Nichts gefunden (${st.lastMs} ms) – nochmal.`) + fullHint; return; }
           if (st.pageFull && rfOn()) st.msg = fullHint.trim();
           st.rows = offers.map(mk).sort((a, b) => a.bin - b.bin);
           const names = [...new Set(st.rows.map((r) => r.p.name))];
@@ -499,7 +500,7 @@
     function armedRow() { return st.arm && st.arm.startsWith('buy:') && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null; }
     function updateFloat() {
       const want = settings.snipeBtn === 'on' || (settings.snipeBtn === 'auto' && touch());
-      const show = want && settings.snipeTurbo && (!!TC.crit || settings.snMode === 'rating') && !panel.classList.contains('open');
+      const show = want && settings.snipeTurbo && (!!TC.crit || settings.snMode === 'rating' || settings.snMode === 'list') && !panel.classList.contains('open');
       fb.classList.toggle('show', show);
       if (!show) return;
       const pos = settings.sbPos || {};
@@ -510,11 +511,12 @@
       const fl = st.flash && Date.now() < st.flash.until ? st.flash : null;
       b.className = fl ? (fl.ok ? 'ok' : 'fail') : ar ? 'buy' : st.busy ? 'busy' : '';
       if (coolLeft() && !fl) { b.className = 'fail'; b.innerHTML = `⛔ ${coolLeft()} s`; fb.querySelector('.sb-st').textContent = `EA-Code ${st.coolCode} – Pause`; return; }
-      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${rfOn() ? `${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}` : 'Snipe'}${(settings.snipeInstant || rfOn()) && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
+      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${rfOn() ? `${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}` : settings.snMode === 'list' ? 'Liste' : 'Snipe'}${(settings.snipeInstant || rfOn()) && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
       fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
         : ar ? 'Nochmal tippen = kaufen'
           : rotOn() && ROT.cur && !st.rows.length ? `zuletzt: ${ROT.cur.name}`
+          : settings.snMode === 'list' && LST.cur && !st.rows.length ? `zuletzt: ${LST.cur.name} ≤ ${fmt(LST.cur.max)}`
           : done ? done.done.t.replace(/ – .*/, '')
             : st.rows.length ? `${st.rows.length} Treffer, keiner im Max.-Preis` : '';
     }
@@ -554,6 +556,19 @@
       return !!TC.crit;
     }
     function applySimple() {
+      if (settings.snMode === 'list') {
+        if (settings.rfMin) { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); }
+        const act = lstActive();
+        if (!act.length) return 'Trag erst Spieler mit Max.-Preis in deine Liste ein (📋 Liste).';
+        if (!LST.crit) { const prev = TC.crit, own = TC.own; TC.crit = null; ensureCrit(); LST.crit = TC.crit; TC.crit = prev; TC.own = own; }
+        if (!LST.crit) return 'EA-Suche nicht verfügbar – Web App neu laden.';
+        if (TC.crit !== LST.crit) { if (TC.crit && !TC.own) LST.prev = TC.crit; TC.crit = LST.crit; TC.own = true; TC.keys = Object.keys(TC.crit); }
+        const e = act[LST.i % act.length]; LST.i++; LST.cur = e;
+        TC.crit[fld(/^masked_?def_?id$/i) || 'maskedDefId'] = e.asset;
+        TC.crit[fld(/^max_?(buy|bin|buynow)$/i) || 'maxBuy'] = e.max;
+        return '';
+      }
+      leaveList();
       if (settings.snMode === 'rating') {
         if (!ensureCrit()) return 'EA-Suche nicht verfügbar – Web App neu laden.';
         settings.rfMin = settings.snRating; settings.rfMax = settings.snRatingUp ? 0 : settings.snRating; settings.rfMode = 'rot';
@@ -564,12 +579,74 @@
       if (settings.snMax > 0) { const k = fld(/^max_?(buy|bin|buynow)$/i) || 'maxBuy'; TC.crit[k] = settings.snMax; }
       return '';
     }
+    // ---------- MEINE LISTE: eigene Spieler mit eigenem Max.-Preis, reihum gesnipt ----------
+    if (!Array.isArray(settings.snList)) settings.snList = [];   // {asset, name, rating, max, off}
+    const LST = { i: 0, cur: null, crit: null, prev: null, found: [], q: '', busy: false };
+    const lstActive = () => settings.snList.filter((e) => !e.off && e.max > 0 && e.asset);
+    const lstOk = (p) => settings.snMode !== 'list' || !LST.cur || !LST.cur.rating || p.rating === LST.cur.rating;
+    function lstAdd(o) {
+      if (!o || !o.asset) return false;
+      const ex = settings.snList.find((e) => String(e.asset) === String(o.asset) && (e.rating || 0) === (o.rating || 0));
+      if (ex) { st.msg = `${ex.name} steht schon in deiner Liste.`; return false; }
+      settings.snList.push({ asset: o.asset, name: o.name || `#${o.asset}`, rating: o.rating || 0, max: o.max || 0, off: false });
+      if (settings.snList.length > 40) settings.snList.shift();
+      st.msg = `${o.name} hinzugefügt${o.max ? '' : ' – jetzt noch den Max.-Preis eintragen'}.`; saveSettings(); return true;
+    }
+    // Spieler, nach dem du zuletzt in der Web App gesucht hast
+    function lstFromEA() {
+      const c = (TC.crit && !TC.own) ? TC.crit : LST.prev;
+      const kd = c && Object.keys(c).find((k) => /^masked_?def_?id$/i.test(k));
+      const asset = kd && toNum(c[kd]);
+      if (!asset) { st.msg = 'Such zuerst in der Web App nach dem Spieler (Transfermarkt → Name → Suchen), dann hier nochmal tippen.'; return; }
+      const rs = st.rows.filter((r) => { try { return toNum(r.raw.assetId ?? r.raw._assetId) === asset; } catch (e) { return false; } });
+      const rr = rs.length ? rs : st.rows;
+      const ratings = [...new Set(rr.map((r) => r.p.rating))];
+      const kmx = Object.keys(c).find((k) => /^max_?(buy|bin|buynow)$/i.test(k));
+      lstAdd({ asset, name: rr.length ? rr[0].p.name : `Spieler #${asset}`, rating: ratings.length === 1 ? ratings[0] : 0, max: (kmx && toNum(c[kmx])) || settings.snMax || 0 });
+    }
+    // Namenssuche: EAs Spielerdatenbank (falls vorhanden) + geladene Rating-Liste
+    async function lstFind(q) {
+      q = String(q || '').trim().toLowerCase();
+      LST.q = q; LST.found = [];
+      if (q.length < 3) { st.msg = 'Mindestens 3 Buchstaben eingeben.'; return; }
+      const seen = new Set();
+      const add = (o) => { const k = `${o.asset}-${o.rating || 0}`; if (!o.asset || seen.has(k)) return; seen.add(k); LST.found.push(o); };
+      const nm = (m) => m.commonName || m.c || [m.firstName || m.f, m.lastName || m.l].filter(Boolean).join(' ') || m.name || '';
+      try {
+        const R = W.repositories && (W.repositories.PlayerMeta || W.repositories.PlayerMetaData);
+        if (R && typeof R.search === 'function') {
+          let res = R.search({ name: q });
+          if (res && typeof res.then === 'function') res = await res;
+          if (res && !Array.isArray(res) && Array.isArray(res.items)) res = res.items;
+          (Array.isArray(res) ? res : []).slice(0, 20).forEach((m) => add({ asset: toNum(m.id), name: nm(m), rating: toNum(m.rating || m.r) || 0 }));
+        }
+      } catch (e) { /* */ }
+      ROT.list.forEach((x) => { if (String(x.name).toLowerCase().includes(q)) add({ asset: x.asset, name: x.name, rating: x.rating, price: x.fb || x.price }); });
+      LST.found = LST.found.slice(0, 15);
+      st.msg = LST.found.length ? '' : `„${q}“ nicht gefunden. Alternative: In der Web App nach dem Spieler suchen, dann „＋ aus EA-Suche“.`;
+    }
+    function lstHtml() {
+      const L = settings.snList, act = lstActive().length;
+      return `<div class="by-lst">
+        ${L.length ? `<div class="by-lst-rows">${L.map((e, i) => `<div class="by-lst-r ${e.off ? 'off' : ''} ${LST.cur === e ? 'cur' : ''}">
+            <label class="ck" title="an/aus"><input type="checkbox" data-lo="${i}" ${e.off ? '' : 'checked'}></label>
+            <span class="nm">${esc(e.name)}</span>
+            <label title="Welche Version (Rating). Leer = jede Version dieses Spielers">⭐<input type="number" min="0" max="99" data-lr="${i}" value="${e.rating || ''}" placeholder="alle"></label>
+            <label title="Höchstens so viel zahlst du für diesen Spieler">bis<input type="number" min="0" step="50" data-lm="${i}" value="${e.max || ''}" placeholder="Preis"></label>
+            <button class="by-rx" data-ld="${i}" title="aus der Liste löschen">✕</button></div>`).join('')}</div>` : '<div class="by-keys">Noch leer – unten Spieler suchen und hinzufügen.</div>'}
+        <div class="by-lst-add"><input type="text" data-lq="1" placeholder="Spielername, z. B. Mbappé" value="${esc(LST.q)}"><button class="fcpt-smallbtn" data-lf="1" ${LST.busy ? 'disabled' : ''}>🔍</button><button class="fcpt-smallbtn" data-le="1" title="Spieler aus deiner letzten Suche in der Web App übernehmen">＋ aus EA-Suche</button></div>
+        ${LST.found.length ? `<div class="by-lst-found">${LST.found.map((o, i) => `<div class="pt-r"><span>${o.rating ? `<b>${o.rating}</b> ` : ''}${esc(o.name)}${o.price ? ` · ≈ ${fmt(o.price)}` : ''}</span><button class="fcpt-smallbtn" data-la="${i}">＋</button></div>`).join('')}</div>` : ''}
+        <div class="by-keys">${act ? `🔄 ${act} Spieler aktiv – jeder Tipp prüft den nächsten mit seinem eigenen Max.-Preis${LST.cur ? ` · zuletzt: <b>${esc(LST.cur.name)}</b> bis ${fmt(LST.cur.max)}` : ''}` : 'Spieler ohne Preis werden nicht gesucht.'}</div></div>`;
+    }
+    function leaveList() { if (TC.crit && TC.crit === LST.crit) { TC.crit = LST.prev; TC.own = !LST.prev; LST.cur = null; } }
     function simpleHtml() {
-      const rot = settings.snMode === 'rating';
+      const rot = settings.snMode === 'rating', lst = settings.snMode === 'list';
+      const seg = `<div class="by-seg"><button data-sm="ea" class="${!rot && !lst ? 'on' : ''}">👤 Spieler</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button><button data-sm="list" class="${lst ? 'on' : ''}">📋 Liste</button></div>`;
+      if (lst) return `<div class="by-simple">${seg}<div class="by-sin"><label class="ck"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label></div>${lstHtml()}</div>`;
       const ready = rot ? (ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${rotActive().length} Spieler mit Rating ${settings.snRating}${settings.snRatingUp ? '+' : ''} – jeder Tipp prüft einen gezielt${ROT.cur ? ` · zuletzt: ${esc(ROT.cur.name)}` : ''}` : 'Beim ersten Tipp lädt das Tool alle passenden Spieler (einmalig 1–2 Min.).')
         : (TC.crit && !TC.own ? `Spieler aus deiner letzten EA-Suche${critMaxBuy() ? ` · bis ${fmt(critMaxBuy())}` : ''}` : 'Such in der Web App einmal nach dem Spieler – dann hier nur noch Leertaste/Knopf.');
       return `<div class="by-simple">
-        <div class="by-seg"><button data-sm="ea" class="${rot ? '' : 'on'}">👤 Spieler</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button></div>
+        ${seg}
         <div class="by-sin">
           ${rot ? `<label>Rating<input type="number" min="45" max="99" data-sn="snRating" value="${settings.snRating}"></label><label class="ck"><input type="checkbox" data-sn="snRatingUp" ${settings.snRatingUp ? 'checked' : ''}> und höher</label>` : ''}
           <label>Max. Preis<input type="number" min="0" step="50" data-sn="snMax" value="${settings.snMax || ''}" placeholder="${critMaxBuy() ? fmt(critMaxBuy()) : 'z. B. 12000'}"></label>
@@ -652,7 +729,39 @@
       }));
       const rd = box.querySelector('.by-rot');
       if (rd) rd.addEventListener('toggle', () => { ROT.open = rd.open; });
-      box.querySelectorAll('[data-sm]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snMode = b2.dataset.sm; if (settings.snMode !== 'rating') { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); } st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
+      box.querySelectorAll('[data-ra]').forEach((b2) => b2.addEventListener('click', (e) => {
+        e.stopPropagation(); e.preventDefault();
+        const x = ROT.list.find((y) => String(y.asset) === b2.dataset.ra);
+        if (x) lstAdd({ asset: x.asset, name: x.name, rating: x.rating, max: settings.snMax || 0 });
+        ROT.open = true; render();
+      }));
+      const lq = box.querySelector('[data-lq]');
+      const doFind = async () => { if (!lq) return; LST.busy = true; render(); try { await lstFind(lq.value); } finally { LST.busy = false; render(); const n = box.querySelector('[data-lq]'); if (n && pc()) n.focus(); } };
+      if (lq) {
+        lq.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); doFind(); } });
+        lq.addEventListener('keyup', (e) => e.stopPropagation()); lq.addEventListener('keypress', (e) => e.stopPropagation());
+        lq.addEventListener('input', () => { LST.q = lq.value; });
+      }
+      const lf = box.querySelector('[data-lf]'); if (lf) lf.addEventListener('click', (e) => { e.stopPropagation(); doFind(); });
+      const le = box.querySelector('[data-le]'); if (le) le.addEventListener('click', (e) => { e.stopPropagation(); lstFromEA(); render(); });
+      box.querySelectorAll('[data-la]').forEach((b2) => b2.addEventListener('click', (e) => {
+        e.stopPropagation(); const o = LST.found[+b2.dataset.la];
+        if (o && lstAdd({ ...o, max: 0 })) LST.found = LST.found.filter((y) => y !== o);
+        render(); setTimeout(() => { const m = box.querySelectorAll('[data-lm]'); const last = m[m.length - 1]; if (last) last.focus(); }, 30);
+      }));
+      box.querySelectorAll('[data-lm],[data-lr]').forEach((inp) => {
+        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); });
+        inp.addEventListener('change', (e) => {
+          e.stopPropagation();
+          const en = settings.snList[+(inp.dataset.lm ?? inp.dataset.lr)]; if (!en) return;
+          const v = Math.max(0, parseInt(String(inp.value).replace(/\./g, ''), 10) || 0);
+          if (inp.dataset.lm != null) en.max = v; else en.rating = Math.min(99, v);
+          saveSettings(); setTimeout(render, 0);
+        });
+      });
+      box.querySelectorAll('[data-lo]').forEach((c) => c.addEventListener('change', (e) => { e.stopPropagation(); const en = settings.snList[+c.dataset.lo]; if (en) { en.off = !c.checked; saveSettings(); setTimeout(render, 0); } }));
+      box.querySelectorAll('[data-ld]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.ld]; settings.snList.splice(+b2.dataset.ld, 1); if (LST.cur === en) LST.cur = null; saveSettings(); render(); }));
+      box.querySelectorAll('[data-sm]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snMode = b2.dataset.sm; if (settings.snMode !== 'rating') { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); } if (settings.snMode !== 'list') leaveList(); st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
       box.querySelectorAll('[data-sn]').forEach((inp) => inp.addEventListener('change', (e) => {
         e.stopPropagation();
         const k = inp.dataset.sn;
