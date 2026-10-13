@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.42.0
+// @version      2.43.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5596,6 +5596,38 @@ const SBC = (function () {
     if (settings.rfPages === undefined) settings.rfPages = 1;
     if (settings.rfMode === undefined) settings.rfMode = 'rot';   // 'rot' = Spieler-Rotation (fängt neue Angebote) · 'win' = Preisfenster
     const ROT = { list: [], i: 0, cur: null, loading: false };
+    if (!settings.rotExcl || typeof settings.rotExcl !== 'object') settings.rotExcl = {};   // asset -> 1 (von dir) | 'auto' (zu teuer)
+    if (settings.rotFactor === undefined) settings.rotFactor = 1.5;   // Spieler entfernen, deren Futbin-Preis > Faktor × Max.-Preis
+    const RCHK = { run: false, done: 0, total: 0 };
+    const rotActive = () => ROT.list.filter((x) => !settings.rotExcl[x.asset]);
+    function autoExclude(x) {
+      const mx = settings.snMax || critMaxBuy();
+      if (!mx || !x.fb || !settings.rotFactor) return;
+      if (x.fb > mx * settings.rotFactor) { if (!settings.rotExcl[x.asset]) settings.rotExcl[x.asset] = 'auto'; }
+      else if (settings.rotExcl[x.asset] === 'auto') delete settings.rotExcl[x.asset];
+    }
+    // Futbin-Preise der Liste prüfen (schonend, eigene Warteschlange) und zu teure automatisch entfernen
+    async function rotPriceCheck() {
+      if (RCHK.run) { RCHK.run = false; return; }
+      const todo = ROT.list.filter((x) => !x.fb && !x.fbErr && settings.rotExcl[x.asset] !== 1);
+      RCHK.run = true; RCHK.done = 0; RCHK.total = todo.length; render();
+      for (const x of todo) {
+        if (!RCHK.run) break;
+        try { const v = await getPrice('futbin', { resourceId: x.asset, name: x.name, fullName: x.name, rating: x.rating, isPlayer: true }, 'futbin:rot'); if (v) { x.fb = v; autoExclude(x); } else x.fbErr = 1; } catch (e) { x.fbErr = 1; if (/Schutzseite/.test(e.message)) { st.msg = e.message; break; } }
+        RCHK.done++; if (RCHK.done % 3 === 0 || RCHK.done === RCHK.total) { saveSettings(); render(); }
+      }
+      RCHK.run = false; ROT.list.sort((a, b) => (b.fb || b.price) - (a.fb || a.price)); saveSettings(); render();
+    }
+    function rotListHtml() {
+      if (!ROT.list.length) return '';
+      const mx = settings.snMax || critMaxBuy();
+      const act = rotActive().length, ex = ROT.list.length - act;
+      return `<details class="by-rot"${ROT.open ? ' open' : ''}><summary>📋 Spielerliste: ${act} aktiv${ex ? ` · ${ex} entfernt` : ''}</summary>
+        <div class="by-rot-tools"><button class="fcpt-smallbtn" data-rc="1">${RCHK.run ? `⏹ Stopp (${RCHK.done}/${RCHK.total})` : '💰 Preise prüfen (Futbin)'}</button>
+          <label>zu teuer ab<input type="number" step="0.1" min="0" max="10" data-rf2="1" value="${settings.rotFactor}">× Max.-Preis${mx ? ` (> ${fmt(Math.round(mx * settings.rotFactor))})` : ''}</label>
+          <button class="fcpt-smallbtn" data-rall="1">alle wieder rein</button></div>
+        <div class="by-rot-list">${ROT.list.map((x) => { const e = settings.rotExcl[x.asset]; return `<div class="pt-r ${e ? 'ex' : ''}"><span><b>${x.rating}</b> ${esc(x.name)}</span><span>${x.fb ? fmt(x.fb) : x.fbErr ? '–' : `≈ ${fmt(x.price)}`}${e === 'auto' ? ' · zu teuer' : ''} <button class="by-rx" data-rx="${x.asset}" title="${e ? 'wieder aufnehmen' : 'entfernen'}">${e ? '↺' : '✕'}</button></span></div>`; }).join('')}</div></details>`;
+    }
     const rotOn = () => rfOn() && settings.rfMode === 'rot';
     async function loadRotation() {
       ROT.loading = true; st.msg = 'Lade alle Spieler mit diesem Rating (einmal pro Sitzung, ca. 1–2 Min.) …'; render();
@@ -5636,8 +5668,9 @@ const SBC = (function () {
             }
           }
         } catch (e) { log('Rotation Futbin', e); ROT.fbErr = e.message; }
-        ROT.list.sort((a, b) => b.price - a.price);
-        ROT.fromFutbin = fb;
+        ROT.list.forEach((x) => { const c = cacheGet(`futbin:${settings.platform}:${x.asset}`); if (c) { x.fb = c; autoExclude(x); } });
+        ROT.list.sort((a, b) => (b.fb || b.price) - (a.fb || a.price));
+        ROT.fromFutbin = fb; saveSettings();
         ROT.i = 0; ROT.cur = null; ROT.key = `${lo}-${hi}`;
         const dist = {};
         con.players.forEach((p) => { if (p.rating >= 80) dist[p.rating] = (dist[p.rating] || 0) + 1; });
@@ -5651,7 +5684,9 @@ const SBC = (function () {
       if (!rotOn() || !ROT.list.length || ROT.key !== `${settings.rfMin}-${settings.rfMax || 99}`) return false;
       const k = fld(/^masked_?def_?id$/i) || fld(/^def_?id$/i) || 'maskedDefId';
       if (ROT.k !== k) { ROT.k = k; ROT.orig = TC.crit[k]; }
-      ROT.cur = ROT.list[ROT.i % ROT.list.length]; ROT.i++;
+      const act = ROT.list.filter((x) => !settings.rotExcl[x.asset]);
+      if (!act.length) return false;
+      ROT.cur = act[ROT.i % act.length]; ROT.i++;
       TC.crit[k] = ROT.cur.asset;
       return true;
     }   // Ergebnisseiten pro Suche (mehr = mehr Anfragen!)
@@ -6055,7 +6090,7 @@ const SBC = (function () {
     }
     function simpleHtml() {
       const rot = settings.snMode === 'rating';
-      const ready = rot ? (ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${ROT.list.length} Spieler mit Rating ${settings.snRating}${settings.snRatingUp ? '+' : ''} – jeder Tipp prüft einen gezielt${ROT.cur ? ` · zuletzt: ${esc(ROT.cur.name)}` : ''}` : 'Beim ersten Tipp lädt das Tool alle passenden Spieler (einmalig 1–2 Min.).')
+      const ready = rot ? (ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${rotActive().length} Spieler mit Rating ${settings.snRating}${settings.snRatingUp ? '+' : ''} – jeder Tipp prüft einen gezielt${ROT.cur ? ` · zuletzt: ${esc(ROT.cur.name)}` : ''}` : 'Beim ersten Tipp lädt das Tool alle passenden Spieler (einmalig 1–2 Min.).')
         : (TC.crit && !TC.own ? `Spieler aus deiner letzten EA-Suche${critMaxBuy() ? ` · bis ${fmt(critMaxBuy())}` : ''}` : 'Such in der Web App einmal nach dem Spieler – dann hier nur noch Leertaste/Knopf.');
       return `<div class="by-simple">
         <div class="by-seg"><button data-sm="ea" class="${rot ? '' : 'on'}">👤 Spieler</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button></div>
@@ -6064,7 +6099,7 @@ const SBC = (function () {
           <label>Max. Preis<input type="number" min="0" step="50" data-sn="snMax" value="${settings.snMax || ''}" placeholder="${critMaxBuy() ? fmt(critMaxBuy()) : 'z. B. 12000'}"></label>
           <label class="ck"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label>
         </div>
-        <div class="by-keys">${ready}</div></div>`;
+        <div class="by-keys">${ready}</div>${rot ? rotListHtml() : ''}</div>`;
     }
 
     function render() {
@@ -6127,6 +6162,20 @@ const SBC = (function () {
         if (k === 'rfWin') settings.rfWinSet = true;
         saveSettings(); st.rows = []; st.arm = null; setTimeout(render, 0);
       }));
+      const rc = box.querySelector('[data-rc]');
+      if (rc) rc.addEventListener('click', (e) => { e.stopPropagation(); rotPriceCheck(); });
+      const rf2 = box.querySelector('[data-rf2]');
+      if (rf2) rf2.addEventListener('change', (e) => { e.stopPropagation(); settings.rotFactor = Math.max(0, parseFloat(String(rf2.value).replace(',', '.')) || 0); ROT.list.forEach(autoExclude); saveSettings(); setTimeout(render, 0); });
+      const rall = box.querySelector('[data-rall]');
+      if (rall) rall.addEventListener('click', (e) => { e.stopPropagation(); settings.rotExcl = {}; saveSettings(); render(); });
+      box.querySelectorAll('[data-rx]').forEach((b2) => b2.addEventListener('click', (e) => {
+        e.stopPropagation(); e.preventDefault();
+        const a = b2.dataset.rx;
+        if (settings.rotExcl[a]) delete settings.rotExcl[a]; else settings.rotExcl[a] = 1;
+        ROT.open = true; saveSettings(); render();
+      }));
+      const rd = box.querySelector('.by-rot');
+      if (rd) rd.addEventListener('toggle', () => { ROT.open = rd.open; });
       box.querySelectorAll('[data-sm]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snMode = b2.dataset.sm; if (settings.snMode !== 'rating') { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); } st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
       box.querySelectorAll('[data-sn]').forEach((inp) => inp.addEventListener('change', (e) => {
         e.stopPropagation();
@@ -6472,6 +6521,9 @@ const SBC = (function () {
       .wl-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;border:1px solid #2b3654;background:#0f1526;color:var(--ink);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
       .wl-pick span{color:var(--gold);font-size:12px;white-space:nowrap}.wl-pick:disabled{opacity:.5}
       .pt-open{display:flex;flex-direction:column;gap:4px;background:#2a2412;border:1px solid #a16207;color:#fde68a;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}.pt-open span{color:var(--ink2);font-size:12px}
+      .by-rot summary{cursor:pointer;font-size:13px;color:var(--ink);margin-top:2px}.by-rot-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0;font-size:12px;color:var(--ink2)}.by-rot-tools input{width:56px;height:28px;margin:0 4px;border-radius:7px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 6px}
+      .by-rot-list{max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:2px}.by-rot-list .pt-r{font-size:12px;align-items:center}.by-rot-list .pt-r.ex{opacity:.45;text-decoration:line-through}.by-rot-list .pt-r.ex .by-rx{text-decoration:none}
+      .by-rx{width:26px;height:26px;border-radius:7px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer;margin-left:4px}
       .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
       .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}
       .by-sin{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.by-sin label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--ink2)}.by-sin label.ck{flex-direction:row;align-items:center;gap:5px;height:34px;color:var(--ink);font-size:13px}
