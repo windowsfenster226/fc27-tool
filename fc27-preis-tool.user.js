@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.44.0
+// @version      2.45.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5613,7 +5613,7 @@ const SBC = (function () {
       RCHK.run = true; RCHK.done = 0; RCHK.total = todo.length; render();
       for (const x of todo) {
         if (!RCHK.run) break;
-        try { const v = await getPrice('futbin', { resourceId: x.asset, name: x.name, fullName: x.name, rating: x.rating, isPlayer: true }, 'futbin:rot'); if (v) { x.fb = v; autoExclude(x); } else x.fbErr = 1; } catch (e) { x.fbErr = 1; if (/Schutzseite/.test(e.message)) { st.msg = e.message; break; } }
+        try { const v = await getPrice('futbin', { resourceId: x.rid || x.asset, name: x.name, fullName: x.name, rating: x.rating, isPlayer: true }, 'futbin:rot'); if (v) { x.fb = v; autoExclude(x); } else x.fbErr = 1; } catch (e) { x.fbErr = 1; if (/Schutzseite/.test(e.message)) { st.msg = e.message; break; } }
         RCHK.done++; if (RCHK.done % 3 === 0 || RCHK.done === RCHK.total) { saveSettings(); render(); }
       }
       RCHK.run = false; ROT.list.sort((a, b) => (b.fb || b.price) - (a.fb || a.price)); saveSettings(); render();
@@ -5637,7 +5637,7 @@ const SBC = (function () {
         const lo = settings.rfMin, hi = settings.rfMax || 99;
         const seen = new Set();
         ROT.list = con.players.filter((p) => p.rating >= lo && p.rating <= hi && p.assetId != null && !seen.has(p.assetId) && seen.add(p.assetId))
-          .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) }; });
+          .map((p) => { SBCUI.conceptPrice(p); return { name: p.name, rating: p.rating, asset: p.assetId, rid: p.resId || p.def || null, price: Math.round(p.value || 0) }; });
         // EAs Katalog liefert pro Abfrage nur ~180 Karten (höchstes Rating zuerst) -> zusätzlich je Liga abfragen
         const LEAGUES = [13, 53, 19, 31, 16, 350, 308, 10, 39, 14, 4, 68, 2216, 2222, 2215, 2228, 2218];
         let lg = 0;
@@ -5649,7 +5649,7 @@ const SBC = (function () {
               if (p.rating < lo || p.rating > hi || p.assetId == null || seen.has(p.assetId)) continue;
               seen.add(p.assetId); lg++;
               SBCUI.conceptPrice(p);
-              ROT.list.push({ name: p.name, rating: p.rating, asset: p.assetId, price: Math.round(p.value || 0) });
+              ROT.list.push({ name: p.name, rating: p.rating, asset: p.assetId, rid: p.resId || p.def || null, price: Math.round(p.value || 0) });
             }
           } catch (e) { log('Rotation Liga', id, e); }
           await sleep(250);
@@ -5662,13 +5662,14 @@ const SBC = (function () {
           const rd = await RATINGS.load(true);
           for (let r = lo; r <= Math.min(hi, 99); r++) {
             for (const x of ((rd && rd.players && rd.players[r]) || [])) {
-              if (seen.has(x.id)) continue;
-              seen.add(x.id); fb++;
-              ROT.list.push({ name: x.name, rating: r, asset: x.id, price: x.price || 0 });
+              const aid = x.id % 16777216;   // Futbin-Bild-ID = Karten-ID (Sonderkarten: Basis-ID + n×2^24)
+              if (seen.has(aid)) continue;
+              seen.add(aid); fb++;
+              ROT.list.push({ name: x.name, rating: r, asset: aid, rid: x.id, price: x.price || 0 });
             }
           }
         } catch (e) { log('Rotation Futbin', e); ROT.fbErr = e.message; }
-        ROT.list.forEach((x) => { const c = cacheGet(`futbin:${settings.platform}:${x.asset}`); if (c) { x.fb = c; autoExclude(x); } });
+        ROT.list.forEach((x) => { const c = cacheGet(`futbin:${settings.platform}:${x.rid || x.asset}`); if (c) { x.fb = c; autoExclude(x); } });
         ROT.list.sort((a, b) => (b.fb || b.price) - (a.fb || a.price));
         ROT.fromFutbin = fb; saveSettings();
         ROT.i = 0; ROT.cur = null; ROT.key = `${lo}-${hi}`;
@@ -5733,6 +5734,41 @@ const SBC = (function () {
         c[k] = cur >= lim ? 0 : cur ? cur + stepFor(cur) : 150;
       }
     }
+    // ---------- Such-Zähler: wie viele Anfragen an den Markt in letzter Zeit (eigene + vom Sperren-Schutz gezählte) ----------
+    st.hist = []; let rateWarnT = 0, rateLvl = 'ok';
+    function rate() {
+      const now = Date.now();
+      while (st.hist.length && st.hist[0] < now - 3600000) st.hist.shift();
+      const w = st.hist.filter((t) => t > now - 60000);
+      const g = typeof GUARD !== 'undefined' ? GUARD.level() : null;
+      const gs = (g && g.s) || {};
+      const m = Math.max(w.length, gs.sMin || 0), h = Math.max(st.hist.length, gs.sHour || 0);
+      const lim = settings.guardPerMin || 20, limH = settings.guardPerHour || 300;
+      let lvl = m >= lim || h >= limH ? 'red' : m >= lim * 0.75 || h >= limH * 0.8 ? 'warn' : 'ok';
+      const block = g && g.level === 'red' && /Code/.test(g.text) ? g.text : '';
+      if (block) lvl = 'red';
+      let wait = 0;
+      const thr = Math.ceil(lim * 0.75) - 1;   // darunter ist es wieder grün
+      if (m > thr && w.length > thr) { const k = w.length - thr; wait = Math.max(1, Math.ceil((w[k - 1] + 60000 - now) / 1000)); }
+      return { m, h, lim, limH, lvl, wait, block, own: w.length, gMin: gs.sMin || 0 };
+    }
+    function rateHtml(coins) {
+      const r = rate(), pct = Math.min(100, Math.round((r.m / r.lim) * 100));
+      return `<div class="by-rate ${r.lvl}"><div class="by-rate-t"><b>${r.lvl === 'ok' ? '🟢 Sicher' : r.lvl === 'warn' ? '🟡 Etwas langsamer' : '🔴 Pause machen'}</b><span>${r.m}/${r.lim} Suchen pro Min · ${r.h}/${r.limH} pro Std${coins != null ? ` · ${fmt(coins)} Münzen` : ''}</span></div>
+        <div class="by-rate-bar"><i style="width:${pct}%"></i></div>
+        ${r.block ? `<div class="by-rate-w">⛔ ${esc(r.block)} – 5–10 Min. nichts suchen</div>` : r.lvl !== 'ok' && r.wait ? `<div class="by-rate-w">In ${r.wait} Sek. wieder im grünen Bereich${r.lvl === 'red' ? ' – bis dahin Pause' : ''}</div>` : ''}</div>`;
+    }
+    function noteSearch() {
+      st.hist.push(Date.now());
+      const r = rate();
+      if (r.lvl !== 'ok' && r.lvl !== rateLvl && Date.now() - rateWarnT > 30000 && r.own >= r.gMin) {
+        rateWarnT = Date.now();
+        showToast(r.lvl === 'red' ? `🛑 ${r.m} Suchen in der letzten Minute – kurz Pause machen, sonst bremst EA (Code 403/429).` : `⚠ ${r.m} Suchen/Min – etwas langsamer tippen.`, r.lvl === 'red');
+        try { if (navigator.vibrate && r.lvl === 'red') navigator.vibrate(200); } catch (e) { /* */ }
+      }
+      rateLvl = r.lvl;
+    }
+    setInterval(() => { if (!box || !panel.classList.contains('open') || !panel.classList.contains('v-buy')) return; const el = box.querySelector('.by-rate'); if (el) { const c = SBCUI.userCoins(); el.outerHTML = rateHtml(c); } }, 1000);
     async function directSearch() {
       const S = W.services.Item;
       if (rotOn() && !rotApply()) throw new Error('Erst „Spielerliste laden“ tippen (Rating-Snipe).');
@@ -5744,6 +5780,7 @@ const SBC = (function () {
       st.pageFull = false;
       for (let pg = 1; pg <= pages; pg++) {
         if (pg > 1) await sleep(250 + Math.random() * 200);
+        noteSearch();
         const ev = await obs(fn.call(S, TC.crit, pg), 8000);
         if (pg === 1) st.lastMs = Math.round(performance.now() - t0);
         if (ev && ev.success === false) { cooldown(ev.status); if (pg === 1) throw Object.assign(new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`), { status: ev.status }); break; }
@@ -5894,6 +5931,7 @@ const SBC = (function () {
           if (!offers.length) { st.rows = []; st.msg = settings.snMode === 'list' && LST.cur ? `${LST.cur.name} bis ${fmt(LST.cur.max)}: nichts${st.lstSkipped ? ` (${st.lstSkipped} andere Version${st.lstSkipped > 1 ? 'en' : ''})` : ''} – ${st.lastMs} ms.` : (rotOn() && ROT.cur ? `${ROT.cur.name}: ` : '') + (st.rfSkipped ? `${st.rfSkipped} Angebote, aber keins mit Rating ${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'} (${st.lastMs} ms).` : `Nichts gefunden (${st.lastMs} ms) – nochmal.`) + fullHint; return; }
           if (st.pageFull && rfOn()) st.msg = fullHint.trim();
           st.rows = offers.map(mk).sort((a, b) => a.bin - b.bin);
+          if (settings.snMode === 'list' && LST.cur && !LST.cur.rid && LST.cur.rating) { const m0 = st.rows.find((r) => r.p.rating === LST.cur.rating); if (m0 && m0.p.resourceId) { LST.cur.rid = m0.p.resourceId; saveSettings(); } }
           const names = [...new Set(st.rows.map((r) => r.p.name))];
           st.label = names.length === 1 ? `${st.rows[0].p.rating ?? ''} ${names[0]}` : `${names.length} verschiedene Karten`;
           st.msg = '';
@@ -5925,7 +5963,7 @@ const SBC = (function () {
         const before = new Set(marketRows.keys());
         if (settings.bumpMinBin) bumpMinBin();
         pressButton(s);
-        st.stats.n++;
+        st.stats.n++; noteSearch();
         const got = await waitFor(() => (noResults() ? 'none' : marketOffers().some((o) => !before.has(o.p.tradeId)) ? 'rows' : null), 4000, 50);
         st.t = Date.now();
         st.stats.ms += st.t - t0;
@@ -6037,12 +6075,14 @@ const SBC = (function () {
       if (coolLeft() && !fl) { b.className = 'fail'; b.innerHTML = `⛔ ${coolLeft()} s`; fb.querySelector('.sb-st').textContent = `EA-Code ${st.coolCode} – Pause`; return; }
       b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}` : st.busy ? 'Sucht …' : `⚡ ${rfOn() ? `${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}` : settings.snMode === 'list' ? 'Liste' : 'Snipe'}${(settings.snipeInstant || rfOn()) && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
-      fb.querySelector('.sb-st').textContent = st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
+      const rr = rate();
+      if (rr.lvl === 'red' && !ar && !fl) { fb.querySelector('.sb-st').textContent = `🔴 Pause · ${rr.m}/${rr.lim} pro Min${rr.wait ? ` · grün in ${rr.wait} s` : ''}`; return; }
+      fb.querySelector('.sb-st').textContent = (rr.lvl === 'warn' && !ar ? `🟡 ${rr.m}/${rr.lim} · ` : '') + (st.msg && !ar ? st.msg.replace(/^🎯 /, '').slice(0, 120)
         : ar ? 'Nochmal tippen = kaufen'
           : rotOn() && ROT.cur && !st.rows.length ? `zuletzt: ${ROT.cur.name}`
           : settings.snMode === 'list' && LST.cur && !st.rows.length ? `zuletzt: ${LST.cur.name} ≤ ${fmt(LST.cur.max)}`
           : done ? done.done.t.replace(/ – .*/, '')
-            : st.rows.length ? `${st.rows.length} Treffer, keiner im Max.-Preis` : '';
+            : st.rows.length ? `${st.rows.length} Treffer, keiner im Max.-Preis` : '');
     }
     fb.querySelector('button').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); mainAction(); });
     // Verschieben: am Griff ⋮ ziehen (Position wird gemerkt)
@@ -6112,7 +6152,7 @@ const SBC = (function () {
       if (!o || !o.asset) return false;
       const ex = settings.snList.find((e) => String(e.asset) === String(o.asset) && (e.rating || 0) === (o.rating || 0));
       if (ex) { st.msg = `${ex.name} steht schon in deiner Liste.`; return false; }
-      settings.snList.push({ asset: o.asset, name: o.name || `#${o.asset}`, rating: o.rating || 0, max: o.max || 0, off: false });
+      settings.snList.push({ asset: o.asset, rid: o.rid || null, name: o.name || `#${o.asset}`, rating: o.rating || 0, max: o.max || 0, off: false, fb: o.fb || null });
       if (settings.snList.length > 40) settings.snList.shift();
       st.msg = `${o.name} hinzugefügt${o.max ? '' : ' – jetzt noch den Max.-Preis eintragen'}.`; saveSettings(); return true;
     }
@@ -6126,7 +6166,7 @@ const SBC = (function () {
       const rr = rs.length ? rs : st.rows;
       const ratings = [...new Set(rr.map((r) => r.p.rating))];
       const kmx = Object.keys(c).find((k) => /^max_?(buy|bin|buynow)$/i.test(k));
-      lstAdd({ asset, name: rr.length ? rr[0].p.name : `Spieler #${asset}`, rating: ratings.length === 1 ? ratings[0] : 0, max: (kmx && toNum(c[kmx])) || settings.snMax || 0 });
+      lstAdd({ asset, rid: ratings.length === 1 && rr.length ? rr[0].p.resourceId : null, name: rr.length ? rr[0].p.name : `Spieler #${asset}`, rating: ratings.length === 1 ? ratings[0] : 0, max: (kmx && toNum(c[kmx])) || settings.snMax || 0 });
     }
     // Namenssuche: EAs Spielerdatenbank (falls vorhanden) + geladene Rating-Liste
     async function lstFind(q) {
@@ -6142,14 +6182,39 @@ const SBC = (function () {
           let res = R.search({ name: q });
           if (res && typeof res.then === 'function') res = await res;
           if (res && !Array.isArray(res) && Array.isArray(res.items)) res = res.items;
-          (Array.isArray(res) ? res : []).slice(0, 20).forEach((m) => add({ asset: toNum(m.id), name: nm(m), rating: toNum(m.rating || m.r) || 0 }));
+          (Array.isArray(res) ? res : []).slice(0, 20).forEach((m) => add({ asset: toNum(m.id), rid: toNum(m.id), name: nm(m), rating: toNum(m.rating || m.r) || 0 }));
         }
       } catch (e) { /* */ }
-      ROT.list.forEach((x) => { if (String(x.name).toLowerCase().includes(q)) add({ asset: x.asset, name: x.name, rating: x.rating, price: x.fb || x.price }); });
+      ROT.list.forEach((x) => { if (String(x.name).toLowerCase().includes(q)) add({ asset: x.asset, rid: x.rid || null, name: x.name, rating: x.rating, price: x.fb || x.price }); });
       LST.found = LST.found.slice(0, 15);
       st.msg = LST.found.length ? '' : `„${q}“ nicht gefunden. Alternative: In der Web App nach dem Spieler suchen, dann „＋ aus EA-Suche“.`;
     }
+    // Futbin-Preis je Listenspieler + Vorschlag „lohnt bis“ (Weiterverkauf nach 5 % Steuer mit deinem Mindestgewinn)
+    const lstRid = (e) => e.rid || (!e.rating ? e.asset : null);
+    const lohntBis = (fbp) => { if (!fbp) return 0; const st0 = stepFor(fbp); return Math.max(0, Math.floor((afterTax(fbp) - (settings.snipeMinProfit || 0)) / st0) * st0); };
+    function lstCached() { settings.snList.forEach((e) => { const r = lstRid(e); const c = r && cacheGet(`futbin:${settings.platform}:${r}`); if (c) e.fb = c; }); }
+    const LCHK = { run: false, done: 0, total: 0 };
+    async function lstPriceCheck() {
+      if (LCHK.run) { LCHK.run = false; return; }
+      const todo = settings.snList.filter((e) => lstRid(e));
+      LCHK.run = true; LCHK.done = 0; LCHK.total = todo.length; render();
+      for (const e of todo) {
+        if (!LCHK.run) break;
+        try { const v = await getPrice('futbin', { resourceId: lstRid(e), name: e.name, fullName: e.name, rating: e.rating, isPlayer: true }, 'futbin:lst'); if (v) { e.fb = v; e.fbErr = 0; } else e.fbErr = 1; }
+        catch (er) { e.fbErr = 1; if (/Schutzseite/.test(er.message)) { st.msg = er.message; break; } }
+        LCHK.done++; saveSettings(); render();
+      }
+      LCHK.run = false; saveSettings(); render();
+    }
+    function lstFbHtml(e, i) {
+      if (!lstRid(e)) return '<div class="by-lst-fb mut">Futbin: Version noch unbekannt – wird beim ersten Treffer erkannt</div>';
+      if (!e.fb) return `<div class="by-lst-fb mut">Futbin: ${e.fbErr ? 'nicht gefunden' : '– (💰 Preise holen)'}</div>`;
+      const lb = lohntBis(e.fb), over = e.max && e.max > e.fb;
+      return `<div class="by-lst-fb ${over ? 'warn' : ''}">Futbin <b>${fmt(e.fb)}</b> · lohnt bis <b>${fmt(lb)}</b>${e.max && !over ? ` · Gewinn ab deinem Preis: ${sign(afterTax(e.fb) - e.max)}` : ''}${over ? ' · ⚠ dein Preis liegt über dem Marktpreis' : ''}
+        ${lb && lb !== e.max ? `<button class="fcpt-smallbtn" data-lu="${i}" title="„lohnt bis“ als Max.-Preis übernehmen">↧ übernehmen</button>` : ''}</div>`;
+    }
     function lstHtml() {
+      lstCached();
       const L = settings.snList, act = lstActive().length;
       return `<div class="by-lst">
         ${L.length ? `<div class="by-lst-rows">${L.map((e, i) => `<div class="by-lst-r ${e.off ? 'off' : ''} ${LST.cur === e ? 'cur' : ''}">
@@ -6157,7 +6222,8 @@ const SBC = (function () {
             <span class="nm">${esc(e.name)}</span>
             <label title="Welche Version (Rating). Leer = jede Version dieses Spielers">⭐<input type="number" min="0" max="99" data-lr="${i}" value="${e.rating || ''}" placeholder="alle"></label>
             <label title="Höchstens so viel zahlst du für diesen Spieler">bis<input type="number" min="0" step="50" data-lm="${i}" value="${e.max || ''}" placeholder="Preis"></label>
-            <button class="by-rx" data-ld="${i}" title="aus der Liste löschen">✕</button></div>`).join('')}</div>` : '<div class="by-keys">Noch leer – unten Spieler suchen und hinzufügen.</div>'}
+            <button class="by-rx" data-ld="${i}" title="aus der Liste löschen">✕</button>${lstFbHtml(e, i)}</div>`).join('')}</div>
+          <div class="by-rot-tools"><button class="fcpt-smallbtn" data-lp="1">${LCHK.run ? `⏹ Stopp (${LCHK.done}/${LCHK.total})` : '💰 Futbin-Preise holen'}</button><span>„lohnt bis“ = Futbin-Preis − 5 % Steuer − ${fmt(settings.snipeMinProfit || 0)} Mindestgewinn</span></div>` : '<div class="by-keys">Noch leer – unten Spieler suchen und hinzufügen.</div>'}
         <div class="by-lst-add"><input type="text" data-lq="1" placeholder="Spielername, z. B. Mbappé" value="${esc(LST.q)}"><button class="fcpt-smallbtn" data-lf="1" ${LST.busy ? 'disabled' : ''}>🔍</button><button class="fcpt-smallbtn" data-le="1" title="Spieler aus deiner letzten Suche in der Web App übernehmen">＋ aus EA-Suche</button></div>
         ${LST.found.length ? `<div class="by-lst-found">${LST.found.map((o, i) => `<div class="pt-r"><span>${o.rating ? `<b>${o.rating}</b> ` : ''}${esc(o.name)}${o.price ? ` · ≈ ${fmt(o.price)}` : ''}</span><button class="fcpt-smallbtn" data-la="${i}">＋</button></div>`).join('')}</div>` : ''}
         <div class="by-keys">${act ? `🔄 ${act} Spieler aktiv – jeder Tipp prüft den nächsten mit seinem eigenen Max.-Preis${LST.cur ? ` · zuletzt: <b>${esc(LST.cur.name)}</b> bis ${fmt(LST.cur.max)}` : ''}` : 'Spieler ohne Preis werden nicht gesucht.'}</div></div>`;
@@ -6186,8 +6252,7 @@ const SBC = (function () {
       let best = -1, bv = -Infinity;
       st.rows.forEach((r, i) => { if (!r.done && r.profBin != null && r.profBin > bv && r.profBin > 0) { bv = r.profBin; best = i; } });
       const coins = SBCUI.userCoins();
-      box.innerHTML = `<div class="by-top"><span class="by-g ${g.level}">${g.level === 'red' ? 'Pause empfohlen' : g.level === 'yellow' ? 'Langsamer suchen' : 'Sicher'}</span>
-          <span class="by-coins">${coins != null ? `${fmt(coins)} Münzen` : ''}</span></div>
+      box.innerHTML = `${rateHtml(coins)}
         ${simpleHtml()}
         <details class="by-adv"><summary>⚙ Erweitert</summary>
         <div class="by-opts">
@@ -6256,7 +6321,7 @@ const SBC = (function () {
       box.querySelectorAll('[data-ra]').forEach((b2) => b2.addEventListener('click', (e) => {
         e.stopPropagation(); e.preventDefault();
         const x = ROT.list.find((y) => String(y.asset) === b2.dataset.ra);
-        if (x) lstAdd({ asset: x.asset, name: x.name, rating: x.rating, max: settings.snMax || 0 });
+        if (x) lstAdd({ asset: x.asset, rid: x.rid || null, name: x.name, rating: x.rating, max: settings.snMax || 0, fb: x.fb || null });
         ROT.open = true; render();
       }));
       const lq = box.querySelector('[data-lq]');
@@ -6267,6 +6332,8 @@ const SBC = (function () {
         lq.addEventListener('input', () => { LST.q = lq.value; });
       }
       const lf = box.querySelector('[data-lf]'); if (lf) lf.addEventListener('click', (e) => { e.stopPropagation(); doFind(); });
+      const lp = box.querySelector('[data-lp]'); if (lp) lp.addEventListener('click', (e) => { e.stopPropagation(); lstPriceCheck(); });
+      box.querySelectorAll('[data-lu]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.lu]; if (en && en.fb) { en.max = lohntBis(en.fb); saveSettings(); render(); } }));
       const le = box.querySelector('[data-le]'); if (le) le.addEventListener('click', (e) => { e.stopPropagation(); lstFromEA(); render(); });
       box.querySelectorAll('[data-la]').forEach((b2) => b2.addEventListener('click', (e) => {
         e.stopPropagation(); const o = LST.found[+b2.dataset.la];
@@ -6640,6 +6707,13 @@ const SBC = (function () {
       .by-lst-r input[data-lr]{width:44px}.by-lst-r input[data-lm]{width:78px}
       .by-lst-add{display:flex;gap:6px;align-items:center}.by-lst-add input{flex:1 1 auto;min-width:0;height:32px;border-radius:8px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 8px;font:inherit;font-size:13px}
       .by-lst-found{display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:auto}.by-lst-found .pt-r{font-size:12px;align-items:center}
+      .by-rate{background:#0f1526;border:1px solid #232c45;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+      .by-rate-t{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--ink2)}.by-rate-t b{font-size:13px;color:#34D399}
+      .by-rate.warn .by-rate-t b{color:#F2C14E}.by-rate.red .by-rate-t b{color:#ff6b6b}.by-rate.red{border-color:#ff6b6b}.by-rate.warn{border-color:#8a6d1f}
+      .by-rate-bar{height:6px;border-radius:3px;background:#1b2336;overflow:hidden}.by-rate-bar i{display:block;height:100%;background:#34D399;transition:width .4s}
+      .by-rate.warn .by-rate-bar i{background:#F2C14E}.by-rate.red .by-rate-bar i{background:#ff6b6b}.by-rate-w{font-size:12px;color:var(--ink)}
+      .by-lst-r{flex-wrap:wrap}.by-lst-fb{flex:1 1 100%;font-size:11.5px;color:var(--ink2);display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-left:26px}.by-lst-fb b{color:var(--ink)}
+      .by-lst-fb.mut{opacity:.7}.by-lst-fb.warn{color:#ffae5c}.by-lst-fb .fcpt-smallbtn{padding:2px 8px;font-size:11px}
       .by-rx{width:26px;height:26px;border-radius:7px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer;margin-left:4px}
       .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
       .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}

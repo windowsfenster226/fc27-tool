@@ -120,6 +120,13 @@
       .by-lst-r input[data-lr]{width:44px}.by-lst-r input[data-lm]{width:78px}
       .by-lst-add{display:flex;gap:6px;align-items:center}.by-lst-add input{flex:1 1 auto;min-width:0;height:32px;border-radius:8px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 8px;font:inherit;font-size:13px}
       .by-lst-found{display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:auto}.by-lst-found .pt-r{font-size:12px;align-items:center}
+      .by-rate{background:#0f1526;border:1px solid #232c45;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+      .by-rate-t{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--ink2)}.by-rate-t b{font-size:13px;color:#34D399}
+      .by-rate.warn .by-rate-t b{color:#F2C14E}.by-rate.red .by-rate-t b{color:#ff6b6b}.by-rate.red{border-color:#ff6b6b}.by-rate.warn{border-color:#8a6d1f}
+      .by-rate-bar{height:6px;border-radius:3px;background:#1b2336;overflow:hidden}.by-rate-bar i{display:block;height:100%;background:#34D399;transition:width .4s}
+      .by-rate.warn .by-rate-bar i{background:#F2C14E}.by-rate.red .by-rate-bar i{background:#ff6b6b}.by-rate-w{font-size:12px;color:var(--ink)}
+      .by-lst-r{flex-wrap:wrap}.by-lst-fb{flex:1 1 100%;font-size:11.5px;color:var(--ink2);display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-left:26px}.by-lst-fb b{color:var(--ink)}
+      .by-lst-fb.mut{opacity:.7}.by-lst-fb.warn{color:#ffae5c}.by-lst-fb .fcpt-smallbtn{padding:2px 8px;font-size:11px}
       .by-rx{width:26px;height:26px;border-radius:7px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer;margin-left:4px}
       .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
       .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}
