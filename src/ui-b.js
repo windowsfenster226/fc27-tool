@@ -127,6 +127,13 @@
       .by-rate.warn .by-rate-bar i{background:#F2C14E}.by-rate.red .by-rate-bar i{background:#ff6b6b}.by-rate-w{font-size:12px;color:var(--ink)}
       .by-lst-r{flex-wrap:wrap}.by-lst-fb{flex:1 1 100%;font-size:11.5px;color:var(--ink2);display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-left:26px}.by-lst-fb b{color:var(--ink)}
       .by-lst-fb.mut{opacity:.7}.by-lst-fb.warn{color:#ffae5c}.by-lst-fb .fcpt-smallbtn{padding:2px 8px;font-size:11px}
+      .by-kind{display:flex;gap:6px;margin-top:6px}.by-kind button{flex:1 1 0;min-width:0;height:34px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink2);font:700 13px inherit;cursor:pointer;white-space:nowrap}.by-kind button.on{background:#1b2336;color:var(--gold);border-color:var(--gold)}
+      .by-sin label.inl{flex-direction:row;align-items:center;gap:6px;white-space:nowrap}.by-sin label.inl input{width:64px;flex:none}
+      .by-kind button{font-family:inherit;font-weight:700;font-size:13px}.by-obb{font-family:inherit}
+      .by-cd{font-variant-numeric:tabular-nums}.by-cd.hot{color:#ff6b6b;font-weight:700}
+      .by-ob{display:flex;align-items:center;gap:8px;background:#2a1640;border:2px solid #a78bfa;border-radius:14px;padding:8px 10px;animation:fcptArm 1.2s infinite}.by-ob.no{background:#1b2336;border-color:#475069;animation:none}
+      .by-ob>div{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}.by-ob b{font-size:13px;color:var(--ink)}.by-ob small{font-size:12px;color:var(--ink2)}
+      .by-obb{height:40px;padding:0 14px;border:0;border-radius:12px;background:#a78bfa;color:#140b24;font:800 14px inherit;cursor:pointer;white-space:nowrap}
       .by-rx{width:26px;height:26px;border-radius:7px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);cursor:pointer;margin-left:4px}
       .by-simple{display:flex;flex-direction:column;gap:8px;background:#121a2a;border:1px solid var(--gold);border-radius:14px;padding:10px 12px}
       .by-seg{display:flex;gap:6px}.by-seg button{flex:1;height:38px;border-radius:10px;border:1px solid #2b3654;background:#0f1526;color:var(--ink);font:700 14px system-ui,sans-serif;cursor:pointer}.by-seg button.on{background:var(--gold);color:#15120a;border-color:var(--gold)}
