@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.50.0
+// @version      2.51.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -2730,6 +2730,7 @@ const SBC = (function () {
 
     // ---------- 5) Einsetzen ----------
     let lastApplyError = null;
+    let applyArm = 0;
     async function apply(info, sol) {
       const ctx = findSbcContext() || info.ctx;
       const squad = ctx && (ctx.squad || (ctx.challenge && ctx.challenge.squad));
@@ -2831,6 +2832,7 @@ const SBC = (function () {
       #fcpt-sbc .btn{flex:1;border:0;border-radius:10px;padding:11px 12px;font:700 14px system-ui,sans-serif;cursor:pointer;background:var(--bg3);color:var(--ink);border:1px solid var(--line)}
       #fcpt-sbc .btn.pri{background:linear-gradient(135deg,#60a5fa,#2563eb);border:0;color:#fff}
       #fcpt-sbc .btn.go{background:linear-gradient(135deg,#4ade80,#16a34a);border:0;color:#04120a}
+      #fcpt-sbc .btn.warn{background:#3b2a0b;border:1px solid #f59e0b;color:#fcd34d}
       #fcpt-sbc .btn[disabled]{opacity:.5;cursor:default}
       #fcpt-sbc .st{font-size:12px;color:var(--ink2);min-height:16px}
       #fcpt-sbc .st.err{color:#fca5a5}
@@ -2967,7 +2969,7 @@ const SBC = (function () {
           ${buyHtml}${buyCostHtml(value + buy)}
           <table><thead><tr><th>Pos</th><th>Spieler</th><th style="text-align:right">OVR</th><th style="text-align:right">Chem</th><th style="text-align:right">Wert</th></tr></thead><tbody>${rows}</tbody></table>
           ${anyLocked ? '<div class="note" style="color:#fcd34d">🔒 Gesperrte Spieler in der Lösung – bitte „Nochmal lösen“.</div>' : ''}
-          <div class="btns"><button class="btn go" data-a="apply" ${sol.feasible && !anyLocked ? '' : 'disabled'}>✓ In SBC einsetzen</button><button class="btn" data-a="solve">Nochmal lösen</button></div>
+          <div class="btns"><button class="btn ${sol.feasible ? 'go' : 'warn'}" data-a="apply" ${!anyLocked && sol.players.some(Boolean) ? '' : 'disabled'} title="${sol.feasible ? '' : 'Setzt die beste gefundene Aufstellung ein – fehlende Anforderungen passt du selbst an. Einreichen lässt EA erst, wenn alles erfüllt ist.'}">${sol.feasible ? '✓ In SBC einsetzen' : '⚠ Teil-Lösung trotzdem einsetzen'}</button><button class="btn" data-a="solve">Nochmal lösen</button></div>
           <div class="st" data-el="applyst"></div>
         </div>`;
     }
@@ -3169,13 +3171,31 @@ const SBC = (function () {
       if (err) showToast(m.length > 140 ? m.slice(0, 137) + '…' : m, true);
     };
     async function runApply() {
-      if (!lastSol || !lastSol.feasible) { applyMsg('Keine gültige Lösung – bitte zuerst lösen.', true); return; }
+      if (!lastSol || !lastSol.players || !lastSol.players.some(Boolean)) { applyMsg('Keine Lösung – bitte zuerst lösen.', true); return; }
+      const partial = !lastSol.feasible;
+      if (partial && !(applyArm && Date.now() - applyArm < 5000)) {
+        applyArm = Date.now();
+        const miss = (lastSol.ev.results || []).filter((r) => r.ok === false).map((r) => SBC.describe(r.c)).join(' · ');
+        applyMsg(`⚠ Teil-Lösung: nicht erfüllt – ${miss || 'unbekannt'}. Nochmal tippen = trotzdem einsetzen. Danach selbst anpassen; EA lässt erst einreichen, wenn alles passt.`, true);
+        return;
+      }
+      applyArm = 0;
       if (lastSol.players.some((p) => p && lockedIds().has(p.id))) { applyMsg('Lösung enthält gesperrte Spieler – bitte neu lösen.', true); return; }
       const btn = pane.querySelector('[data-a="apply"]');
       if (btn) { btn.disabled = true; btn.textContent = 'Setze ein …'; }
       try {
         applyMsg('Setze Spieler ein …');
-        await apply(info, lastSol);
+        let solA = lastSol;
+        if (partial) {   // gleiche Karte nie doppelt einsetzen
+          const seenA = new Set();
+          solA = { ...lastSol, players: lastSol.players.map((p) => { if (!p || p.concept && !entOf(p.id)) return p; const k = p.assetId ?? p.id; if (seenA.has(k)) return null; seenA.add(k); return p; }) };
+        }
+        await apply(info, solA);
+        if (partial) {
+          applyMsg('✓ Teil-Lösung eingesetzt – jetzt die fehlenden Anforderungen selbst anpassen (Spieler tauschen), dann einreichen.');
+          setTimeout(() => { pane.classList.remove('open'); showToast('⚠ Teil-Lösung eingesetzt – fehlende Anforderungen selbst anpassen'); }, 900);
+          return;
+        }
         applyMsg('✓ Eingesetzt. Falls die Aufstellung nicht sofort erscheint: einmal zurück und die Aufgabe neu öffnen. Dann prüfen und selbst einreichen.');
         if (planValid() && plan.items[info.id]) { plan.items[info.id].done = true; plan.items[info.id].players = lastSol.players.filter(Boolean).map((p) => ({ id: p.id, name: p.name, rating: p.rating })); savePlan(); }
         // Fenster schließen, damit „Absenden“ und EAs Bestätigung nicht verdeckt werden
@@ -3186,7 +3206,7 @@ const SBC = (function () {
         if (/Code 404|Code 409/.test(e.message)) club = null;   // Vereinsdaten veraltet -> beim nächsten Lösen frisch laden
         log('SBC apply', e);
       } finally {
-        if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = '✓ In SBC einsetzen'; }
+        if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = lastSol && !lastSol.feasible ? '⚠ Teil-Lösung trotzdem einsetzen' : '✓ In SBC einsetzen'; }
       }
     }
 
