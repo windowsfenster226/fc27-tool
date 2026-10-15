@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.52.0
+// @version      2.53.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -655,11 +655,25 @@ const SBC = (function () {
   const cacheGet = (k) => (cache[k] && Date.now() - cache[k].t <= ttl() ? cache[k].v : undefined);
   // EAs „Durchschnittspreis“ hinkt hinterher und liegt oft über dem echten Marktpreis.
   // Korrektur: bei normalen Karten höchstens günstigster Preis für dieses Rating (Futbin) + 15 %, sonst 15 % Abschlag.
-  function eaAvgValue(avg, rating, rarity, special) {
+  // Grobe Marktwerte für normale Karten ohne Futbin-/EA-Preis (Bronze/Silber liegen fast immer am unteren Rand)
+  function estCardValue(rating, rarity) {
+    const r = Number(rating) || 0, rare = (Number(rarity) || 0) >= 1;
+    if (!r) return null;
+    if (r < 65) return rare ? 200 : 150;          // Bronze
+    if (r < 75) return rare ? 350 : 200;          // Silber
+    if (r < 80) return rare ? 500 : 350;          // Gold 75–79
+    if (r < 83) return 700 + (r - 80) * 200 + (rare ? 150 : 0);
+    return null;
+  }
+  function eaAvgValue(avg, rating, rarity, special, minPrice) {
     avg = Number(avg) || 0;
-    if (!avg) return null;
+    const r = Number(rating) || 0;
     let floor = null;
-    try { const d = RATINGS.get(); floor = (d && d.prices && d.prices[rating]) || null; } catch (e) { /* */ }
+    try { const d = RATINGS.get(); floor = (d && d.prices && d.prices[r]) || null; } catch (e) { /* */ }
+    if (!floor && !special && r && r < 81) floor = estCardValue(r, rarity);   // Bronze/Silber/niedriges Gold
+    const mp = Number(minPrice) || 0;
+    if (floor && mp) floor = Math.max(floor, mp);                             // nie unter EAs Mindestpreis
+    if (!avg) return special ? null : floor;                                  // kein EA-Wert: Schätzung für normale Karten
     if (floor && !special && (rarity == null || rarity <= 1)) return Math.min(avg, Math.round(floor * 1.15));
     return Math.round(avg * 0.85);
   }
@@ -2554,7 +2568,7 @@ const SBC = (function () {
       const loans = g(raw.loans, ent.loans, 0);
       const resId = g(ent.resourceId, raw.resourceId, def);
       const futbin = cacheGet(`futbin:${settings.platform}:${resId}`);
-      const value = g(futbin, eaAvgValue(raw.marketAverage, rating, rarity, rarity > 1), estValue(rating, rarity));
+      const value = g(futbin, eaAvgValue(raw.marketAverage, rating, rarity, rarity > 1, raw.marketDataMinPrice), estValue(rating, rarity));
       const unassigned = !!(extra && extra.unassigned) || !!raw.__unassigned;
       const storage = !!(extra && extra.dup && !extra.unassigned);
       const dup = !!(extra && extra.dup) || !!raw.__unassigned || (typeof ent.isDuplicate === 'function' && (() => { try { return ent.isDuplicate(); } catch (e) { return false; } })());
@@ -4714,7 +4728,7 @@ const SBC = (function () {
   const NEWITEMS = (() => {
     if (settings.niSellMin === undefined) settings.niSellMin = 1000;   // ab diesem Wert: verkaufen
     let box = null;
-    const st = { items: null, msg: '', busy: false, confirm: false, count: null, choice: {} };
+    const st = { items: null, msg: '', busy: false, confirm: false, count: null, choice: {}, manual: {} };
     const ACT = { tl: 'Transferliste', store: 'SBC-Lager', club: 'Verein', qs: 'Schnellverkauf', keep: 'Liegen lassen' };
 
     const obs = (o, ms = 12000) => new Promise((resolve, reject) => {
@@ -4747,10 +4761,11 @@ const SBC = (function () {
       try { dup = (typeof ent.isDuplicate === 'function' && ent.isDuplicate()) || !!(ent.duplicateId && ent.duplicateId > 0); } catch (e) { /* */ }
       const rid = ent.resourceId ?? ent.definitionId;
       const fb = isPl && rid != null ? cacheGet(`futbin:${settings.platform}:${rid}`) : null;
-      const value = fb || eaAvgValue(raw.marketAverage || ent._marketAverage, raw.rating ?? ent.rating, raw.rareflag ?? ent._rareflag, (raw.rareflag ?? ent._rareflag ?? 0) > 1) || null;
+      const rar = raw.rareflag ?? ent._rareflag ?? 0;
+      const value = fb || (isPl ? eaAvgValue(raw.marketAverage || ent._marketAverage, rating, rar, rar > 1, raw.marketDataMinPrice) : (raw.marketAverage || ent._marketAverage ? Math.round((raw.marketAverage || ent._marketAverage) * 0.85) : null)) || null;
       const qs = raw.discardValue ?? ent.discardValue ?? 0;
       const pts = raw.gradingScore || null;
-      return { ent, id: ent.id, isPl, name, rating, untr, dup, value, src: fb ? 'Futbin' : value ? 'EA' : '', qs, pts };
+      return { ent, id: ent.id, isPl, name, rating, rid, rar, untr, dup, value, src: fb ? 'Futbin' : (raw.marketAverage || ent._marketAverage) ? 'EA korr.' : value ? 'Schätzung' : '', qs, pts };
     }
 
     // Vorschlag: teure handelbare Karten verkaufen, Duplikate ins SBC-Lager, sonst Verein
@@ -4771,13 +4786,32 @@ const SBC = (function () {
         const ev = await obs(S.requestUnassignedItems());
         const L = ((ev.response || ev.data || {}).items || []).map(info);
         L.sort((a, b) => (b.value || 0) - (a.value || 0) || (b.rating || 0) - (a.rating || 0));
-        st.items = L; st.count = L.length; st.choice = {};
+        st.items = L; st.count = L.length; st.choice = {}; st.manual = {};
         try { PACKS.learnNames(L); } catch (e) { /* */ }
         L.forEach((x) => { st.choice[x.id] = suggest(x); });
         st.msg = L.length ? '' : 'Keine neuen Items – alles sortiert. 👍';
+        // die besten handelbaren Spieler gleich bei Futbin nachschlagen (auch Silber/Bronze)
+        fetchPrices(L.filter((x) => x.isPl && !x.untr && x.src !== 'Futbin').sort((a, b) => (b.rar > 1) - (a.rar > 1) || (b.rating || 0) - (a.rating || 0)).slice(0, 6), true);
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
     }
 
+    // Futbin-Preise für neue Karten (eigene, schonende Warteschlange)
+    let fetching = false;
+    async function fetchPrices(list, quiet) {
+      if (fetching || !list.length) return;
+      fetching = true; let n = 0;
+      if (!quiet) { st.msg = `Hole Futbin-Preise (0/${list.length}) …`; render(); }
+      for (const x of list) {
+        try {
+          const v = await getPrice('futbin', { resourceId: x.rid, name: x.name, fullName: x.name, rating: x.rating, isPlayer: true }, 'futbin:ni');
+          if (v) { x.value = v; x.src = 'Futbin'; if (!(x.id in st.manual)) st.choice[x.id] = suggest(x); }
+        } catch (e) { if (/Schutzseite/.test(e.message)) { st.msg = e.message; break; } }
+        n++; if (!quiet) st.msg = `Hole Futbin-Preise (${n}/${list.length}) …`; render();
+      }
+      fetching = false;
+      if (!quiet && !/Schutzseite/.test(st.msg)) st.msg = '';
+      render();
+    }
     async function apply() {
       const S = W.services.Item;
       const L = st.items.filter((x) => st.choice[x.id] && st.choice[x.id] !== 'keep');
@@ -4826,7 +4860,7 @@ const SBC = (function () {
         .map((k) => `<option value="${k}" ${st.choice[x.id] === k ? 'selected' : ''}>${ACT[k]}</option>`).join('');
       const rows = L ? L.map((x) => `<div class="ni-r">
           <span class="ni-n">${x.isPl ? FAV.btn({ id: x.id, name: x.name, rating: x.rating }) : ''}<b>${esc(x.rating ?? '')}</b> ${esc(x.name)}${x.untr ? ' <em>NH</em>' : ''}${x.dup ? ' <em class="d">Dup</em>' : ''}
-            <small>${x.value ? `Wert ${fmt(x.value)}` : 'Wert –'}${x.qs ? ` · Schnell ${fmt(x.qs)}` : ''}${x.pts ? ` · ${fmt(x.pts)} 💎` : ''}</small></span>
+            <small>${x.value ? `Wert ${fmt(x.value)}${x.src && x.src !== 'Futbin' ? ` <i title="${x.src === 'Schätzung' ? 'Schätzung nach Rating/Seltenheit' : 'EA-Durchschnitt, korrigiert'}">(${x.src})</i>` : ''}` : 'Wert –'}${x.qs ? ` · Schnell ${fmt(x.qs)}` : ''}${x.pts ? ` · ${fmt(x.pts)} 💎` : ''}</small></span>
           <select data-ni="${x.id}" aria-label="Ziel für ${esc(x.name)}">${opts(x)}</select></div>`).join('') : '';
       box.innerHTML = `<div class="fcpt-sgroup"><h4>📦 Neue Items sortieren</h4>
         <div class="note" style="font-size:12px;color:var(--ink2)">Nach dem Pack-Öffnen: das Tool schlägt für jede Karte ein Ziel vor – du kannst alles ändern und bestätigst am Ende.</div>
@@ -4836,6 +4870,7 @@ const SBC = (function () {
         ${L && L.length ? `
           <div class="ni-sum">${Object.entries(s.by).map(([k, n]) => `<span>${n}× ${ACT[k]}</span>`).join('')}</div>
           ${s.tlVal ? `<div class="pt-note">Transferliste bringt ca. <b>${fmt(s.tlVal)}</b> nach Steuer${s.qsCoins ? ` · Schnellverkauf <b>${fmt(s.qsCoins)}</b> sofort` : ''}.</div>` : s.qsCoins ? `<div class="pt-note">Schnellverkauf bringt sofort <b>${fmt(s.qsCoins)}</b>.</div>` : ''}
+          ${L.some((x) => x.isPl && !x.untr && x.src !== 'Futbin') ? `<button class="fcpt-smallbtn" data-ni-fb ${fetching ? 'disabled' : ''}>💰 Futbin-Preise für alle handelbaren holen (${L.filter((x) => x.isPl && !x.untr && x.src !== 'Futbin').length})</button>` : ''}
           <div class="ni-list">${rows}</div>
           ${st.confirm ? `<div class="pt-confirm"><b>${L.filter((x) => st.choice[x.id] !== 'keep').length} Items verteilen?</b>
               <span>${s.by.qs ? `${s.by.qs}× Schnellverkauf ist endgültig. ` : ''}Verschieben lässt sich in der Web App wieder ändern.</span>
@@ -4845,6 +4880,7 @@ const SBC = (function () {
       const q = (sel) => box.querySelector(sel);
       const on = (el, ev, fn) => el && el.addEventListener(ev, (e) => { e.stopPropagation(); fn(e); });
       on(q('[data-ni-load]'), 'click', () => load());
+      on(q('[data-ni-fb]'), 'click', () => fetchPrices((st.items || []).filter((x) => x.isPl && !x.untr && x.src !== 'Futbin')));
       on(q('[data-ni-go]'), 'click', () => { st.confirm = true; render(); });
       on(q('[data-ni-no]'), 'click', () => { st.confirm = false; render(); });
       on(q('[data-ni-yes]'), 'click', () => apply());
@@ -4852,7 +4888,7 @@ const SBC = (function () {
         settings.niSellMin = Math.max(0, parseInt(e.target.value, 10) || 0); saveSettings();
         if (st.items) { st.items.forEach((x) => { st.choice[x.id] = suggest(x); }); render(); }
       });
-      box.querySelectorAll('[data-ni]').forEach((sel) => on(sel, 'change', () => { st.choice[sel.dataset.ni] = sel.value; render(); }));
+      box.querySelectorAll('[data-ni]').forEach((sel) => on(sel, 'change', () => { st.choice[sel.dataset.ni] = sel.value; st.manual[sel.dataset.ni] = 1; render(); }));
     }
 
     // Anzahl im Hintergrund nachsehen (für die Übersicht) – höchstens alle 5 Min., nur wenn das Panel offen ist
@@ -5156,7 +5192,9 @@ const SBC = (function () {
       const currency = String(req.currency || (info.coins ? 'COINS' : '')).toUpperCase();
       const its = items.filter((x) => x && x.id != null).map((x) => {
         const fb = x.resourceId != null ? cacheGet(`futbin:${settings.platform}:${x.resourceId}`) : null;
-        return { id: x.id, r: x.rating || null, pl: x.itemType === 'player', untr: !!x.untradeable, v: x.untradeable ? 0 : (fb || x.marketAverage || 0), qs: x.discardValue || 0, pos: x.preferredPosition };
+        const pl = x.itemType === 'player', rar = x.rareflag || 0;
+        const v = x.untradeable ? 0 : (fb || (pl ? eaAvgValue(x.marketAverage, x.rating, rar, rar > 1, x.marketDataMinPrice) : (x.marketAverage ? Math.round(x.marketAverage * 0.85) : 0)) || 0);
+        return { id: x.id, r: x.rating || null, pl, untr: !!x.untradeable, v, qs: x.discardValue || 0, pos: x.preferredPosition };
       });
       log2.push({ t: Date.now(), pk, name: info.name || (pk != null ? `Pack ${pk}` : 'Pack'), cost: currency === 'COINS' ? info.coins || 0 : 0, cur: currency || '?', items: its });
       save();
@@ -5184,7 +5222,7 @@ const SBC = (function () {
           ${coinsPacks.length ? `<div class="pt-note">Gekaufte Packs: ${fmt(coinsSpent)} Münzen → ${fmt(valPaid)} handelbarer Marktwert (<b class="${valPaid >= coinsSpent ? 'fcpt-pos-v' : 'fcpt-neg-v'}">${Math.round(valPaid / Math.max(1, coinsSpent) * 100)} %</b>).</div>` : ''}
           <div class="pt-h">Nach Pack</div>${Object.entries(byName).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([n, g]) => `<div class="pt-r"><span>${esc(n)} (${g.n}×)</span><span>Ø ${fmt(Math.round(g.v / g.n))}${g.c ? ` · kostet Ø ${fmt(Math.round(g.c / g.n))}` : ''} · bestes ${g.top || '–'}</span></div>`).join('')}
           ${best.length ? `<div class="pt-h">Beste Ziehungen</div>${best.map((x) => `<div class="pt-r"><span><b>${esc(x.r ?? '')}</b> ${esc(names[x.id] || x.pos || 'Spieler')}${x.untr ? ' <em>NH</em>' : ''}</span><span>${x.v ? fmt(x.v) : 'NH'} · ${new Date(x.t).toLocaleDateString('de-DE')}</span></div>`).join('')}` : ''}
-          <div class="pt-note">Wert = Marktwert handelbarer Karten (Futbin/EA). Nicht handelbare zählen mit 0.</div>
+          <div class="pt-note">Wert = Marktwert handelbarer Karten (Futbin, sonst EA-Durchschnitt korrigiert bzw. Schätzung nach Rating – auch Silber/Bronze). Nicht handelbare zählen mit 0.</div>
           <button class="fcpt-smallbtn" data-pk="clear">Auswertung zurücksetzen</button>`
         : '<div class="note" style="font-size:12px;color:var(--ink2)">Noch keine Packs erfasst. Öffne ein Pack in der Web App (dieser Tab) – das Tool merkt sich automatisch Inhalt und Wert.</div>'}
       </div>`;

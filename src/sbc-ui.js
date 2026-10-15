@@ -253,7 +253,7 @@
       const loans = g(raw.loans, ent.loans, 0);
       const resId = g(ent.resourceId, raw.resourceId, def);
       const futbin = cacheGet(`futbin:${settings.platform}:${resId}`);
-      const value = g(futbin, eaAvgValue(raw.marketAverage, rating, rarity, rarity > 1), estValue(rating, rarity));
+      const value = g(futbin, eaAvgValue(raw.marketAverage, rating, rarity, rarity > 1, raw.marketDataMinPrice), estValue(rating, rarity));
       const unassigned = !!(extra && extra.unassigned) || !!raw.__unassigned;
       const storage = !!(extra && extra.dup && !extra.unassigned);
       const dup = !!(extra && extra.dup) || !!raw.__unassigned || (typeof ent.isDuplicate === 'function' && (() => { try { return ent.isDuplicate(); } catch (e) { return false; } })());

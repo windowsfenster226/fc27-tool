@@ -6,7 +6,7 @@
   const NEWITEMS = (() => {
     if (settings.niSellMin === undefined) settings.niSellMin = 1000;   // ab diesem Wert: verkaufen
     let box = null;
-    const st = { items: null, msg: '', busy: false, confirm: false, count: null, choice: {} };
+    const st = { items: null, msg: '', busy: false, confirm: false, count: null, choice: {}, manual: {} };
     const ACT = { tl: 'Transferliste', store: 'SBC-Lager', club: 'Verein', qs: 'Schnellverkauf', keep: 'Liegen lassen' };
 
     const obs = (o, ms = 12000) => new Promise((resolve, reject) => {
@@ -39,10 +39,11 @@
       try { dup = (typeof ent.isDuplicate === 'function' && ent.isDuplicate()) || !!(ent.duplicateId && ent.duplicateId > 0); } catch (e) { /* */ }
       const rid = ent.resourceId ?? ent.definitionId;
       const fb = isPl && rid != null ? cacheGet(`futbin:${settings.platform}:${rid}`) : null;
-      const value = fb || eaAvgValue(raw.marketAverage || ent._marketAverage, raw.rating ?? ent.rating, raw.rareflag ?? ent._rareflag, (raw.rareflag ?? ent._rareflag ?? 0) > 1) || null;
+      const rar = raw.rareflag ?? ent._rareflag ?? 0;
+      const value = fb || (isPl ? eaAvgValue(raw.marketAverage || ent._marketAverage, rating, rar, rar > 1, raw.marketDataMinPrice) : (raw.marketAverage || ent._marketAverage ? Math.round((raw.marketAverage || ent._marketAverage) * 0.85) : null)) || null;
       const qs = raw.discardValue ?? ent.discardValue ?? 0;
       const pts = raw.gradingScore || null;
-      return { ent, id: ent.id, isPl, name, rating, untr, dup, value, src: fb ? 'Futbin' : value ? 'EA' : '', qs, pts };
+      return { ent, id: ent.id, isPl, name, rating, rid, rar, untr, dup, value, src: fb ? 'Futbin' : (raw.marketAverage || ent._marketAverage) ? 'EA korr.' : value ? 'Schätzung' : '', qs, pts };
     }
 
     // Vorschlag: teure handelbare Karten verkaufen, Duplikate ins SBC-Lager, sonst Verein
@@ -63,13 +64,32 @@
         const ev = await obs(S.requestUnassignedItems());
         const L = ((ev.response || ev.data || {}).items || []).map(info);
         L.sort((a, b) => (b.value || 0) - (a.value || 0) || (b.rating || 0) - (a.rating || 0));
-        st.items = L; st.count = L.length; st.choice = {};
+        st.items = L; st.count = L.length; st.choice = {}; st.manual = {};
         try { PACKS.learnNames(L); } catch (e) { /* */ }
         L.forEach((x) => { st.choice[x.id] = suggest(x); });
         st.msg = L.length ? '' : 'Keine neuen Items – alles sortiert. 👍';
+        // die besten handelbaren Spieler gleich bei Futbin nachschlagen (auch Silber/Bronze)
+        fetchPrices(L.filter((x) => x.isPl && !x.untr && x.src !== 'Futbin').sort((a, b) => (b.rar > 1) - (a.rar > 1) || (b.rating || 0) - (a.rating || 0)).slice(0, 6), true);
       } catch (e) { st.msg = 'Fehler: ' + e.message; } finally { st.busy = false; render(); }
     }
 
+    // Futbin-Preise für neue Karten (eigene, schonende Warteschlange)
+    let fetching = false;
+    async function fetchPrices(list, quiet) {
+      if (fetching || !list.length) return;
+      fetching = true; let n = 0;
+      if (!quiet) { st.msg = `Hole Futbin-Preise (0/${list.length}) …`; render(); }
+      for (const x of list) {
+        try {
+          const v = await getPrice('futbin', { resourceId: x.rid, name: x.name, fullName: x.name, rating: x.rating, isPlayer: true }, 'futbin:ni');
+          if (v) { x.value = v; x.src = 'Futbin'; if (!(x.id in st.manual)) st.choice[x.id] = suggest(x); }
+        } catch (e) { if (/Schutzseite/.test(e.message)) { st.msg = e.message; break; } }
+        n++; if (!quiet) st.msg = `Hole Futbin-Preise (${n}/${list.length}) …`; render();
+      }
+      fetching = false;
+      if (!quiet && !/Schutzseite/.test(st.msg)) st.msg = '';
+      render();
+    }
     async function apply() {
       const S = W.services.Item;
       const L = st.items.filter((x) => st.choice[x.id] && st.choice[x.id] !== 'keep');
@@ -118,7 +138,7 @@
         .map((k) => `<option value="${k}" ${st.choice[x.id] === k ? 'selected' : ''}>${ACT[k]}</option>`).join('');
       const rows = L ? L.map((x) => `<div class="ni-r">
           <span class="ni-n">${x.isPl ? FAV.btn({ id: x.id, name: x.name, rating: x.rating }) : ''}<b>${esc(x.rating ?? '')}</b> ${esc(x.name)}${x.untr ? ' <em>NH</em>' : ''}${x.dup ? ' <em class="d">Dup</em>' : ''}
-            <small>${x.value ? `Wert ${fmt(x.value)}` : 'Wert –'}${x.qs ? ` · Schnell ${fmt(x.qs)}` : ''}${x.pts ? ` · ${fmt(x.pts)} 💎` : ''}</small></span>
+            <small>${x.value ? `Wert ${fmt(x.value)}${x.src && x.src !== 'Futbin' ? ` <i title="${x.src === 'Schätzung' ? 'Schätzung nach Rating/Seltenheit' : 'EA-Durchschnitt, korrigiert'}">(${x.src})</i>` : ''}` : 'Wert –'}${x.qs ? ` · Schnell ${fmt(x.qs)}` : ''}${x.pts ? ` · ${fmt(x.pts)} 💎` : ''}</small></span>
           <select data-ni="${x.id}" aria-label="Ziel für ${esc(x.name)}">${opts(x)}</select></div>`).join('') : '';
       box.innerHTML = `<div class="fcpt-sgroup"><h4>📦 Neue Items sortieren</h4>
         <div class="note" style="font-size:12px;color:var(--ink2)">Nach dem Pack-Öffnen: das Tool schlägt für jede Karte ein Ziel vor – du kannst alles ändern und bestätigst am Ende.</div>
@@ -128,6 +148,7 @@
         ${L && L.length ? `
           <div class="ni-sum">${Object.entries(s.by).map(([k, n]) => `<span>${n}× ${ACT[k]}</span>`).join('')}</div>
           ${s.tlVal ? `<div class="pt-note">Transferliste bringt ca. <b>${fmt(s.tlVal)}</b> nach Steuer${s.qsCoins ? ` · Schnellverkauf <b>${fmt(s.qsCoins)}</b> sofort` : ''}.</div>` : s.qsCoins ? `<div class="pt-note">Schnellverkauf bringt sofort <b>${fmt(s.qsCoins)}</b>.</div>` : ''}
+          ${L.some((x) => x.isPl && !x.untr && x.src !== 'Futbin') ? `<button class="fcpt-smallbtn" data-ni-fb ${fetching ? 'disabled' : ''}>💰 Futbin-Preise für alle handelbaren holen (${L.filter((x) => x.isPl && !x.untr && x.src !== 'Futbin').length})</button>` : ''}
           <div class="ni-list">${rows}</div>
           ${st.confirm ? `<div class="pt-confirm"><b>${L.filter((x) => st.choice[x.id] !== 'keep').length} Items verteilen?</b>
               <span>${s.by.qs ? `${s.by.qs}× Schnellverkauf ist endgültig. ` : ''}Verschieben lässt sich in der Web App wieder ändern.</span>
@@ -137,6 +158,7 @@
       const q = (sel) => box.querySelector(sel);
       const on = (el, ev, fn) => el && el.addEventListener(ev, (e) => { e.stopPropagation(); fn(e); });
       on(q('[data-ni-load]'), 'click', () => load());
+      on(q('[data-ni-fb]'), 'click', () => fetchPrices((st.items || []).filter((x) => x.isPl && !x.untr && x.src !== 'Futbin')));
       on(q('[data-ni-go]'), 'click', () => { st.confirm = true; render(); });
       on(q('[data-ni-no]'), 'click', () => { st.confirm = false; render(); });
       on(q('[data-ni-yes]'), 'click', () => apply());
@@ -144,7 +166,7 @@
         settings.niSellMin = Math.max(0, parseInt(e.target.value, 10) || 0); saveSettings();
         if (st.items) { st.items.forEach((x) => { st.choice[x.id] = suggest(x); }); render(); }
       });
-      box.querySelectorAll('[data-ni]').forEach((sel) => on(sel, 'change', () => { st.choice[sel.dataset.ni] = sel.value; render(); }));
+      box.querySelectorAll('[data-ni]').forEach((sel) => on(sel, 'change', () => { st.choice[sel.dataset.ni] = sel.value; st.manual[sel.dataset.ni] = 1; render(); }));
     }
 
     // Anzahl im Hintergrund nachsehen (für die Übersicht) – höchstens alle 5 Min., nur wenn das Panel offen ist

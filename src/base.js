@@ -117,11 +117,25 @@
   const cacheGet = (k) => (cache[k] && Date.now() - cache[k].t <= ttl() ? cache[k].v : undefined);
   // EAs „Durchschnittspreis“ hinkt hinterher und liegt oft über dem echten Marktpreis.
   // Korrektur: bei normalen Karten höchstens günstigster Preis für dieses Rating (Futbin) + 15 %, sonst 15 % Abschlag.
-  function eaAvgValue(avg, rating, rarity, special) {
+  // Grobe Marktwerte für normale Karten ohne Futbin-/EA-Preis (Bronze/Silber liegen fast immer am unteren Rand)
+  function estCardValue(rating, rarity) {
+    const r = Number(rating) || 0, rare = (Number(rarity) || 0) >= 1;
+    if (!r) return null;
+    if (r < 65) return rare ? 200 : 150;          // Bronze
+    if (r < 75) return rare ? 350 : 200;          // Silber
+    if (r < 80) return rare ? 500 : 350;          // Gold 75–79
+    if (r < 83) return 700 + (r - 80) * 200 + (rare ? 150 : 0);
+    return null;
+  }
+  function eaAvgValue(avg, rating, rarity, special, minPrice) {
     avg = Number(avg) || 0;
-    if (!avg) return null;
+    const r = Number(rating) || 0;
     let floor = null;
-    try { const d = RATINGS.get(); floor = (d && d.prices && d.prices[rating]) || null; } catch (e) { /* */ }
+    try { const d = RATINGS.get(); floor = (d && d.prices && d.prices[r]) || null; } catch (e) { /* */ }
+    if (!floor && !special && r && r < 81) floor = estCardValue(r, rarity);   // Bronze/Silber/niedriges Gold
+    const mp = Number(minPrice) || 0;
+    if (floor && mp) floor = Math.max(floor, mp);                             // nie unter EAs Mindestpreis
+    if (!avg) return special ? null : floor;                                  // kein EA-Wert: Schätzung für normale Karten
     if (floor && !special && (rarity == null || rarity <= 1)) return Math.min(avg, Math.round(floor * 1.15));
     return Math.round(avg * 0.85);
   }

@@ -166,7 +166,9 @@
       const currency = String(req.currency || (info.coins ? 'COINS' : '')).toUpperCase();
       const its = items.filter((x) => x && x.id != null).map((x) => {
         const fb = x.resourceId != null ? cacheGet(`futbin:${settings.platform}:${x.resourceId}`) : null;
-        return { id: x.id, r: x.rating || null, pl: x.itemType === 'player', untr: !!x.untradeable, v: x.untradeable ? 0 : (fb || x.marketAverage || 0), qs: x.discardValue || 0, pos: x.preferredPosition };
+        const pl = x.itemType === 'player', rar = x.rareflag || 0;
+        const v = x.untradeable ? 0 : (fb || (pl ? eaAvgValue(x.marketAverage, x.rating, rar, rar > 1, x.marketDataMinPrice) : (x.marketAverage ? Math.round(x.marketAverage * 0.85) : 0)) || 0);
+        return { id: x.id, r: x.rating || null, pl, untr: !!x.untradeable, v, qs: x.discardValue || 0, pos: x.preferredPosition };
       });
       log2.push({ t: Date.now(), pk, name: info.name || (pk != null ? `Pack ${pk}` : 'Pack'), cost: currency === 'COINS' ? info.coins || 0 : 0, cur: currency || '?', items: its });
       save();
@@ -194,7 +196,7 @@
           ${coinsPacks.length ? `<div class="pt-note">Gekaufte Packs: ${fmt(coinsSpent)} Münzen → ${fmt(valPaid)} handelbarer Marktwert (<b class="${valPaid >= coinsSpent ? 'fcpt-pos-v' : 'fcpt-neg-v'}">${Math.round(valPaid / Math.max(1, coinsSpent) * 100)} %</b>).</div>` : ''}
           <div class="pt-h">Nach Pack</div>${Object.entries(byName).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([n, g]) => `<div class="pt-r"><span>${esc(n)} (${g.n}×)</span><span>Ø ${fmt(Math.round(g.v / g.n))}${g.c ? ` · kostet Ø ${fmt(Math.round(g.c / g.n))}` : ''} · bestes ${g.top || '–'}</span></div>`).join('')}
           ${best.length ? `<div class="pt-h">Beste Ziehungen</div>${best.map((x) => `<div class="pt-r"><span><b>${esc(x.r ?? '')}</b> ${esc(names[x.id] || x.pos || 'Spieler')}${x.untr ? ' <em>NH</em>' : ''}</span><span>${x.v ? fmt(x.v) : 'NH'} · ${new Date(x.t).toLocaleDateString('de-DE')}</span></div>`).join('')}` : ''}
-          <div class="pt-note">Wert = Marktwert handelbarer Karten (Futbin/EA). Nicht handelbare zählen mit 0.</div>
+          <div class="pt-note">Wert = Marktwert handelbarer Karten (Futbin, sonst EA-Durchschnitt korrigiert bzw. Schätzung nach Rating – auch Silber/Bronze). Nicht handelbare zählen mit 0.</div>
           <button class="fcpt-smallbtn" data-pk="clear">Auswertung zurücksetzen</button>`
         : '<div class="note" style="font-size:12px;color:var(--ink2)">Noch keine Packs erfasst. Öffne ein Pack in der Web App (dieser Tab) – das Tool merkt sich automatisch Inhalt und Wert.</div>'}
       </div>`;
