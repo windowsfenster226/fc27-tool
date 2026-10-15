@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.51.0
+// @version      2.51.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -2493,6 +2493,30 @@ const SBC = (function () {
 
     // ---------- 3) Verein laden ----------
     let club = null; // { at, players: [], ents: Map }
+    // Nach dem Einreichen einer SBC sind deren Karten weg -> Vereinsdaten beim nächsten Lösen frisch laden
+    function clubConsumed(ids) {
+      if (!club) return;
+      if (!ids) { club = null; return; }
+      const set = new Set(ids);
+      club.players = club.players.filter((p) => !set.has(p.id));
+      set.forEach((id) => club.ents.delete(id));
+    }
+    NETHOOKS.push((url, method, status) => {
+      if (method === 'GET' || !(status >= 200 && status < 300)) return;
+      // Einreichen (nicht das Speichern der Aufstellung) -> Verein neu laden
+      if (/\/sbs\/challenge\/\d+(\/submit)?(\?|$)/.test(url) || /\/sbs\/.*submit/i.test(url)) { club = null; try { if (typeof lastSol !== 'undefined') lastSol = null; } catch (e) { /* */ } }
+    });
+    // zusätzlich EAs eigene Einreichen-Funktion beobachten (falls die Adresse anders aussieht)
+    setInterval(() => {
+      const S = W.services && W.services.SBC;
+      if (!S) return;
+      for (const fn of ['submitChallenge', 'submitOneClickChallenge']) {
+        const f = S[fn];
+        if (typeof f !== 'function' || f.__fcpt) continue;
+        const g = function () { const r = f.apply(this, arguments); setTimeout(() => { club = null; }, 1500); return r; };
+        g.__fcpt = true; S[fn] = g;
+      }
+    }, 3000);
 
     const PRICE_EST = { 83: 1800, 84: 3200, 85: 5500, 86: 9500, 87: 14000, 88: 20000, 89: 30000, 90: 45000 };
     function estValue(rating, rarity) {
@@ -3191,6 +3215,7 @@ const SBC = (function () {
           solA = { ...lastSol, players: lastSol.players.map((p) => { if (!p || p.concept && !entOf(p.id)) return p; const k = p.assetId ?? p.id; if (seenA.has(k)) return null; seenA.add(k); return p; }) };
         }
         await apply(info, solA);
+        clubConsumed(solA.players.filter((p) => p && !p.concept).map((p) => p.id));   // diese Karten stecken jetzt in der SBC
         if (partial) {
           applyMsg('✓ Teil-Lösung eingesetzt – jetzt die fehlenden Anforderungen selbst anpassen (Spieler tauschen), dann einreichen.');
           setTimeout(() => { pane.classList.remove('open'); showToast('⚠ Teil-Lösung eingesetzt – fehlende Anforderungen selbst anpassen'); }, 900);
@@ -3203,7 +3228,11 @@ const SBC = (function () {
       } catch (e) {
         applyMsg('Einsetzen fehlgeschlagen: ' + e.message + ' – bitte „Diagnose kopieren“ und mir schicken.', true);
         lastApplyError = String(e && (e.stack || e.message) || e).slice(0, 600);
-        if (/Code 404|Code 409/.test(e.message)) club = null;   // Vereinsdaten veraltet -> beim nächsten Lösen frisch laden
+        if (/Code 404|Code 409/.test(e.message)) {   // Vereinsdaten veraltet (z. B. Karten schon in einer anderen SBC eingereicht) -> frisch laden und neu lösen
+          club = null;
+          applyMsg('Karten waren veraltet (schon eingereicht/verschoben) – lade den Verein neu und löse nochmal …', true);
+          setTimeout(() => { try { runSolve(true); } catch (e2) { /* */ } }, 300);
+        }
         log('SBC apply', e);
       } finally {
         if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = lastSol && !lastSol.feasible ? '⚠ Teil-Lösung trotzdem einsetzen' : '✓ In SBC einsetzen'; }
