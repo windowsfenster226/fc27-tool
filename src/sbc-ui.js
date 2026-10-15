@@ -253,7 +253,7 @@
       const loans = g(raw.loans, ent.loans, 0);
       const resId = g(ent.resourceId, raw.resourceId, def);
       const futbin = cacheGet(`futbin:${settings.platform}:${resId}`);
-      const value = g(futbin, raw.marketAverage, estValue(rating, rarity));
+      const value = g(futbin, eaAvgValue(raw.marketAverage, rating, rarity, rarity > 1), estValue(rating, rarity));
       const unassigned = !!(extra && extra.unassigned) || !!raw.__unassigned;
       const storage = !!(extra && extra.dup && !extra.unassigned);
       const dup = !!(extra && extra.dup) || !!raw.__unassigned || (typeof ent.isDuplicate === 'function' && (() => { try { return ent.isDuplicate(); } catch (e) { return false; } })());
@@ -263,7 +263,7 @@
         name: sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${def}`,
         rating, rarity, nationId: g(raw.nation, ent.nationId, ent.nation), leagueId: g(raw.leagueId, ent.leagueId),
         clubId: g(raw.teamid, ent.teamId, ent.teamid), positions, untradeable, loans, owners: g(raw.owners, ent.owners, 1),
-        dup, unassigned, storage, value, priceSrc: futbin != null ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung',
+        dup, unassigned, storage, value, priceSrc: futbin != null ? 'Futbin' : raw.marketAverage ? 'EA (korrigiert)' : 'Schätzung',
         cost: Math.round(value * mult) + rating * 0.01,
         special: rarity > 1,
       };
@@ -293,6 +293,8 @@
 
     async function loadClub(setStatus, force) {
       if (club && !force && Date.now() - club.at < 10 * 60000) return club;
+      // günstigste Preise je Rating (Futbin) – damit EAs zu hohe Durchschnittspreise korrigiert werden können
+      if (typeof RATINGS !== 'undefined' && !RATINGS.get()) { setStatus('Lade Rating-Preise von Futbin …'); try { await RATINGS.load(); } catch (e) { log('Ratings', e); } }
       const S = W.services;
       if (!S || !S.Club || typeof S.Club.search !== 'function') throw new Error('EA-Vereinssuche nicht gefunden');
       const all = await pagedSearch('search', S.Club, 'Verein', setStatus);

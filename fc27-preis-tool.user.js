@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.51.1
+// @version      2.52.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -653,6 +653,16 @@ const SBC = (function () {
   const ttl = () => CONFIG.cacheMinutes * 60000;
   for (const k of Object.keys(cache)) if (Date.now() - cache[k].t > ttl()) delete cache[k];
   const cacheGet = (k) => (cache[k] && Date.now() - cache[k].t <= ttl() ? cache[k].v : undefined);
+  // EAs „Durchschnittspreis“ hinkt hinterher und liegt oft über dem echten Marktpreis.
+  // Korrektur: bei normalen Karten höchstens günstigster Preis für dieses Rating (Futbin) + 15 %, sonst 15 % Abschlag.
+  function eaAvgValue(avg, rating, rarity, special) {
+    avg = Number(avg) || 0;
+    if (!avg) return null;
+    let floor = null;
+    try { const d = RATINGS.get(); floor = (d && d.prices && d.prices[rating]) || null; } catch (e) { /* */ }
+    if (floor && !special && (rarity == null || rarity <= 1)) return Math.min(avg, Math.round(floor * 1.15));
+    return Math.round(avg * 0.85);
+  }
   let lastPriceFetch = Object.values(cache).reduce((m, c) => Math.max(m, c.t || 0), 0) || null;
   const cacheSet = (k, v) => { cache[k] = { t: Date.now(), v }; lastPriceFetch = Date.now(); GM_setValue(CACHE_KEY, cache); };
   const cacheClear = () => { for (const k of Object.keys(cache)) delete cache[k]; GM_setValue(CACHE_KEY, cache); };
@@ -2544,7 +2554,7 @@ const SBC = (function () {
       const loans = g(raw.loans, ent.loans, 0);
       const resId = g(ent.resourceId, raw.resourceId, def);
       const futbin = cacheGet(`futbin:${settings.platform}:${resId}`);
-      const value = g(futbin, raw.marketAverage, estValue(rating, rarity));
+      const value = g(futbin, eaAvgValue(raw.marketAverage, rating, rarity, rarity > 1), estValue(rating, rarity));
       const unassigned = !!(extra && extra.unassigned) || !!raw.__unassigned;
       const storage = !!(extra && extra.dup && !extra.unassigned);
       const dup = !!(extra && extra.dup) || !!raw.__unassigned || (typeof ent.isDuplicate === 'function' && (() => { try { return ent.isDuplicate(); } catch (e) { return false; } })());
@@ -2554,7 +2564,7 @@ const SBC = (function () {
         name: sd.name || [sd.firstName, sd.lastName].filter(Boolean).join(' ') || `#${def}`,
         rating, rarity, nationId: g(raw.nation, ent.nationId, ent.nation), leagueId: g(raw.leagueId, ent.leagueId),
         clubId: g(raw.teamid, ent.teamId, ent.teamid), positions, untradeable, loans, owners: g(raw.owners, ent.owners, 1),
-        dup, unassigned, storage, value, priceSrc: futbin != null ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung',
+        dup, unassigned, storage, value, priceSrc: futbin != null ? 'Futbin' : raw.marketAverage ? 'EA (korrigiert)' : 'Schätzung',
         cost: Math.round(value * mult) + rating * 0.01,
         special: rarity > 1,
       };
@@ -2584,6 +2594,8 @@ const SBC = (function () {
 
     async function loadClub(setStatus, force) {
       if (club && !force && Date.now() - club.at < 10 * 60000) return club;
+      // günstigste Preise je Rating (Futbin) – damit EAs zu hohe Durchschnittspreise korrigiert werden können
+      if (typeof RATINGS !== 'undefined' && !RATINGS.get()) { setStatus('Lade Rating-Preise von Futbin …'); try { await RATINGS.load(); } catch (e) { log('Ratings', e); } }
       const S = W.services;
       if (!S || !S.Club || typeof S.Club.search !== 'function') throw new Error('EA-Vereinssuche nicht gefunden');
       const all = await pagedSearch('search', S.Club, 'Verein', setStatus);
@@ -3654,7 +3666,7 @@ const SBC = (function () {
           const resId = ent && (ent.resourceId || ent.definitionId);
           const fb = resId != null ? cacheGet(`futbin:${settings.platform}:${resId}`) : null;
           const raw = SBCUI.CAP.raw.get(p.id) || {};
-          const val = fb || raw.marketAverage || null;
+          const val = fb || eaAvgValue(raw.marketAverage, p.rating, p.rarity, p.special) || null;
           rows.push({ name: p.name, rating: p.rating, where: 'Verein', value: val || p.value, src: fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung' });
         }
         // Transferliste (nicht verkaufte Karten) – wird bei Bedarf automatisch geladen
@@ -3670,7 +3682,7 @@ const SBC = (function () {
           seen.add(it.itemId);
           const fb = cacheGet(`futbin:${settings.platform}:${it.resourceId}`);
           const raw = SBCUI.CAP.raw.get(it.itemId) || {};
-          const val = fb || raw.marketAverage;
+          const val = fb || eaAvgValue(raw.marketAverage, it.rating, raw.rareflag, (raw.rareflag || 0) > 1);
           if (!val) continue;
           rows.push({ name: it.name, rating: it.rating, where: 'Transferliste', value: val, src: fb ? 'Futbin' : 'EA' });
           tlCount++;
@@ -4104,7 +4116,7 @@ const SBC = (function () {
           const resId = ent && (ent.resourceId || ent.definitionId);
           const fb = resId != null ? cacheGet(`futbin:${settings.platform}:${resId}`) : null;
           const raw = SBCUI.CAP.raw.get(p.id) || {};
-          const val = fb || raw.marketAverage || p.value || null;
+          const val = fb || eaAvgValue(raw.marketAverage, p.rating, p.rarity, p.special) || p.value || null;
           if (!val || val < settings.sellMinValue) continue;
           const srcName = fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'geschätzt';
           const bin = roundPrice(val);
@@ -4735,7 +4747,7 @@ const SBC = (function () {
       try { dup = (typeof ent.isDuplicate === 'function' && ent.isDuplicate()) || !!(ent.duplicateId && ent.duplicateId > 0); } catch (e) { /* */ }
       const rid = ent.resourceId ?? ent.definitionId;
       const fb = isPl && rid != null ? cacheGet(`futbin:${settings.platform}:${rid}`) : null;
-      const value = fb || raw.marketAverage || ent._marketAverage || null;
+      const value = fb || eaAvgValue(raw.marketAverage || ent._marketAverage, raw.rating ?? ent.rating, raw.rareflag ?? ent._rareflag, (raw.rareflag ?? ent._rareflag ?? 0) > 1) || null;
       const qs = raw.discardValue ?? ent.discardValue ?? 0;
       const pts = raw.gradingScore || null;
       return { ent, id: ent.id, isPl, name, rating, untr, dup, value, src: fb ? 'Futbin' : value ? 'EA' : '', qs, pts };

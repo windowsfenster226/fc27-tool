@@ -257,7 +257,7 @@
           const resId = ent && (ent.resourceId || ent.definitionId);
           const fb = resId != null ? cacheGet(`futbin:${settings.platform}:${resId}`) : null;
           const raw = SBCUI.CAP.raw.get(p.id) || {};
-          const val = fb || raw.marketAverage || null;
+          const val = fb || eaAvgValue(raw.marketAverage, p.rating, p.rarity, p.special) || null;
           rows.push({ name: p.name, rating: p.rating, where: 'Verein', value: val || p.value, src: fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'Schätzung' });
         }
         // Transferliste (nicht verkaufte Karten) – wird bei Bedarf automatisch geladen
@@ -273,7 +273,7 @@
           seen.add(it.itemId);
           const fb = cacheGet(`futbin:${settings.platform}:${it.resourceId}`);
           const raw = SBCUI.CAP.raw.get(it.itemId) || {};
-          const val = fb || raw.marketAverage;
+          const val = fb || eaAvgValue(raw.marketAverage, it.rating, raw.rareflag, (raw.rareflag || 0) > 1);
           if (!val) continue;
           rows.push({ name: it.name, rating: it.rating, where: 'Transferliste', value: val, src: fb ? 'Futbin' : 'EA' });
           tlCount++;

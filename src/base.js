@@ -115,6 +115,16 @@
   const ttl = () => CONFIG.cacheMinutes * 60000;
   for (const k of Object.keys(cache)) if (Date.now() - cache[k].t > ttl()) delete cache[k];
   const cacheGet = (k) => (cache[k] && Date.now() - cache[k].t <= ttl() ? cache[k].v : undefined);
+  // EAs „Durchschnittspreis“ hinkt hinterher und liegt oft über dem echten Marktpreis.
+  // Korrektur: bei normalen Karten höchstens günstigster Preis für dieses Rating (Futbin) + 15 %, sonst 15 % Abschlag.
+  function eaAvgValue(avg, rating, rarity, special) {
+    avg = Number(avg) || 0;
+    if (!avg) return null;
+    let floor = null;
+    try { const d = RATINGS.get(); floor = (d && d.prices && d.prices[rating]) || null; } catch (e) { /* */ }
+    if (floor && !special && (rarity == null || rarity <= 1)) return Math.min(avg, Math.round(floor * 1.15));
+    return Math.round(avg * 0.85);
+  }
   let lastPriceFetch = Object.values(cache).reduce((m, c) => Math.max(m, c.t || 0), 0) || null;
   const cacheSet = (k, v) => { cache[k] = { t: Date.now(), v }; lastPriceFetch = Date.now(); GM_setValue(CACHE_KEY, cache); };
   const cacheClear = () => { for (const k of Object.keys(cache)) delete cache[k]; GM_setValue(CACHE_KEY, cache); };

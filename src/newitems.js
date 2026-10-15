@@ -39,7 +39,7 @@
       try { dup = (typeof ent.isDuplicate === 'function' && ent.isDuplicate()) || !!(ent.duplicateId && ent.duplicateId > 0); } catch (e) { /* */ }
       const rid = ent.resourceId ?? ent.definitionId;
       const fb = isPl && rid != null ? cacheGet(`futbin:${settings.platform}:${rid}`) : null;
-      const value = fb || raw.marketAverage || ent._marketAverage || null;
+      const value = fb || eaAvgValue(raw.marketAverage || ent._marketAverage, raw.rating ?? ent.rating, raw.rareflag ?? ent._rareflag, (raw.rareflag ?? ent._rareflag ?? 0) > 1) || null;
       const qs = raw.discardValue ?? ent.discardValue ?? 0;
       const pts = raw.gradingScore || null;
       return { ent, id: ent.id, isPl, name, rating, untr, dup, value, src: fb ? 'Futbin' : value ? 'EA' : '', qs, pts };

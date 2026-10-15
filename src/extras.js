@@ -141,7 +141,7 @@
           const resId = ent && (ent.resourceId || ent.definitionId);
           const fb = resId != null ? cacheGet(`futbin:${settings.platform}:${resId}`) : null;
           const raw = SBCUI.CAP.raw.get(p.id) || {};
-          const val = fb || raw.marketAverage || p.value || null;
+          const val = fb || eaAvgValue(raw.marketAverage, p.rating, p.rarity, p.special) || p.value || null;
           if (!val || val < settings.sellMinValue) continue;
           const srcName = fb ? 'Futbin' : raw.marketAverage ? 'EA' : 'geschätzt';
           const bin = roundPrice(val);
