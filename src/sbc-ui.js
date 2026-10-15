@@ -665,7 +665,7 @@
           <div class="note">Werden als Konzept eingesetzt. Einreichen geht erst, wenn du sie gekauft hast (Transfermarkt → Spieler suchen, dann in die SBC tauschen).${buyL.some((p) => !p.verified) ? ' „geschätzt“ = Preis nicht geprüft, echter Preis kann abweichen.' : ''}</div></div>` : '';
       const anyLocked = sol.players.some((p) => p && lockedIds().has(p.id));
       el('result').innerHTML = `
-        <div class="grp"><h4>${sol.feasible ? 'Lösung' : 'Keine vollständige Lösung gefunden'}</h4>
+        <div class="grp"><h4>${sol.feasible ? 'Lösung' : 'Keine vollständige Lösung gefunden'}</h4>${!sol.feasible && sol.hint ? `<div class="note" style="color:#ffae5c;font-size:12px;margin:4px 0">💡 ${esc(sol.hint)}</div>` : ''}
           <div class="sum">
             <div><div class="l">Teambewertung</div><div class="v">${ev.rating}</div></div>
             <div><div class="l">Chemie</div><div class="v">${ev.chem.total}</div></div>

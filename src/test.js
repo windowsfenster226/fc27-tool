@@ -68,3 +68,24 @@ assert(d4.unsupported.length === 1, 'Unbekannte Angabe wird markiert statt ignor
 const P = { 81: 650, 82: 650, 83: 900, 84: 1500, 85: 2100, 86: 4200, 87: 7000, 88: 11000, 89: 18000, 90: 28000, 91: 45000 };
 let tt = Date.now(); const cc = S.cheapestCombo(P, 86); console.log('     Kombi 86:', cc.ratings.join(','), 'Kosten', cc.cost, 'TR', S.teamRating(cc.ratings), (Date.now() - tt) + 'ms');
 assert(cc && S.teamRating(cc.ratings) >= 86 && cc.cost < 11 * 4200, 'Günstigste Kombination für TR 86 billiger als 11×86');
+// Verein-SBC (FC Bayern - RB Leipzig): mind. 1 aus Verein 21/112172, max. 4 Vereine, mind. 3 Silber, mind. Bronze, Chemie 14
+const elg5 = [
+  { type: 'PLAYER_COUNT', eligibilitySlot: 1, eligibilityKey: 2, eligibilityValue: 1 }, { type: 'SCOPE', eligibilitySlot: 1, eligibilityKey: 13, eligibilityValue: 0 },
+  { type: 'CLUB_ID', eligibilitySlot: 1, eligibilityKey: 12, eligibilityValue: 21 }, { type: 'CLUB_ID', eligibilitySlot: 1, eligibilityKey: 12, eligibilityValue: 112172 },
+  { type: 'CLUB_COUNT', eligibilitySlot: 2, eligibilityKey: 9, eligibilityValue: 4 }, { type: 'SCOPE', eligibilitySlot: 2, eligibilityKey: 13, eligibilityValue: 1 },
+  { type: 'PLAYER_COUNT', eligibilitySlot: 3, eligibilityKey: 2, eligibilityValue: 3 }, { type: 'SCOPE', eligibilitySlot: 3, eligibilityKey: 13, eligibilityValue: 0 },
+  { type: 'PLAYER_LEVEL', eligibilitySlot: 3, eligibilityKey: 17, eligibilityValue: 2 },
+  { type: 'PLAYER_QUALITY', eligibilitySlot: 4, eligibilityKey: 3, eligibilityValue: 1 }, { type: 'SCOPE', eligibilitySlot: 4, eligibilityKey: 13, eligibilityValue: 0 },
+  { type: 'CHEMISTRY_POINTS', eligibilitySlot: 5, eligibilityKey: 35, eligibilityValue: 14 }, { type: 'SCOPE', eligibilitySlot: 5, eligibilityKey: 13, eligibilityValue: 0 },
+];
+const d5 = S.decodeRequirements(elg5); d5.constraints.forEach((c) => console.log('     ', S.describe(c)));
+const club5 = club.map((p, i) => (i % 40 === 0 ? { ...p, clubId: 21, leagueId: 19 } : p));
+const slots433 = ['GK', 'RB', 'CB', 'CB', 'LB', 'CM', 'CM', 'CM', 'RW', 'ST', 'LW'].map((p) => ({ position: p }));
+t = Date.now();
+const r5 = S.solve(club5, slots433, d5.constraints, { timeMs: 3000 });
+console.log('     Zeit', Date.now() - t, 'feasible', r5.feasible, 'Chem', r5.ev && r5.ev.chem.total, 'Vereine', new Set(r5.players.map((p) => p.clubId)).size);
+if (r5.ev) r5.ev.results.forEach((x) => console.log('     ', x.ok ? '✓' : '✗', S.describe(x.c), '=>', x.val));
+assert(r5.feasible, 'Verein-SBC (max. 4 Vereine + Chemie 14) gelöst');
+const r6 = S.solve(club5.filter((p) => p.clubId !== 21), slots433, d5.constraints, { timeMs: 800 });
+console.log('     Hinweis:', r6.hint);
+assert(!r6.feasible && /nur 0/.test(r6.hint || ''), 'Hinweis, wenn kein Spieler aus Bayern/Leipzig da ist');

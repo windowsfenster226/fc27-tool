@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.49.1
+// @version      2.50.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -340,11 +340,44 @@ const SBC = (function () {
     const positions = slots.map((s) => s.position || null);
     const fixed = slots.map((s) => s.fixed || null);
     const open = slots.map((s, i) => i).filter((i) => !fixed[i] && !slots[i].blocked);
-    const cand = pool.filter((p) => !fixed.some((f) => f && f.assetId === p.assetId));
-    if (cand.length < open.length) return { error: `Zu wenige passende Spieler im Verein (${cand.length}).` };
+    const candAll = pool.filter((p) => !fixed.some((f) => f && f.assetId === p.assetId));
+    if (candAll.length < open.length) return { error: `Zu wenige passende Spieler im Verein (${candAll.length}).` };
 
-    const byRating = [...cand].sort((a, b) => a.rating - b.rating || a.cost - b.cost);
-    const cheapest = [...cand].sort((a, b) => a.cost - b.cost);
+    // „Max. X Vereine/Ligen/Nationen“: pro Neustart nur Spieler aus X gewählten Gruppen nehmen –
+    // zufällige Einzeltausche finden so eine Aufstellung sonst kaum
+    const GKEY = { CLUB_COUNT: 'clubId', LEAGUE_COUNT: 'leagueId', NATION_COUNT: 'nationId' };
+    const groupCons = constraints.filter((c) => !c.unsupported && GKEY[c.kind] && c.scope === 'MAX' && c.value > 0);
+    function pickGroups() {
+      let pl = candAll;
+      for (const g of groupCons) {
+        const key = GKEY[g.kind];
+        const counts = new Map();
+        pl.forEach((p) => counts.set(p[key], (counts.get(p[key]) || 0) + 1));
+        const chosen = new Set(fixed.filter(Boolean).map((p) => p[key]));
+        // Pflicht-Gruppen aus „mind. X Spieler aus Verein/Liga/Nation …“
+        for (const c of constraints) {
+          if (c.kind !== 'COUNT' || c.field !== key || c.scope === 'MAX') continue;
+          if ([...chosen].some((v) => c.values.includes(v))) continue;
+          const opts = c.values.filter((v) => counts.get(v));
+          if (opts.length) chosen.add(opts[rnd(opts.length)]);
+        }
+        const rest = [...counts.entries()].filter(([k]) => !chosen.has(k)).sort((a, b) => b[1] - a[1]);
+        while (chosen.size < g.value && rest.length) {
+          const idx = Math.min(rest.length - 1, Math.floor(Math.pow(Math.random(), 2) * Math.min(rest.length, 14)));
+          chosen.add(rest.splice(idx, 1)[0][0]);
+        }
+        const sub = pl.filter((p) => chosen.has(p[key]));
+        if (sub.length >= open.length) pl = sub;
+      }
+      return pl;
+    }
+    let cand = candAll, byRating, cheapest;
+    function usePool(pl) {
+      cand = pl;
+      byRating = [...cand].sort((a, b) => a.rating - b.rating || a.cost - b.cost);
+      cheapest = [...cand].sort((a, b) => a.cost - b.cost);
+    }
+    usePool(candAll);
     const hasChem = constraints.some((c) => !c.unsupported && (c.kind === 'CHEMISTRY_POINTS' || c.kind === 'ALL_PLAYERS_CHEMISTRY_POINTS'));
     const W = 1e6;
     const score = (arr) => {
@@ -405,6 +438,24 @@ const SBC = (function () {
       return cand[rnd(cand.length)];
     }
 
+    // Erklärung, wenn „max. X Gruppen“ mit den vorhandenen Spielern kaum machbar ist
+    function groupHint() {
+      // zu wenige Spieler für eine „mind. X Spieler aus/mit …“-Bedingung?
+      for (const c of constraints) {
+        if (c.unsupported || c.kind !== 'COUNT' || c.scope === 'MAX') continue;
+        const have = candAll.filter((p) => matchesValue(p, c.field, c.values)).length + fixed.filter((p) => p && matchesValue(p, c.field, c.values)).length;
+        if (have < c.n) return `„${describe(c)}“: Du hast nur ${have} passende${have === 1 ? 'n' : ''} Spieler verfügbar (aktive Mannschaft, Leihspieler und Neue Items zählen nicht). Tipp: „Konzept-Spieler“ einschalten oder einen passenden Spieler günstig kaufen.`;
+      }
+      for (const g of groupCons) {
+        const key = GKEY[g.kind];
+        const counts = new Map(); candAll.forEach((p) => counts.set(p[key], (counts.get(p[key]) || 0) + 1));
+        const top = [...counts.values()].sort((a, b) => b - a).slice(0, g.value);
+        const sum = top.reduce((a, b) => a + b, 0);
+        const word = g.kind === 'CLUB_COUNT' ? 'Vereine' : g.kind === 'LEAGUE_COUNT' ? 'Ligen' : 'Nationen';
+        if (sum < open.length + 4) return `Max. ${g.value} ${word}: Deine ${g.value} größten ${word} haben zusammen nur ${sum} verfügbare Spieler – für ${open.length} Plätze (mit passenden Positionen und Chemie) reicht das kaum. Tipp: „Konzept-Spieler“ einschalten oder günstige Spieler aus einem Verein kaufen.`;
+      }
+      return '';
+    }
     let best = null, bestAny = null;
     let iters = 0, restarts = 0;
     // Ohne gültige Lösung bis zum Zeitlimit: automatisch bis zum 2,5-fachen weitersuchen
@@ -413,6 +464,7 @@ const SBC = (function () {
       restarts++;
       // Neustart: abwechselnd frisch oder vom bisher besten Stand (leicht verändert) aus
       let cur;
+      if (groupCons.length) usePool(restarts % 4 === 0 ? candAll : pickGroups());
       if (bestAny && restarts % 2 === 0) {
         cur = bestAny.players.slice();
         for (let k = 0; k < 3; k++) {
@@ -449,13 +501,14 @@ const SBC = (function () {
         temp *= 0.9995;
         if (cs.ev.feasible && (!best || cs.cost < best.cost)) best = { players: cur.slice(), cost: cs.cost, ev: cs.ev };
       }
-      if (!best && restarts > 50) break;
+      if (!best && restarts > (groupCons.length ? 400 : 50)) break;
     }
     if (!best) {
-      // bestes Nicht-Ergebnis zurückgeben (zur Anzeige, was fehlt)
-      const cur = initial();
+      // bestes Nicht-Ergebnis zurückgeben (zur Anzeige, was fehlt) – die Aufstellung, die am wenigsten verletzt
+      usePool(candAll);
+      const cur = bestAny ? bestAny.players.slice() : initial();
       const cs = score(cur);
-      return { players: cur, cost: cs.cost, ev: cs.ev, feasible: false, iters, restarts };
+      return { players: cur, cost: cs.cost, ev: cs.ev, feasible: false, iters, restarts, positions, hint: groupHint() };
     }
     return { ...best, feasible: true, iters, restarts, positions };
   }
@@ -2903,7 +2956,7 @@ const SBC = (function () {
           <div class="note">Werden als Konzept eingesetzt. Einreichen geht erst, wenn du sie gekauft hast (Transfermarkt → Spieler suchen, dann in die SBC tauschen).${buyL.some((p) => !p.verified) ? ' „geschätzt“ = Preis nicht geprüft, echter Preis kann abweichen.' : ''}</div></div>` : '';
       const anyLocked = sol.players.some((p) => p && lockedIds().has(p.id));
       el('result').innerHTML = `
-        <div class="grp"><h4>${sol.feasible ? 'Lösung' : 'Keine vollständige Lösung gefunden'}</h4>
+        <div class="grp"><h4>${sol.feasible ? 'Lösung' : 'Keine vollständige Lösung gefunden'}</h4>${!sol.feasible && sol.hint ? `<div class="note" style="color:#ffae5c;font-size:12px;margin:4px 0">💡 ${esc(sol.hint)}</div>` : ''}
           <div class="sum">
             <div><div class="l">Teambewertung</div><div class="v">${ev.rating}</div></div>
             <div><div class="l">Chemie</div><div class="v">${ev.chem.total}</div></div>
