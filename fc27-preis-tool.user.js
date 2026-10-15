@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.48.0
+// @version      2.49.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5805,40 +5805,56 @@ const SBC = (function () {
     }
     hookSearch(); setInterval(hookSearch, 2000);
     // Cache von EA umgehen: Min.-Sofortkauf (bzw. Max.-Gebot) bei jeder Suche eine Stufe weiter
-    function bumpCrit() {
-      const c = TC.crit;
+    // Kopie der Suchkriterien nur für die Anfrage – deine Felder in der Web App bleiben unverändert
+    function cloneCrit(c) {
+      try { const o = Object.create(Object.getPrototypeOf(c)); for (const k of Object.keys(c)) { const v = c[k]; o[k] = Array.isArray(v) ? v.slice() : v; } return o; } catch (e) { return c; }
+    }
+    // Cache von EA umgehen: jede Anfrage leicht anders, OHNE passende Angebote wegzufiltern. Zustand liegt im Tool, nicht in EAs Feldern.
+    const BMP = { n: {}, win: 0, mb: 0, mx: 0, expect: 0, bad: 0 };
+    // Prüfen, ob EA unser „Max. Gebot“ wirklich so abschickt (sonst automatisch auf den alten Trick wechseln)
+    try {
+      SBCUI.CAP.hooks.push((url) => {
+        if (!BMP.expect || !/\/transfermarket\?/.test(url)) return;
+        const m = String(url).match(/[?&]maxb=(\d+)/);
+        const got = m ? +m[1] : 0;
+        if (got === BMP.expect) { BMP.bad = 0; return; }
+        if (++BMP.bad >= 2 && settings.cacheMode !== 'minbuy') {
+          settings.cacheMode = 'minbuy'; saveSettings();
+          showToast('Cache-Trick: EA ändert das Max. Gebot – Tool nutzt jetzt wieder „Min. Sofortkauf“ (nur weit unter deinem Max.-Preis).', true);
+        }
+      });
+    } catch (e) { /* */ }
+    function bumpCrit(c) {
       if (!c || !settings.bumpMinBin) return;
+      const k = fld(/^min_?(buy|bin|buynow)$/i) || 'minBuy';
+      const kd = fld(/^max_?bid$/i) || 'maxBid';
+      const km = fld(/^max_?(buy|bin|buynow)$/i);
+      const mb = km ? toNum(c[km]) || 0 : 0;
+      BMP.expect = 0;
       if (settings.bumpField === 'maxBid') {
-        const k = fld(/^max_?bid$/i); if (!k) return;
-        const start = Math.max(1000, settings.bumpStart || 1000000), cur = toNum(c[k]) || 0;
-        c[k] = cur < start || cur >= 14900000 ? start : cur + stepFor(cur);
-      } else {
-        const k = fld(/^min_?(buy|bin|buynow)$/i) || 'minBuy';
-        const mb = critMaxBuy();
-        if (rfOn() && !rotOn() && mb > 0) {
-          // Preisfenster: billigere (niedriger bewertete) Karten gar nicht erst laden
-          const base = roundPrice(mb * (1 - settings.rfWin / 100));
-          // Cache-Trick nach UNTEN: Fenster deckt immer mindestens [base, Max.] ab – kein Angebot im Fenster geht verloren
-          const cur0 = toNum(c[k]) || 0, lo = Math.max(150, base - 6 * stepFor(base));
-          c[k] = cur0 > base || cur0 <= lo ? base : cur0 - stepFor(cur0 - 1);
-          return;
-        }
-        if (!bidMode() && mb > 0 && settings.cacheMode !== 'minbuy') {
-          // Cache-Trick über „Max. Gebot“ knapp ÜBER deinem Max.-Preis: das Startgebot liegt immer unter dem Sofortkauf (≤ Max.-Preis),
-          // also wird nie ein passendes Angebot weggefiltert – anders als beim Hochzählen von „Min. Sofortkauf“
-          const kd = fld(/^max_?bid$/i) || 'maxBid', s0 = stepFor(mb);
-          const kid = fld(/^masked_?def_?id$/i), bk = `${kid ? c[kid] : ''}:${mb}`;   // je Spieler + Preis eigener Zähler (Liste/Rotation wechseln den Spieler)
-          st.bumpN = st.bumpN || {};
-          const n = ((st.bumpN[bk] || 0) % 15) + 1; st.bumpN[bk] = n;
-          c[kd] = mb + n * s0;
-          if (toNum(c[k])) c[k] = 0;
-          return;
-        }
-        let lim = Math.max(200, settings.bumpMinMax || 1000);
-        if (mb > 0) lim = Math.min(lim, Math.max(150, mb - stepFor(mb) * 2));   // nie über den eigenen Max.-Preis hinaus
-        const cur = toNum(c[k]) || 0;
-        c[k] = cur >= lim ? 0 : cur ? cur + stepFor(cur) : 150;
+        const start = Math.max(1000, settings.bumpStart || 1000000);
+        BMP.mx = BMP.mx < start || BMP.mx >= 14900000 ? start : BMP.mx + stepFor(BMP.mx);
+        c[kd] = BMP.mx; return;
       }
+      if (rfOn() && !rotOn() && mb > 0) {
+        // Rating-Preisfenster: Min. Sofortkauf knapp unter dem Fenster, Cache-Trick nach UNTEN
+        const base = roundPrice(mb * (1 - settings.rfWin / 100)), lo = Math.max(150, base - 6 * stepFor(base));
+        BMP.win = BMP.win > base || BMP.win <= lo ? base : BMP.win - stepFor(BMP.win - 1);
+        c[k] = BMP.win; return;
+      }
+      if (!bidMode() && mb > 0 && settings.cacheMode !== 'minbuy') {
+        // „Max. Gebot“ knapp ÜBER deinem Max.-Sofortkauf: Startgebot < Sofortkauf ≤ Max. -> filtert nie ein passendes Angebot weg
+        const s0 = stepFor(mb), kid = fld(/^masked_?def_?id$/i), bk = `${kid ? c[kid] : ''}:${mb}`;
+        const n = ((BMP.n[bk] || 0) % 15) + 1; BMP.n[bk] = n;
+        c[kd] = mb + n * s0; BMP.expect = c[kd]; return;
+      }
+      BMP.expect = 0;
+      // ohne Max.-Preis (oder Bieten-Modus): Min. Sofortkauf in kleinen Schritten, aber nur weit unter deinem Limit
+      let lim = Math.max(200, settings.bumpMinMax || 1000);
+      if (mb > 0) lim = Math.min(lim, Math.max(150, Math.floor(mb * 0.5)));
+      if (bidMode() && toNum(c[kd])) lim = Math.min(lim, Math.max(150, Math.floor(toNum(c[kd]) * 0.5)));
+      BMP.mb = BMP.mb >= lim ? 0 : BMP.mb ? BMP.mb + stepFor(BMP.mb) : 150;
+      if (!toNum(c[k]) || toNum(c[k]) < BMP.mb) c[k] = BMP.mb;   // ein von dir gesetzter höherer Min.-Wert bleibt
     }
     // ---------- Such-Zähler: wie viele Anfragen an den Markt in letzter Zeit (eigene + vom Sperren-Schutz gezählte) ----------
     st.hist = []; let rateWarnT = 0, rateLvl = 'ok';
@@ -5907,7 +5923,9 @@ const SBC = (function () {
     async function directSearch() {
       const S = W.services.Item;
       if (rotOn() && !rotApply()) throw new Error('Erst „Spielerliste laden“ tippen (Rating-Snipe).');
-      bumpCrit();
+      const reqCrit = cloneCrit(TC.crit);
+      bumpCrit(reqCrit);
+      st.lastCrit = reqCrit;
       st.lastKey = curKey(); stat(st.lastKey, (e) => { e.n++; });
       const t0 = performance.now();
       const fn = S.searchTransferMarket.orig || S.searchTransferMarket;
@@ -5917,7 +5935,7 @@ const SBC = (function () {
       for (let pg = 1; pg <= pages; pg++) {
         if (pg > 1) await sleep(250 + Math.random() * 200);
         noteSearch();
-        const ev = await obs(fn.call(S, TC.crit, pg), 8000);
+        const ev = await obs(fn.call(S, reqCrit, pg), 8000);
         if (pg === 1) st.lastMs = Math.round(performance.now() - t0);
         if (ev && ev.success === false) { cooldown(ev.status); if (pg === 1) throw Object.assign(new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`), { status: ev.status }); break; }
         const got = ((ev && (ev.response || ev.data)) || {}).items || [];
@@ -6418,9 +6436,22 @@ const SBC = (function () {
         <div class="by-keys">${act ? `🔄 ${act} Spieler aktiv – jeder Tipp prüft den nächsten mit seinem eigenen Max.-Preis${LST.cur ? ` · zuletzt: <b>${esc(LST.cur.name)}</b> bis ${fmt(LST.cur.max)}` : ''}` : 'Spieler ohne Preis werden nicht gesucht.'}</div></div>`;
     }
     function leaveList() { if (TC.crit && TC.crit === LST.crit) { TC.crit = LST.prev; TC.own = !LST.prev; LST.cur = null; } }
+    // kurze Beschreibung der übernommenen EA-Suche
+    function critSummary() {
+      const c = TC.crit || {}, g = (re) => { const k = Object.keys(c).find((x) => re.test(x)); return k ? c[k] : null; };
+      const parts = [];
+      const def = toNum(g(/^masked_?def_?id$/i)); parts.push(def ? 'ein bestimmter Spieler' : 'nur Filter, kein Spieler');
+      const lev = g(/^level$/i); if (lev && lev !== 'any') parts.push(String(lev));
+      if (toNum(g(/^league$/i))) parts.push('Liga');
+      if (toNum(g(/^nation$/i))) parts.push('Land');
+      if (toNum(g(/^club$/i))) parts.push('Verein');
+      const pos = g(/^position$/i); if (pos && pos !== 'any') parts.push(String(pos));
+      const mx = critMaxBuy(); parts.push(mx ? `Sofortkauf bis ${fmt(mx)}` : 'ohne Max. Sofortkauf!');
+      return parts.join(' · ');
+    }
     function simpleHtml() {
       const rot = settings.snMode === 'rating', lst = settings.snMode === 'list';
-      const seg = `<div class="by-seg"><button data-sm="ea" class="${!rot && !lst ? 'on' : ''}">👤 Spieler</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button><button data-sm="list" class="${lst ? 'on' : ''}">📋 Liste</button></div>`;
+      const seg = `<div class="by-seg"><button data-sm="ea" class="${!rot && !lst ? 'on' : ''}" title="Genau deine Suche aus der Web App – ein Spieler oder Filter wie Gold + Liga">🔎 Meine Suche</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button><button data-sm="list" class="${lst ? 'on' : ''}">📋 Liste</button></div>`;
       const bd = bidMode();
       const kind = `<div class="by-kind"><button data-sk="bin" class="${bd ? '' : 'on'}">⚡ Sofortkauf</button><button data-sk="bid" class="${bd ? 'on' : ''}">🔨 Auktion bieten</button></div>`;
       const instOrEnd = bd ? `<label class="inl" title="Nur Auktionen, die bald enden">endet in max.<input type="number" min="1" max="60" data-sn="bdMaxMin" value="${settings.bdMaxMin}"> Min.</label>`
@@ -6428,7 +6459,7 @@ const SBC = (function () {
       const bdNote = bd ? `<div class="by-keys">🔨 Sucht Auktionen, deren nächstes Gebot unter deinem ${lst ? 'Preis pro Spieler' : 'Max. Gebot'} liegt – die bald endende steht oben. Leertaste = suchen, bei Treffer nochmal = bieten. Wirst du überboten, meldet sich das Tool.</div>` : '';
       if (lst) return `<div class="by-simple">${seg}${kind}<div class="by-sin">${instOrEnd}</div>${bdNote}${lstHtml()}</div>`;
       const ready = rot ? (ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${rotActive().length} Spieler mit Rating ${settings.snRating}${settings.snRatingUp ? '+' : ''} – jeder Tipp prüft einen gezielt${ROT.cur ? ` · zuletzt: ${esc(ROT.cur.name)}` : ''}` : 'Beim ersten Tipp lädt das Tool alle passenden Spieler (einmalig 1–2 Min.).')
-        : (TC.crit && !TC.own ? `Spieler aus deiner letzten EA-Suche${critMaxBuy() ? ` · bis ${fmt(critMaxBuy())}` : ''}` : 'Such in der Web App einmal nach dem Spieler – dann hier nur noch Leertaste/Knopf.');
+        : (TC.crit && !TC.own ? `Deine Suche aus der Web App: ${esc(critSummary())}` : 'Stell in der Web App deine Suche ein (Spieler oder nur Filter wie Gold + Liga) und drück dort einmal „Suchen“ – dann hier nur noch Leertaste/Knopf.');
       return `<div class="by-simple">
         ${seg}${kind}
         <div class="by-sin">
@@ -6467,6 +6498,7 @@ const SBC = (function () {
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
           <label title="Tipp/Leertaste = suchen UND bei Treffer bis zu deinem Max.-Sofortkauf sofort kaufen – ohne zweiten Tipp"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label>
           <label title="Leertaste sucht – ist ein Deal bereit, kauft dieselbe Taste ihn"><input type="checkbox" data-bo="one" ${settings.snipeOneKey ? 'checked' : ''}> 1-Tasten-Modus</label>
+          <label title="Wie das Tool EAs Zwischenspeicher umgeht (für frische Ergebnisse)">Cache-Trick <select data-cm="1"><option value="maxbid" ${settings.cacheMode !== 'minbuy' ? 'selected' : ''}>Max. Gebot (empfohlen)</option><option value="minbuy" ${settings.cacheMode === 'minbuy' ? 'selected' : ''}>Min. Sofortkauf</option></select></label>
           <label title="Liste/Rating-Rotation: ein Tastendruck prüft 2 Spieler nacheinander (doppelte Abdeckung, aber doppelt so viele Anfragen)"><input type="checkbox" data-bo="dbl" ${settings.snDouble ? 'checked' : ''}> 2 Spieler pro Druck</label>
           <label title="Sucht direkt über EAs Schnittstelle statt über die Seite – deutlich schneller"><input type="checkbox" data-bo="turbo" ${settings.snipeTurbo ? 'checked' : ''}> Turbo</label>
           <label title="Großer Snipe-Knopf unten auf dem Handy – funktioniert auch bei geschlossenem Tool"><input type="checkbox" data-bo="sbtn" ${settings.snipeBtn !== 'off' ? 'checked' : ''}> Handy-Knopf</label>
@@ -6543,6 +6575,7 @@ const SBC = (function () {
         lq.addEventListener('input', () => { LST.q = lq.value; });
       }
       const lf = box.querySelector('[data-lf]'); if (lf) lf.addEventListener('click', (e) => { e.stopPropagation(); doFind(); });
+      const cm = box.querySelector('[data-cm]'); if (cm) cm.addEventListener('change', (e) => { e.stopPropagation(); settings.cacheMode = cm.value; BMP.bad = 0; saveSettings(); });
       const stx = box.querySelector('[data-stx]'); if (stx) stx.addEventListener('click', (e) => { e.stopPropagation(); settings.snStats = {}; saveSettings(); render(); });
       const lp = box.querySelector('[data-lp]'); if (lp) lp.addEventListener('click', (e) => { e.stopPropagation(); lstPriceCheck(); });
       box.querySelectorAll('[data-lu]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.lu]; if (en && en.fb) { en.max = lohntBis(en.fb); saveSettings(); render(); } }));
