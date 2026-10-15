@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.49.0
+// @version      2.49.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -5673,8 +5673,16 @@ const SBC = (function () {
     const readyBuy = () => settings.snipeOneKey && st.arm && /^(buy|bid):/.test(st.arm) && st.armMs > 4000
       && Date.now() - st.armT > 180 && Date.now() - st.armT < st.armMs;
     // Nach einer Sperr-Antwort von EA: Zwangspause, damit das Konto nicht gesperrt wird
-    const BLOCK = [403, 429, 458, 459, 460, 512, 521];
-    function cooldown(status) { if (BLOCK.includes(Number(status))) { st.cool = Date.now() + (Number(status) === 458 ? 30000 : 90000); st.coolCode = status; } }
+    const BLOCK = [403, 426, 429, 458, 459, 460, 512, 521];
+    // Wiederholte Sperr-Antworten innerhalb von 10 Min. -> Pause wird jedes Mal länger (bis 10 Min.)
+    function cooldown(status) {
+      const c = Number(status); if (!BLOCK.includes(c)) return;
+      const now = Date.now();
+      st.coolHits = (st.coolHits || []).filter((t) => now - t < 600000); st.coolHits.push(now);
+      const base = c === 426 ? 15000 : c === 458 ? 30000 : 90000;
+      const ms = c === 426 || c === 458 ? base : Math.min(600000, base * Math.pow(2, st.coolHits.length - 1));
+      st.cool = now + ms; st.coolCode = status;
+    }
     const coolLeft = () => Math.max(0, Math.ceil(((st.cool || 0) - Date.now()) / 1000));
     function mainAction() {
       if (coolLeft()) { st.msg = `⛔ EA hat mit Code ${st.coolCode} geantwortet – Pause, noch ${coolLeft()} Sek. ${st.coolCode === 458 ? 'Bitte in der Web App die Prüfung (Captcha) erledigen.' : 'Danach langsamer suchen.'}`; render(); return; }
@@ -6064,7 +6072,8 @@ const SBC = (function () {
       const t = setTimeout(() => reject(new Error('Zeitüberschreitung bei EA')), ms);
       o.observe(sub, (ob, ev) => { clearTimeout(t); try { ob.unobserve(sub); } catch (e) { /* */ } resolve(ev || {}); });
     });
-    const ERR = { 403: 'EA verweigert den Zugriff (zu viele Anfragen oder Markt kurz gesperrt) – Pause machen', 458: 'EA will eine Prüfung (Captcha) – in der Web App bestätigen', 461: 'zu spät – schon verkauft oder überboten', 470: 'nicht genug Münzen', 478: 'Gebot zu niedrig', 473: 'eigene Karte', 409: 'schon vergeben', 429: 'EA bremst – kurz Pause', 512: 'EA bremst – Pause machen', 521: 'EA bremst – Pause machen' };
+    const ERR_SHORT = { 403: 'EA-Sperre', 426: 'zu schnell', 429: 'EA bremst', 458: 'Captcha', 461: 'zu spät', 470: 'zu wenig Münzen', 473: 'eigene Karte', 478: 'Gebot zu niedrig', 409: 'schon weg', 512: 'EA-Sperre', 521: 'EA-Sperre' };
+    const ERR = { 426: 'EA lehnt ab: zu schnell nach dem letzten Kauf – ein paar Sekunden warten', 403: 'EA verweigert den Zugriff (zu viele Anfragen oder Markt kurz gesperrt) – Pause machen', 458: 'EA will eine Prüfung (Captcha) – in der Web App bestätigen', 461: 'zu spät – schon verkauft oder überboten', 470: 'nicht genug Münzen', 478: 'Gebot zu niedrig', 473: 'eigene Karte', 409: 'schon vergeben', 429: 'EA bremst – kurz Pause', 512: 'EA bremst – Pause machen', 521: 'EA bremst – Pause machen' };
 
     function mk(o) {
       const raw = o.raw, p = o.p;
@@ -6189,9 +6198,10 @@ const SBC = (function () {
         if (st.hitAt) st.hitToBuy = Math.round(tb - st.hitAt);
         if (ev && ev.success === false) {
           const why = ERR[ev.status] || `Code ${ev.status || '?'}`;
+          const whyShort = `${ERR_SHORT[ev.status] || 'abgelehnt'} (${ev.status || '?'})`;
           cooldown(ev.status);
           r.done = { bad: true, t: `${kind === 'buy' ? '✗ Nicht bekommen' : 'Gebot abgelehnt'}: ${why}` };
-          if (kind === 'buy') result(r, false, why);
+          if (kind === 'buy') result(r, false, whyShort);
         } else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); result(r, true); }
         else { r.lead = true; r.done = { t: `✓ Höchstbietender mit ${fmt(amount)} – Überboten-Alarm ist an` }; try { if (typeof TARGETS !== 'undefined' && TARGETS.track) TARGETS.track(r.tid, rowLimit(r)); } catch (e) { /* */ } r.cur = amount; r.nb = amount + stepFor(amount); if (r.market) r.profBid = afterTax(r.market) - r.nb; }
       } catch (e) { r.done = { bad: true, t: e.message }; if (kind === 'buy') result(r, false, /Zeitüberschreitung/.test(e.message) ? 'EA antwortet nicht' : e.message); }
@@ -6983,7 +6993,7 @@ const SBC = (function () {
       .by-sin input[type=number]{width:110px;height:34px;border-radius:8px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 8px;font-size:15px}
       .by-adv > summary{cursor:pointer;font-size:13px;color:var(--ink2);padding:4px 2px}.by-adv[open]{display:flex;flex-direction:column;gap:10px}
       .by-flash{border-radius:12px;padding:12px;text-align:center;font:800 17px system-ui,sans-serif}.by-flash.ok{background:#14532d;color:#bbf7d0;border:1px solid #16a34a}.by-flash.fail{background:#450a0a;color:#fecaca;border:1px solid #dc2626}
-      .by-log summary{cursor:pointer;font-size:13px;color:var(--ink2);margin:2px 0}.by-log .pt-r{font-size:12px}.by-log .pt-r.miss{color:#fca5a5}
+      .by-log summary{cursor:pointer;font-size:13px;color:var(--ink2);margin:2px 0}.by-log .pt-r{font-size:12px;font-family:inherit;display:flex;justify-content:space-between;gap:8px;align-items:baseline}.by-log .pt-r span:first-child{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.by-log .pt-r span:last-child{flex:none;white-space:nowrap;text-align:right}.by-log .pt-r.miss{color:#fca5a5}
       .by-rf{display:flex;flex-direction:column;gap:6px;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:8px 10px}.by-rf.on{border-color:var(--gold)}
       .by-rf-in{display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap}.by-rf-in label{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--ink2)}.by-rf-in select{height:30px;border-radius:7px;border:1px solid #2b3654;background:#0b1020;color:var(--ink)}.by-rf-in input{width:76px;height:30px;border-radius:7px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 6px}
       .by-tgts{display:flex;flex-direction:column;gap:6px;background:#121a2a;border:1px solid #223049;border-radius:12px;padding:8px 10px}

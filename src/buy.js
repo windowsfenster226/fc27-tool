@@ -58,8 +58,16 @@
     const readyBuy = () => settings.snipeOneKey && st.arm && /^(buy|bid):/.test(st.arm) && st.armMs > 4000
       && Date.now() - st.armT > 180 && Date.now() - st.armT < st.armMs;
     // Nach einer Sperr-Antwort von EA: Zwangspause, damit das Konto nicht gesperrt wird
-    const BLOCK = [403, 429, 458, 459, 460, 512, 521];
-    function cooldown(status) { if (BLOCK.includes(Number(status))) { st.cool = Date.now() + (Number(status) === 458 ? 30000 : 90000); st.coolCode = status; } }
+    const BLOCK = [403, 426, 429, 458, 459, 460, 512, 521];
+    // Wiederholte Sperr-Antworten innerhalb von 10 Min. -> Pause wird jedes Mal länger (bis 10 Min.)
+    function cooldown(status) {
+      const c = Number(status); if (!BLOCK.includes(c)) return;
+      const now = Date.now();
+      st.coolHits = (st.coolHits || []).filter((t) => now - t < 600000); st.coolHits.push(now);
+      const base = c === 426 ? 15000 : c === 458 ? 30000 : 90000;
+      const ms = c === 426 || c === 458 ? base : Math.min(600000, base * Math.pow(2, st.coolHits.length - 1));
+      st.cool = now + ms; st.coolCode = status;
+    }
     const coolLeft = () => Math.max(0, Math.ceil(((st.cool || 0) - Date.now()) / 1000));
     function mainAction() {
       if (coolLeft()) { st.msg = `⛔ EA hat mit Code ${st.coolCode} geantwortet – Pause, noch ${coolLeft()} Sek. ${st.coolCode === 458 ? 'Bitte in der Web App die Prüfung (Captcha) erledigen.' : 'Danach langsamer suchen.'}`; render(); return; }
@@ -449,7 +457,8 @@
       const t = setTimeout(() => reject(new Error('Zeitüberschreitung bei EA')), ms);
       o.observe(sub, (ob, ev) => { clearTimeout(t); try { ob.unobserve(sub); } catch (e) { /* */ } resolve(ev || {}); });
     });
-    const ERR = { 403: 'EA verweigert den Zugriff (zu viele Anfragen oder Markt kurz gesperrt) – Pause machen', 458: 'EA will eine Prüfung (Captcha) – in der Web App bestätigen', 461: 'zu spät – schon verkauft oder überboten', 470: 'nicht genug Münzen', 478: 'Gebot zu niedrig', 473: 'eigene Karte', 409: 'schon vergeben', 429: 'EA bremst – kurz Pause', 512: 'EA bremst – Pause machen', 521: 'EA bremst – Pause machen' };
+    const ERR_SHORT = { 403: 'EA-Sperre', 426: 'zu schnell', 429: 'EA bremst', 458: 'Captcha', 461: 'zu spät', 470: 'zu wenig Münzen', 473: 'eigene Karte', 478: 'Gebot zu niedrig', 409: 'schon weg', 512: 'EA-Sperre', 521: 'EA-Sperre' };
+    const ERR = { 426: 'EA lehnt ab: zu schnell nach dem letzten Kauf – ein paar Sekunden warten', 403: 'EA verweigert den Zugriff (zu viele Anfragen oder Markt kurz gesperrt) – Pause machen', 458: 'EA will eine Prüfung (Captcha) – in der Web App bestätigen', 461: 'zu spät – schon verkauft oder überboten', 470: 'nicht genug Münzen', 478: 'Gebot zu niedrig', 473: 'eigene Karte', 409: 'schon vergeben', 429: 'EA bremst – kurz Pause', 512: 'EA bremst – Pause machen', 521: 'EA bremst – Pause machen' };
 
     function mk(o) {
       const raw = o.raw, p = o.p;
@@ -574,9 +583,10 @@
         if (st.hitAt) st.hitToBuy = Math.round(tb - st.hitAt);
         if (ev && ev.success === false) {
           const why = ERR[ev.status] || `Code ${ev.status || '?'}`;
+          const whyShort = `${ERR_SHORT[ev.status] || 'abgelehnt'} (${ev.status || '?'})`;
           cooldown(ev.status);
           r.done = { bad: true, t: `${kind === 'buy' ? '✗ Nicht bekommen' : 'Gebot abgelehnt'}: ${why}` };
-          if (kind === 'buy') result(r, false, why);
+          if (kind === 'buy') result(r, false, whyShort);
         } else if (kind === 'buy') { r.done = { t: `✓ gekauft für ${fmt(amount)} – liegt in „Nicht zugewiesen“` }; showToast(`💰 ${r.p.name} für ${fmt(amount)} gekauft`); result(r, true); }
         else { r.lead = true; r.done = { t: `✓ Höchstbietender mit ${fmt(amount)} – Überboten-Alarm ist an` }; try { if (typeof TARGETS !== 'undefined' && TARGETS.track) TARGETS.track(r.tid, rowLimit(r)); } catch (e) { /* */ } r.cur = amount; r.nb = amount + stepFor(amount); if (r.market) r.profBid = afterTax(r.market) - r.nb; }
       } catch (e) { r.done = { bad: true, t: e.message }; if (kind === 'buy') result(r, false, /Zeitüberschreitung/.test(e.message) ? 'EA antwortet nicht' : e.message); }
