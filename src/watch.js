@@ -120,7 +120,7 @@
     }
     // Prüfung im Hintergrund: höchstens alle 20 Sek. EINE Karte, jede alle X Min. -> schonend für Futbin
     setInterval(() => {
-      if (!settings.watchCheck || !settings.watch.length || st.checking || document.visibilityState !== 'visible' || futbinBlocked()) return;
+      if (!box || !settings.watchCheck || !settings.watch.length || st.checking || document.visibilityState !== 'visible' || futbinBlocked()) return;
       const every = Math.max(2, settings.watchEvery) * 60000;
       const due = settings.watch.filter((w) => !w.paused && Date.now() - (w.lastAt || 0) > every).sort((a, b2) => (a.lastAt || 0) - (b2.lastAt || 0))[0];
       if (due) check(due, false);
