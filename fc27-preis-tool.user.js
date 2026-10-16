@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.63.0
+// @version      2.64.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -6161,12 +6161,13 @@ const SBC = (function () {
       const pages = rfOn() && !rotOn() ? Math.max(1, Math.min(3, settings.rfPages || 1)) : 1;
       let items = [];
       st.pageFull = false;
-      for (let pg = 1; pg <= pages; pg++) {
-        if (pg > 1) await sleep(250 + Math.random() * 200);
+      const pg0 = settings.snMode === 'custom' ? Math.max(1, CS.page || 1) : 1;
+      for (let pg = pg0; pg < pg0 + pages; pg++) {
+        if (pg > pg0) await sleep(250 + Math.random() * 200);
         noteSearch();
         const ev = await obs(fn.call(S, reqCrit, pg), 8000);
-        if (pg === 1) st.lastMs = Math.round(performance.now() - t0);
-        if (ev && ev.success === false) { cooldown(ev.status); if (pg === 1) throw Object.assign(new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`), { status: ev.status }); break; }
+        if (pg === pg0) st.lastMs = Math.round(performance.now() - t0);
+        if (ev && ev.success === false) { cooldown(ev.status); if (pg === pg0) throw Object.assign(new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`), { status: ev.status }); break; }
         const got = ((ev && (ev.response || ev.data)) || {}).items || [];
         items = items.concat(got);
         st.pageSize = Math.max(st.pageSize || 0, got.length);
@@ -6528,7 +6529,7 @@ const SBC = (function () {
     function armedRow() { return st.arm && /^(buy|bid):/.test(st.arm) && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null; }
     function updateFloat() {
       const want = settings.snipeBtn === 'on' || (settings.snipeBtn === 'auto' && touch());
-      const show = want && settings.snipeTurbo && (!!TC.crit || settings.snMode === 'rating' || settings.snMode === 'list') && !panel.classList.contains('open');
+      const show = want && settings.snipeTurbo && (!!TC.crit || settings.snMode === 'rating' || settings.snMode === 'list' || settings.snMode === 'custom') && !panel.classList.contains('open');
       fb.classList.toggle('show', show);
       if (!show) return;
       const pos = settings.sbPos || {};
@@ -6593,6 +6594,7 @@ const SBC = (function () {
     function applySimple() {
       const why = applySimple0();
       if (why || !TC.crit) return why;
+      if (settings.snMode === 'custom') { st.bidLimit = bidMode() ? (settings.cs.maxBid || settings.cs.maxBuy || 0) : 0; st.bidMoved = false; return ''; }
       const km = fld(/^max_?(buy|bin|buynow)$/i) || 'maxBuy', kd = fld(/^max_?bid$/i) || 'maxBid';
       if (bidMode()) {
         const lim = toNum(TC.crit[km]) || (st.bidMoved ? toNum(TC.crit[kd]) : 0) || 0;
@@ -6604,7 +6606,65 @@ const SBC = (function () {
       }
       return '';
     }
+    // ---------- Eigene Transfermarkt-Suche (Filter direkt im Tool) ----------
+    if (!settings.cs || typeof settings.cs !== 'object') settings.cs = { lvl: 'any', rar: 'any', pos: 'any', lg: 0, nat: 0, minBid: 0, maxBid: 0, minBuy: 0, maxBuy: 0, pl: null };
+    const CS = { crit: null, prev: null, found: [], q: '', busy: false, page: 1 };
+    const CS_POS = ['GK', 'RB', 'CB', 'LB', 'CDM', 'CM', 'CAM', 'RM', 'LM', 'RW', 'LW', 'ST'];
+    const CS_LG = [[13, 'Premier League'], [53, 'LALIGA'], [19, 'Bundesliga'], [31, 'Serie A'], [16, 'Ligue 1'], [10, 'Eredivisie'], [308, 'Liga Portugal'], [68, 'Süper Lig'], [350, 'Saudi Pro League'], [39, 'MLS'], [14, 'Championship'], [20, '2. Bundesliga'], [2118, 'Icons']];
+    const CS_NAT = [[21, 'Deutschland'], [14, 'England'], [18, 'Frankreich'], [45, 'Spanien'], [27, 'Italien'], [38, 'Portugal'], [34, 'Niederlande'], [7, 'Belgien'], [54, 'Brasilien'], [52, 'Argentinien'], [4, 'Österreich'], [47, 'Schweiz'], [10, 'Kroatien'], [46, 'Schweden'], [13, 'Dänemark'], [37, 'Polen'], [48, 'Türkei'], [95, 'USA'], [129, 'Marokko'], [136, 'Nigeria']];
+    function leaveCus() { if (TC.crit && TC.crit === CS.crit) { TC.crit = CS.prev; TC.own = !CS.prev; } }
+    function cusApply() {
+      if (!CS.crit) { const prev = TC.crit, own = TC.own; TC.crit = null; ensureCrit(); CS.crit = TC.crit; TC.crit = prev; TC.own = own; }
+      if (!CS.crit) return 'EA-Suche nicht verfügbar – Web App neu laden.';
+      if (TC.crit !== CS.crit) { if (TC.crit && !TC.own && TC.crit !== LST.crit) CS.prev = TC.crit; TC.crit = CS.crit; TC.own = true; }
+      const c = CS.crit, f = settings.cs;
+      const set = (re, def, v) => { const k = Object.keys(c).find((x) => re.test(x)) || def; c[k] = v; };
+      set(/^masked_?def_?id$/i, 'maskedDefId', f.pl ? f.pl.asset : 0);
+      set(/^level$/i, 'level', f.lvl || 'any');
+      set(/^position$/i, 'position', f.pos && f.pos !== 'any' ? f.pos : 'any');
+      set(/^league$/i, 'league', f.lg || -1);
+      set(/^nation$/i, 'nation', f.nat || -1);
+      set(/^rarit(y|ies)$/i, 'rarities', f.rar === 'rare' ? [1] : f.rar === 'common' ? [0] : []);
+      set(/^min_?bid$/i, 'minBid', f.minBid || 0);
+      set(/^max_?bid$/i, 'maxBid', f.maxBid || 0);
+      set(/^min_?(buy|bin|buynow)$/i, 'minBuy', f.minBuy || 0);
+      set(/^max_?(buy|bin|buynow)$/i, 'maxBuy', f.maxBuy || 0);
+      TC.keys = Object.keys(c);
+      return '';
+    }
+    async function csFind(q) {
+      CS.busy = true; render();
+      try { await lstFind(q); CS.found = LST.found.slice(); LST.found = []; CS.q = LST.q; } finally { CS.busy = false; render(); }
+    }
+    function cusHtml() {
+      const f = settings.cs;
+      const opt = (arr, v) => arr.map(([k, l]) => `<option value="${k}" ${String(v) === String(k) ? 'selected' : ''}>${esc(l)}</option>`).join('');
+      return `<div class="cs">
+        <div class="cs-r"><label class="cs-w">Spieler${f.pl ? `<span class="cs-pl"><b>${f.pl.rating || ''}</b> ${esc(f.pl.name)} <button data-cs="clrpl" title="Spieler entfernen">✕</button></span>` : `<span class="cs-q"><input type="text" data-csq placeholder="Name (leer = alle Spieler)" value="${esc(CS.q)}"><button class="fcpt-smallbtn" data-cs="find" ${CS.busy ? 'disabled' : ''}>🔍</button></span>`}</label></div>
+        ${!f.pl && CS.found.length ? `<div class="cs-found">${CS.found.map((o, i) => `<button data-csp="${i}">${o.rating ? `<b>${o.rating}</b> ` : ''}${esc(o.name)}</button>`).join('')}</div>` : ''}
+        <div class="cs-g">
+          <label>Qualität<select data-csf="lvl">${opt([['any', 'Alle'], ['bronze', 'Bronze'], ['silver', 'Silber'], ['gold', 'Gold']], f.lvl)}</select></label>
+          <label>Seltenheit<select data-csf="rar">${opt([['any', 'Alle'], ['rare', 'Selten'], ['common', 'Gewöhnlich']], f.rar)}</select></label>
+          <label>Position<select data-csf="pos">${opt([['any', 'Alle']].concat(CS_POS.map((x) => [x, x])), f.pos)}</select></label>
+          <label>Liga<select data-csf="lg">${opt([[0, 'Alle']].concat(CS_LG), f.lg)}</select></label>
+          <label>Nation<select data-csf="nat">${opt([[0, 'Alle']].concat(CS_NAT), f.nat)}</select></label>
+        </div>
+        <div class="cs-g cs-p">
+          <label>Gebot min.<input type="number" min="0" step="50" data-csn="minBid" value="${f.minBid || ''}" placeholder="–"></label>
+          <label>Gebot max.<input type="number" min="0" step="50" data-csn="maxBid" value="${f.maxBid || ''}" placeholder="–"></label>
+          <label>Sofortkauf min.<input type="number" min="0" step="50" data-csn="minBuy" value="${f.minBuy || ''}" placeholder="–"></label>
+          <label>Sofortkauf max.<input type="number" min="0" step="50" data-csn="maxBuy" value="${f.maxBuy || ''}" placeholder="–"></label>
+        </div>
+        <div class="cs-a"><button class="fcpt-smallbtn" data-cs="reset">Filter zurücksetzen</button>${st.rows.length || CS.page > 1 ? `<span class="by-keys">Seite ${CS.page}</span>${CS.page > 1 ? '<button class="fcpt-smallbtn" data-cs="prev">◀ Vorige</button>' : ''}${st.pageFull ? '<button class="fcpt-smallbtn" data-cs="next">Nächste Seite ▶</button>' : ''}` : ''}</div>
+      </div>`;
+    }
     function applySimple0() {
+      if (settings.snMode !== 'custom') leaveCus();
+      if (settings.snMode === 'custom') {
+        if (settings.rfMin) { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); }
+        leaveList();
+        return cusApply();
+      }
       if (settings.snMode === 'list') {
         if (settings.rfMin) { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); }
         const act = lstActive();
@@ -6817,8 +6877,8 @@ const SBC = (function () {
       return parts.join(' · ');
     }
     function simpleHtml() {
-      const rot = settings.snMode === 'rating', lst = settings.snMode === 'list';
-      const seg = `<div class="by-seg"><button data-sm="ea" class="${!rot && !lst ? 'on' : ''}" title="Genau deine Suche aus der Web App – ein Spieler oder Filter wie Gold + Liga">🔎 Meine Suche</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button><button data-sm="list" class="${lst ? 'on' : ''}">📋 Liste</button></div>`;
+      const rot = settings.snMode === 'rating', lst = settings.snMode === 'list', cus = settings.snMode === 'custom';
+      const seg = `<div class="by-seg"><button data-sm="custom" class="${cus ? 'on' : ''}" title="Eigene Transfermarkt-Suche mit Filtern direkt im Tool">🧭 Filter</button><button data-sm="ea" class="${!rot && !lst && !cus ? 'on' : ''}" title="Genau deine Suche aus der Web App – ein Spieler oder Filter wie Gold + Liga">🔎 Meine Suche</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button><button data-sm="list" class="${lst ? 'on' : ''}">📋 Liste</button></div>`;
       const bd = bidMode();
       const P0 = PACE[settings.snPace] || PACE.normal;
       const pace = `<div class="by-kind by-pace" title="${esc(P0.note)}">${Object.entries(PACE).map(([k, v]) => `<button data-pace="${k}" class="${(settings.snPace || 'normal') === k ? 'on' : ''}">${v.label}</button>`).join('')}</div><div class="by-keys">Tempo: ${esc(P0.note)}${settings.snPace === 'safe' && settings.snDouble ? ' · „2 Spieler pro Druck“ ist im sicheren Tempo aus' : ''}</div>`;
@@ -6826,6 +6886,7 @@ const SBC = (function () {
       const instOrEnd = bd ? `<label class="inl" title="Nur Auktionen, die bald enden">endet in max.<input type="number" min="1" max="60" data-sn="bdMaxMin" value="${settings.bdMaxMin}"> Min.</label>`
         : `<label class="ck"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label>`;
       const bdNote = bd ? `<div class="by-keys">🔨 Sucht Auktionen, deren nächstes Gebot unter deinem ${lst ? 'Preis pro Spieler' : 'Max. Gebot'} liegt – die bald endende steht oben. Leertaste = suchen, bei Treffer nochmal = bieten. Wirst du überboten, meldet sich das Tool.</div>` : '';
+      if (cus) return `<div class="by-simple">${seg}${kind}${pace}<div class="by-sin">${instOrEnd}</div>${bdNote.replace('deinem Max. Gebot', 'deinem „Gebot max.“')}${cusHtml()}</div>`;
       if (lst) return `<div class="by-simple">${seg}${kind}${pace}<div class="by-sin">${instOrEnd}</div>${bdNote}${lstHtml()}</div>`;
       const ready = rot ? (ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${rotActive().length} Spieler mit Rating ${settings.snRating}${settings.snRatingUp ? '+' : ''} – jeder Tipp prüft einen gezielt${ROT.cur ? ` · zuletzt: ${esc(ROT.cur.name)}` : ''}` : 'Beim ersten Tipp lädt das Tool alle passenden Spieler (einmalig 1–2 Min.).')
         : (TC.crit && !TC.own ? `Deine Suche aus der Web App: ${esc(critSummary())}` : 'Stell in der Web App deine Suche ein (Spieler oder nur Filter wie Gold + Liga) und drück dort einmal „Suchen“ – dann hier nur noch Leertaste/Knopf.');
@@ -7011,6 +7072,22 @@ const SBC = (function () {
       box.querySelectorAll('[data-lo]').forEach((c) => c.addEventListener('change', (e) => { e.stopPropagation(); const en = settings.snList[+c.dataset.lo]; if (en) { en.off = !c.checked; saveSettings(); setTimeout(render, 0); } }));
       box.querySelectorAll('[data-ld]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.ld]; settings.snList.splice(+b2.dataset.ld, 1); if (LST.cur === en) LST.cur = null; saveSettings(); render(); }));
       box.querySelectorAll('[data-ob]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const k = b2.dataset.ob, t = b2.dataset.obt; if (k === 'x') TARGETS.dismiss(t); else TARGETS.rebid(t, k); render(); }));
+      const csq = box.querySelector('[data-csq]');
+      if (csq) ['keydown', 'keyup', 'keypress'].forEach((ev) => csq.addEventListener(ev, (e) => { e.stopPropagation(); if (ev === 'keydown' && e.key === 'Enter') { e.preventDefault(); csFind(csq.value); } }));
+      box.querySelectorAll('[data-cs]').forEach((b2) => b2.addEventListener('click', (e) => {
+        e.stopPropagation(); const a = b2.dataset.cs;
+        if (a === 'find') csFind(csq ? csq.value : '');
+        else if (a === 'clrpl') { settings.cs.pl = null; CS.page = 1; st.rows = []; saveSettings(); render(); }
+        else if (a === 'reset') { settings.cs = { lvl: 'any', rar: 'any', pos: 'any', lg: 0, nat: 0, minBid: 0, maxBid: 0, minBuy: 0, maxBuy: 0, pl: null }; CS.page = 1; CS.found = []; CS.q = ''; st.rows = []; saveSettings(); render(); }
+        else if (a === 'next') { CS.page++; search(); }
+        else if (a === 'prev') { CS.page = Math.max(1, CS.page - 1); search(); }
+      }));
+      box.querySelectorAll('[data-csp]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const o = CS.found[+b2.dataset.csp]; if (o) { settings.cs.pl = { asset: o.asset, name: o.name, rating: o.rating || 0 }; CS.found = []; CS.page = 1; st.rows = []; saveSettings(); render(); } }));
+      box.querySelectorAll('[data-csf]').forEach((sel) => sel.addEventListener('change', (e) => { e.stopPropagation(); const k = sel.dataset.csf; settings.cs[k] = /^(lg|nat)$/.test(k) ? +sel.value : sel.value; CS.page = 1; st.rows = []; saveSettings(); setTimeout(render, 0); }));
+      box.querySelectorAll('[data-csn]').forEach((inp) => {
+        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); });
+        inp.addEventListener('change', (e) => { e.stopPropagation(); settings.cs[inp.dataset.csn] = Math.max(0, parseInt(String(inp.value).replace(/\./g, ''), 10) || 0); CS.page = 1; st.rows = []; saveSettings(); setTimeout(render, 0); });
+      });
       box.querySelectorAll('[data-pace]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snPace = b2.dataset.pace; saveSettings(); render(); }));
       box.querySelectorAll('[data-sk]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snKind = b2.dataset.sk; st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
       box.querySelectorAll('[data-sm]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snMode = b2.dataset.sm; if (settings.snMode !== 'rating') { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); } if (settings.snMode !== 'list') leaveList(); st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
@@ -7516,6 +7593,15 @@ const SBC = (function () {
       .kan .tr-det .tr{border-bottom:1px solid #1a2132}
       @media (min-width:1100px){html.fcpt-fill .kan.k4{grid-template-columns:repeat(4,minmax(0,1fr))}html.fcpt-fill .kan.k1{grid-template-columns:minmax(0,560px)}html.fcpt-fill .kan{padding:14px 0 30px;align-items:start}}
       @media (min-width:700px) and (max-width:1099px){html.fcpt-fill .kan.k4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      .cs{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+      .cs-w{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink2)}
+      .cs-q{display:flex;gap:6px}.cs-q input{flex:1;min-width:0;height:34px;border-radius:9px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 10px;font:inherit;font-size:13px}
+      .cs-pl{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 12px;border-radius:9px;background:#2a2412;border:1px solid var(--gold);color:var(--ink);font-size:13.5px;width:fit-content}.cs-pl b{color:var(--gold)}.cs-pl button{border:0;background:transparent;color:var(--ink2);cursor:pointer;font-size:14px}
+      .cs-found{display:flex;flex-wrap:wrap;gap:6px}.cs-found button{height:30px;padding:0 10px;border-radius:999px;border:1px solid #2b3654;background:#10151f;color:var(--ink);font:600 12.5px inherit;cursor:pointer}.cs-found button b{color:var(--gold)}
+      .cs-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+      .cs-g label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--ink2);font-weight:600}
+      .cs-g select,.cs-g input{height:34px;border-radius:9px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 8px;font:inherit;font-size:13px;width:100%;box-sizing:border-box}
+      .cs-a{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
       .lf-empty{padding:40px 16px;text-align:center;color:var(--ink3);font-size:14px}
       .tr-h{background:#0d121c}
       .tr .ovr{display:inline-flex;align-items:center;justify-content:center;width:30px;height:24px;border-radius:6px;background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00 !important;font-weight:700;font-size:12.5px}

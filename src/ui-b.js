@@ -136,6 +136,15 @@
       .kan .tr-det .tr{border-bottom:1px solid #1a2132}
       @media (min-width:1100px){html.fcpt-fill .kan.k4{grid-template-columns:repeat(4,minmax(0,1fr))}html.fcpt-fill .kan.k1{grid-template-columns:minmax(0,560px)}html.fcpt-fill .kan{padding:14px 0 30px;align-items:start}}
       @media (min-width:700px) and (max-width:1099px){html.fcpt-fill .kan.k4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      .cs{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+      .cs-w{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink2)}
+      .cs-q{display:flex;gap:6px}.cs-q input{flex:1;min-width:0;height:34px;border-radius:9px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 10px;font:inherit;font-size:13px}
+      .cs-pl{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 12px;border-radius:9px;background:#2a2412;border:1px solid var(--gold);color:var(--ink);font-size:13.5px;width:fit-content}.cs-pl b{color:var(--gold)}.cs-pl button{border:0;background:transparent;color:var(--ink2);cursor:pointer;font-size:14px}
+      .cs-found{display:flex;flex-wrap:wrap;gap:6px}.cs-found button{height:30px;padding:0 10px;border-radius:999px;border:1px solid #2b3654;background:#10151f;color:var(--ink);font:600 12.5px inherit;cursor:pointer}.cs-found button b{color:var(--gold)}
+      .cs-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+      .cs-g label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--ink2);font-weight:600}
+      .cs-g select,.cs-g input{height:34px;border-radius:9px;border:1px solid #2b3654;background:#0b1020;color:var(--ink);padding:0 8px;font:inherit;font-size:13px;width:100%;box-sizing:border-box}
+      .cs-a{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
       .lf-empty{padding:40px 16px;text-align:center;color:var(--ink3);font-size:14px}
       .tr-h{background:#0d121c}
       .tr .ovr{display:inline-flex;align-items:center;justify-content:center;width:30px;height:24px;border-radius:6px;background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00 !important;font-weight:700;font-size:12.5px}
