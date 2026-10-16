@@ -114,6 +114,28 @@
         .tr .ovr{width:28px;height:22px;font-size:12px}
         .tr-row{padding-top:6px;padding-bottom:6px}
       }
+      .lv-sw{display:inline-flex;border:1px solid #263049;border-radius:10px;overflow:hidden}.lv-sw button{height:32px;padding:0 12px;border:0;background:#10151f;color:var(--ink2);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}.lv-sw button.on{background:#2a2412;color:var(--gold)}
+      .kan{display:grid;grid-template-columns:1fr;gap:12px;padding:10px 12px 20px}
+      .kan-c{background:#0d121b;border:1px solid #1d2536;border-radius:16px;padding:12px;min-width:0}
+      .kan-c h3{margin:0;display:flex;justify-content:space-between;align-items:center;font:700 12.5px 'IBM Plex Sans',system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--kc)}
+      .kan-c h3 em{font-style:normal;background:#1c2436;color:var(--ink);border-radius:8px;padding:1px 9px;font-size:12px;letter-spacing:0}
+      .kan-s{font-size:11.5px;color:var(--ink3);margin:4px 0 10px}.kan-s b{font-family:'JetBrains Mono',monospace}
+      .kan-l{display:flex;flex-direction:column;gap:8px}.kan-e{color:var(--ink3);text-align:center;padding:14px 0}
+      .kan .tr.kc{border:1px solid #20283a;border-radius:12px;background:#141a27;overflow:hidden}
+      .kan .tr.kc>.kc-b{display:flex !important;align-items:center;gap:10px;padding:9px 10px;min-height:0;grid-template-columns:none}
+      .kan .tr.kc>.kc-b .ovr{flex:none;width:32px;height:38px;font-size:13.5px}
+      .kan .kc-x{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.kan .kc-x .nm{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kan .kc-x small{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kan .kc-x .fx{font-style:normal;color:var(--gold)}
+      .kan .kc-r{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:13px}.kan .kc-r [data-pf]{font-size:12.5px;font-weight:700}
+      .kan .tr.kc.lieg{border-color:rgba(255,174,92,.35)}.kan .tr.kc.open{border-color:var(--gold)}.kan .tr.kc.open>.kc-b{box-shadow:none;background:#18202f}
+      .kan .tr.kc>.tr-det{padding:0 8px 8px}
+      .kan .tr-det .tr-row,html.fcpt-fill .kan .tr-det .tr-row{grid-template-columns:26px minmax(0,1fr) 64px 0 64px;gap:6px;padding:0 6px;font-size:13px;min-height:40px}
+      .kan .tr-det .tr-row .mk{display:none}
+      .kan .tr-det .tr-row,html.fcpt-fill .kan .tr-det .tr-row{grid-template-columns:24px minmax(0,1fr) 62px 0 66px}
+      .kan .tr-det .tr-row .ovr,html.fcpt-fill .kan .tr-det .tr-row .ovr{width:24px;height:20px;font-size:11px}.kan .tr-det .tr-row .nm{font-weight:500;font-size:12.5px}
+      html.fcpt-fill #fcpt-panel .fcpt-toolbar{justify-content:flex-start;column-gap:12px}
+      .kan .tr-det .tr{border-bottom:1px solid #1a2132}
+      @media (min-width:1100px){html.fcpt-fill .kan.k4{grid-template-columns:repeat(4,minmax(0,1fr))}html.fcpt-fill .kan.k1{grid-template-columns:minmax(0,560px)}html.fcpt-fill .kan{padding:14px 0 30px;align-items:start}}
+      @media (min-width:700px) and (max-width:1099px){html.fcpt-fill .kan.k4{grid-template-columns:repeat(2,minmax(0,1fr))}}
       .lf-empty{padding:40px 16px;text-align:center;color:var(--ink3);font-size:14px}
       .tr-h{background:#0d121c}
       .tr .ovr{display:inline-flex;align-items:center;justify-content:center;width:30px;height:24px;border-radius:6px;background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00 !important;font-weight:700;font-size:12.5px}
@@ -127,9 +149,9 @@
       @media (min-width:900px){
         html.fcpt-fill #fcpt-panel .fcpt-list{padding:14px 36px 90px}
         html.fcpt-fill #fcpt-panel .fcpt-list .tr-h{border:1px solid #1d2536;border-bottom:0;border-radius:14px 14px 0 0;position:sticky;top:0}
-        html.fcpt-fill #fcpt-panel .fcpt-list .tr{border-left:1px solid #1d2536;border-right:1px solid #1d2536;background:#0d121b}
-        html.fcpt-fill #fcpt-panel .fcpt-list .tr:last-child{border-radius:0 0 14px 14px;border-bottom:1px solid #1d2536}
-        html.fcpt-fill #fcpt-panel .fcpt-list .tr-row:hover{background:#121a28}
+        html.fcpt-fill #fcpt-panel .fcpt-list>.tr{border-left:1px solid #1d2536;border-right:1px solid #1d2536;background:#0d121b}
+        html.fcpt-fill #fcpt-panel .fcpt-list>.tr:last-child{border-radius:0 0 14px 14px;border-bottom:1px solid #1d2536}
+        html.fcpt-fill #fcpt-panel .fcpt-list>.tr>.tr-row:hover,html.fcpt-fill .kan .kc-b:hover{background:#121a28}
         html.fcpt-fill .tr .ovr{width:36px;height:28px;font-size:14px}
         html.fcpt-fill #fcpt-panel .fcpt-sum{padding-top:18px}
         html.fcpt-fill #fcpt-panel .fcpt-sum>*,html.fcpt-fill #fcpt-panel .fcpt-toolbar>*{max-width:1500px}
@@ -683,10 +705,49 @@
     function filterChips() {
       return Object.entries(LF).map(([k, [l, f]]) => { const n = items.filter(f).length; return `<button data-lf2="${k}" class="${settings.listFilter === k ? 'on' : ''}" ${n || k === 'all' ? '' : 'disabled'}>${l}<span>${n}</span></button>`; }).join('');
     }
+    // ---------- Spalten-Ansicht (Aktiv · Abgelaufen · Nicht gelistet · Verkauft) ----------
+    if (settings.listView === undefined) settings.listView = 'kanban';
+    const KCOLS = [['active', 'Aktiv', '#5b9cff'], ['expired', 'Abgelaufen', '#ffae5c'], ['open', 'Nicht gelistet', '#94a3b8'], ['sold', 'Verkauft', '#3dd68c']];
+    function kCard(g, k) {
+      const p = g[0], key = g.length > 1 ? `g:${k}` : String(p.itemId ?? p.resourceId);
+      const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
+      const pfs = g.map((x) => profitValue(x, m)).filter((v) => v != null);
+      const pf = pfs.length ? pfs.reduce((a, b) => a + b, 0) : null;
+      const bins = g.map((x) => (x.sold ? x.soldFor : x.buyNow)).filter(Boolean);
+      const lo = bins.length ? Math.min(...bins) : null;
+      const nExp = p.expired ? Math.max(...g.map((x) => expiredCount(x.itemId) || 0)) : 0;
+      const sub = p.sold ? `gekauft ${p.bought ? fmt(p.bought) : 'gezogen'}` : p.active ? `endet in ${fmtTime(Math.min(...g.map((x) => x.expires || 0)))}` : `Markt ${m ? fmt(m) : '…'}${nExp >= 2 ? ` · ${nExp}× abgel.` : ''}`;
+      const fx = !p.sold && !p.active && settings.listPresets && settings.listPresets[p.resourceId];
+      const open = openRows.has(key);
+      return `<div class="tr kc ${p.sold ? 'sold' : p.expired ? 'expired' : p.active ? 'active' : ''}${nExp >= 2 ? ' lieg' : ''}${open ? ' open' : ''}" data-row="${esc(key)}" data-rid="${p.resourceId}"${g.length > 1 ? ` data-grp="${esc(grpKey(p))}"` : ''}>
+        <button class="tr-row kc-b" data-trow="${esc(key)}" aria-expanded="${open}">
+          <span class="num ovr">${p.isCons ? '🧪' : esc(p.rating ?? '')}</span>
+          <span class="kc-x"><b class="nm">${esc(p.name)}${g.length > 1 ? ` <span class="gc">${g.length}×</span>` : ''}</b><small>${esc(sub)}${fx ? ` · <em class="fx">fest ${fmt(fx.bin)}</em>` : ''}</small></span>
+          <span class="kc-r"><b class="num">${lo == null ? '–' : fmt(lo)}</b><span class="num" data-pf>${pf == null ? '<span class="fcpt-muted">–</span>' : `<span class="${profitCls(pf)}">${signed(pf)}</span>`}</span><span class="num mk" data-mk hidden>${m ? fmt(m) : ''}</span></span>
+        </button>
+        <div class="tr-det">${g.length > 1 ? g.map(rowHtml).join('') : cardHtml(p) + LIST.fixHtml(p)}</div>
+      </div>`;
+    }
+    function kanbanHtml(sorted) {
+      const show = settings.listFilter === 'all' ? KCOLS : KCOLS.filter((c) => c[0] === settings.listFilter);
+      return `<div class="kan k${show.length}">${show.map(([k, t, col]) => {
+        const L = sorted.filter(LF[k][1]);
+        const groups = new Map(), order = [];
+        for (const p of L) {
+          const gk = settings.groupSame && !p.sold ? grpKey(p) : `i${p.itemId}`;
+          if (!groups.has(gk)) { groups.set(gk, []); order.push(gk); }
+          groups.get(gk).push(p);
+        }
+        const sum = L.reduce((a, p) => { const v = profitValue(p, p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p)); return a + (v || 0); }, 0);
+        return `<section class="kan-c" style="--kc:${col}"><h3><span>${t}</span><em>${L.length}</em></h3>${L.length ? `<div class="kan-s">${k === 'sold' ? 'Gewinn' : 'Profit'} <b class="${profitCls(sum)}">${signed(sum)}</b></div>` : ''}
+          <div class="kan-l">${order.map((gk) => kCard(groups.get(gk), gk)).join('') || '<div class="kan-e">–</div>'}</div></section>`;
+      }).join('')}</div>`;
+    }
     function listHtml(sorted) {
+      const chips = panel.querySelector('.lf-chips'); if (chips) chips.innerHTML = filterChips();
+      if (settings.listView === 'kanban' && items.length) return kanbanHtml(sorted);
       const lf = (LF[settings.listFilter] || LF.all)[1];
       sorted = sorted.filter(lf);
-      const chips = panel.querySelector('.lf-chips'); if (chips) chips.innerHTML = filterChips();
       if (!sorted.length) return `<div class="lf-empty">${items.length ? `Keine Karten im Filter „${(LF[settings.listFilter] || LF.all)[0]}“.` : 'Transferliste ist leer – oben ↻ zum Laden.'}</div>`;
       if (!settings.groupSame) return sorted.map(rowHtml).join('');
       const groups = new Map(), order = [];
@@ -728,7 +789,8 @@
         <div class="tr-det grp-det">${g.map(rowHtml).join('')}</div>
       </div>`;
     }
-    const headHtml = () => '<div class="tr-h"><span>OVR</span><span>Spieler</span><span>Sofortk.</span><span>Markt</span><span>Profit</span></div>';
+    const headHtml = () => (settings.listView === 'kanban' && items.length ? '' : headHtml0());
+    const headHtml0 = () => '<div class="tr-h"><span>OVR</span><span>Spieler</span><span>Sofortk.</span><span>Markt</span><span>Profit</span></div>';
     function updateRow(rid) {
       panel.querySelectorAll(`.tr[data-rid="${rid}"]`).forEach((r) => {
         if (r.dataset.grp) {
@@ -1181,10 +1243,13 @@
     try {
       const sel = panel.querySelector('[data-set="sort"]');
       if (sel && !panel.querySelector('[data-grpt]')) {
+        sel.insertAdjacentHTML('beforebegin', `<div class="lv-sw" role="group" aria-label="Ansicht"><button data-lv="kanban" class="${settings.listView === 'kanban' ? 'on' : ''}" title="Spalten nach Status">▦ Spalten</button><button data-lv="table" class="${settings.listView !== 'kanban' ? 'on' : ''}" title="Tabelle">☰ Tabelle</button></div>`);
         sel.insertAdjacentHTML('afterend', `<label class="fcpt-grpt" title="Gleiche Spieler in einer Leiste zusammenfassen"><input type="checkbox" data-grpt ${settings.groupSame ? 'checked' : ''}> Gleiche zusammen</label>`);
         const tb0 = sel.closest('.fcpt-toolbar') || sel.parentElement;
         tb0.insertAdjacentHTML('afterbegin', `<div class="lf-chips" role="tablist" aria-label="Filter">${filterChips()}</div>`);
         tb0.addEventListener('click', (e) => {
+          const v = e.target.closest && e.target.closest('[data-lv]');
+          if (v) { e.stopPropagation(); settings.listView = v.dataset.lv; saveSettings(); tb0.querySelectorAll('[data-lv]').forEach((b) => b.classList.toggle('on', b === v)); try { render(); } catch (er) { /* */ } return; }
           const c = e.target.closest && e.target.closest('[data-lf2]');
           if (!c) return;
           e.stopPropagation(); settings.listFilter = c.dataset.lf2; saveSettings(); try { render(); } catch (er) { /* */ }
