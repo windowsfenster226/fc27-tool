@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.61.0
+// @version      2.62.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -1389,11 +1389,13 @@ const SBC = (function () {
     }
     const sold = items.filter((p) => p.sold);
     const soldProfit = sold.reduce((s2, p) => s2 + (p.profit || 0), 0);
-    return `<div class="fcpt-overview">
-      <div><div class="l">Listenwert</div><div class="v">${fmt(value)}</div></div>
-      <div><div class="l">Möglicher Profit</div><div class="v ${profitCls(profit)}">${signed(profit)}</div></div>
-      <div><div class="l">Verkauft (${sold.length})</div><div class="v ${profitCls(soldProfit)}">${signed(soldProfit)}</div></div>
-    </div><div class="fcpt-stand" style="margin-top:4px">${items.length} Karten · Preise für ${withPrice} von ${open.length} offenen Karten geladen</div>`;
+    const nAct = items.filter((p) => p.active).length, nExp = items.filter((p) => p.expired).length, nOpen = items.filter((p) => !p.sold && !p.active && !p.expired).length;
+    return `<div class="fcpt-overview lo">
+      <div class="lo-a"><div class="l">Listenwert</div><div class="v">${fmt(value)}</div><div class="s">${open.length} offene Karten</div></div>
+      <div class="lo-b"><div class="l">Möglicher Profit</div><div class="v ${profitCls(profit)}">${signed(profit)}</div><div class="s">nach 5 % Steuer</div></div>
+      <div class="lo-c"><div class="l">Verkauft (${sold.length})</div><div class="v ${profitCls(soldProfit)}">${signed(soldProfit)}</div><div class="s">${sold.length ? 'bereit zum Abräumen' : 'noch nichts verkauft'}</div></div>
+      <div class="lo-d"><div class="l">Belegung</div><div class="v">${items.length}<small>/100</small></div><div class="s"><i class="b-a"></i>${nAct} aktiv <i class="b-e"></i>${nExp} abgel. <i class="b-o"></i>${nOpen} offen</div><div class="lo-bar"><i class="b-a" style="width:${nAct}%"></i><i class="b-e" style="width:${nExp}%"></i><i class="b-o" style="width:${nOpen}%"></i><i class="b-s" style="width:${sold.length}%"></i></div></div>
+    </div><div class="fcpt-stand lo-st">${items.length} Karten · Preise für ${withPrice} von ${open.length} offenen Karten geladen</div>`;
   }
   let ovTimer = null;
   const updateOverview = () => {
@@ -7465,6 +7467,55 @@ const SBC = (function () {
       .tr.open>.tr-det{display:block}
       .tr-det .fcpt-card{border:1px solid var(--line);border-left-width:1px;background:var(--bg2);border-radius:12px}
       .tr-det .c-top{display:none}
+      /* ===== Transferliste – überarbeitetes Design ===== */
+      #fcpt-panel .fcpt-overview.lo{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+      #fcpt-panel .fcpt-overview.lo>div{position:relative;background:linear-gradient(180deg,#161c2a,#11151f);border:1px solid #232b3d;border-radius:14px;padding:10px 12px 11px;overflow:hidden}
+      #fcpt-panel .fcpt-overview.lo>div::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--lc,#f2c14e)}
+      #fcpt-panel .fcpt-overview.lo .lo-a{--lc:#60a5fa}#fcpt-panel .fcpt-overview.lo .lo-b{--lc:#f2c14e}#fcpt-panel .fcpt-overview.lo .lo-c{--lc:#34d399}#fcpt-panel .fcpt-overview.lo .lo-d{--lc:#a78bfa}
+      #fcpt-panel .fcpt-overview.lo .l{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8d98ad}
+      #fcpt-panel .fcpt-overview.lo .v{font-size:19px;font-weight:700;margin-top:2px}#fcpt-panel .fcpt-overview.lo .v small{font-size:12px;color:var(--ink3);margin-left:2px}
+      #fcpt-panel .fcpt-overview.lo .s{font-size:11px;color:var(--ink3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .lo .s i{display:inline-block;width:7px;height:7px;border-radius:2px;margin:0 3px 0 6px;vertical-align:0}.lo .s i:first-child{margin-left:0}
+      .lo .b-a{background:#60a5fa}.lo .b-e{background:#fb923c}.lo .b-o{background:#64748b}.lo .b-s{background:#34d399}
+      .lo-bar{display:flex;height:4px;border-radius:2px;background:#1b2232;margin-top:6px;overflow:hidden}.lo-bar i{display:block;height:100%}
+      .lo-st{margin-top:6px !important;font-size:11.5px}
+      @media (max-width:640px){#fcpt-panel .fcpt-overview.lo{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      .fcpt-toolbar{flex-wrap:wrap;row-gap:8px}
+      .lf-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1 1 100%}
+      .lf-chips button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:999px;border:1px solid #263049;background:#10151f;color:var(--ink2);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}
+      .lf-chips button span{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#1c2436;color:var(--ink);font-size:11px;display:inline-flex;align-items:center;justify-content:center}
+      .lf-chips button.on{background:#2a2412;border-color:var(--gold);color:var(--gold)}.lf-chips button.on span{background:var(--gold);color:#15120a}
+      .lf-chips button:disabled{opacity:.4;cursor:default}
+      @media (max-width:640px){
+        .lf-chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}.lf-chips::-webkit-scrollbar{display:none}
+        .lf-chips button{flex:none;height:28px;padding:0 10px}
+        .tr .nm{white-space:normal;line-height:1.25;display:flex;flex-wrap:wrap;align-items:center;column-gap:4px}
+        .tr .nm .st{margin-left:0 !important;flex-basis:auto}
+        .tr .ovr{width:28px;height:22px;font-size:12px}
+        .tr-row{padding-top:6px;padding-bottom:6px}
+      }
+      .lf-empty{padding:40px 16px;text-align:center;color:var(--ink3);font-size:14px}
+      .tr-h{background:#0d121c}
+      .tr .ovr{display:inline-flex;align-items:center;justify-content:center;width:30px;height:24px;border-radius:6px;background:linear-gradient(160deg,#f6e08a,#c9a227);color:#241a00 !important;font-weight:700;font-size:12.5px}
+      .tr .nm{font-weight:600}
+      .tr .st{display:inline-block;font-weight:600;font-size:11px !important;padding:2px 8px;border-radius:999px;background:#1a2131;vertical-align:1px}
+      .tr.sold .st{background:rgba(61,214,140,.12)}.tr.expired .st{background:rgba(255,174,92,.12)}.tr.active .st{background:rgba(91,156,255,.12)}
+      .tr .st.fx{background:rgba(242,193,78,.12)}
+      .tr-row [data-pf]{font-weight:700}
+      .tr-row{transition:background .1s}.tr.open>.tr-row{box-shadow:inset 3px 0 0 var(--gold)}
+      .tr.grp>.tr-row .nm{font-weight:700}
+      @media (min-width:900px){
+        html.fcpt-fill #fcpt-panel .fcpt-list{padding:14px 36px 90px}
+        html.fcpt-fill #fcpt-panel .fcpt-list .tr-h{border:1px solid #1d2536;border-bottom:0;border-radius:14px 14px 0 0;position:sticky;top:0}
+        html.fcpt-fill #fcpt-panel .fcpt-list .tr{border-left:1px solid #1d2536;border-right:1px solid #1d2536;background:#0d121b}
+        html.fcpt-fill #fcpt-panel .fcpt-list .tr:last-child{border-radius:0 0 14px 14px;border-bottom:1px solid #1d2536}
+        html.fcpt-fill #fcpt-panel .fcpt-list .tr-row:hover{background:#121a28}
+        html.fcpt-fill .tr .ovr{width:36px;height:28px;font-size:14px}
+        html.fcpt-fill #fcpt-panel .fcpt-sum{padding-top:18px}
+        html.fcpt-fill #fcpt-panel .fcpt-sum>*,html.fcpt-fill #fcpt-panel .fcpt-toolbar>*{max-width:1500px}
+        html.fcpt-fill #fcpt-panel .fcpt-overview.lo .v{font-size:24px}
+        html.fcpt-fill #fcpt-panel .fcpt-toolbar{padding-top:12px;padding-bottom:4px}
+      }
       .tr.grp>.tr-det.grp-det{padding:0 0 4px 16px;border-left:2px solid #2b3654;margin-left:14px}.grp-det .tr{border-bottom:1px solid #141b29}.grp-det .tr-row{padding-left:4px}
       .tr .gc{display:inline-block;min-width:22px;margin-right:6px;padding:0 5px;border-radius:6px;background:#1b2336;color:var(--gold);font-size:11.5px;font-weight:700;text-align:center}
       .tr-row .r small{font-size:10.5px;color:var(--ink3);margin-left:1px}
@@ -8007,7 +8058,16 @@ const SBC = (function () {
     // Gleiche Spieler (gleiche Karte) in einer Leiste zusammenfassen – aufklappen zeigt die einzelnen Karten
     if (settings.groupSame === undefined) settings.groupSame = true;
     const grpKey = (p) => (p.sold ? null : `${p.isCons ? 'c' : 'p'}${p.resourceId}`);
+    if (settings.listFilter === undefined) settings.listFilter = 'all';
+    const LF = { all: ['Alle', () => true], active: ['Aktiv', (p) => p.active], expired: ['Abgelaufen', (p) => p.expired], open: ['Nicht gelistet', (p) => !p.sold && !p.active && !p.expired], sold: ['Verkauft', (p) => p.sold] };
+    function filterChips() {
+      return Object.entries(LF).map(([k, [l, f]]) => { const n = items.filter(f).length; return `<button data-lf2="${k}" class="${settings.listFilter === k ? 'on' : ''}" ${n || k === 'all' ? '' : 'disabled'}>${l}<span>${n}</span></button>`; }).join('');
+    }
     function listHtml(sorted) {
+      const lf = (LF[settings.listFilter] || LF.all)[1];
+      sorted = sorted.filter(lf);
+      const chips = panel.querySelector('.lf-chips'); if (chips) chips.innerHTML = filterChips();
+      if (!sorted.length) return `<div class="lf-empty">${items.length ? `Keine Karten im Filter „${(LF[settings.listFilter] || LF.all)[0]}“.` : 'Transferliste ist leer – oben ↻ zum Laden.'}</div>`;
       if (!settings.groupSame) return sorted.map(rowHtml).join('');
       const groups = new Map(), order = [];
       for (const p of sorted) {
@@ -8502,6 +8562,13 @@ const SBC = (function () {
       const sel = panel.querySelector('[data-set="sort"]');
       if (sel && !panel.querySelector('[data-grpt]')) {
         sel.insertAdjacentHTML('afterend', `<label class="fcpt-grpt" title="Gleiche Spieler in einer Leiste zusammenfassen"><input type="checkbox" data-grpt ${settings.groupSame ? 'checked' : ''}> Gleiche zusammen</label>`);
+        const tb0 = sel.closest('.fcpt-toolbar') || sel.parentElement;
+        tb0.insertAdjacentHTML('afterbegin', `<div class="lf-chips" role="tablist" aria-label="Filter">${filterChips()}</div>`);
+        tb0.addEventListener('click', (e) => {
+          const c = e.target.closest && e.target.closest('[data-lf2]');
+          if (!c) return;
+          e.stopPropagation(); settings.listFilter = c.dataset.lf2; saveSettings(); try { render(); } catch (er) { /* */ }
+        });
         const cb = panel.querySelector('[data-grpt]');
         cb.addEventListener('change', (e) => { e.stopPropagation(); settings.groupSame = cb.checked; saveSettings(); try { if (items.length) render(); } catch (er) { /* */ } });
         cb.addEventListener('click', (e) => e.stopPropagation());

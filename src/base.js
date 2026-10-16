@@ -711,11 +711,13 @@
     }
     const sold = items.filter((p) => p.sold);
     const soldProfit = sold.reduce((s2, p) => s2 + (p.profit || 0), 0);
-    return `<div class="fcpt-overview">
-      <div><div class="l">Wert der Liste (Markt)</div><div class="v">${fmt(value)}</div></div>
-      <div><div class="l">Profit bei Verkauf zum Markt</div><div class="v ${profitCls(profit)}">${signed(profit)}</div></div>
-      <div><div class="l">Verkauft (${sold.length})</div><div class="v ${profitCls(soldProfit)}">${signed(soldProfit)}</div></div>
-    </div><div class="fcpt-stand" style="margin-top:4px">${items.length} Karten · Preise für ${withPrice} von ${open.length} offenen Karten geladen</div>`;
+    const nAct = items.filter((p) => p.active).length, nExp = items.filter((p) => p.expired).length, nOpen = items.filter((p) => !p.sold && !p.active && !p.expired).length;
+    return `<div class="fcpt-overview lo">
+      <div class="lo-a"><div class="l">Wert der Liste (Markt)</div><div class="v">${fmt(value)}</div><div class="s">${open.length} offene Karten</div></div>
+      <div class="lo-b"><div class="l">Profit bei Verkauf zum Markt</div><div class="v ${profitCls(profit)}">${signed(profit)}</div><div class="s">nach 5 % Steuer</div></div>
+      <div class="lo-c"><div class="l">Verkauft (${sold.length})</div><div class="v ${profitCls(soldProfit)}">${signed(soldProfit)}</div><div class="s">${sold.length ? 'bereit zum Abräumen' : 'noch nichts verkauft'}</div></div>
+      <div class="lo-d"><div class="l">Belegung</div><div class="v">${items.length}<small>/100</small></div><div class="s"><i class="b-a"></i>${nAct} aktiv <i class="b-e"></i>${nExp} abgel. <i class="b-o"></i>${nOpen} offen</div><div class="lo-bar"><i class="b-a" style="width:${nAct}%"></i><i class="b-e" style="width:${nExp}%"></i><i class="b-o" style="width:${nOpen}%"></i><i class="b-s" style="width:${sold.length}%"></i></div></div>
+    </div><div class="fcpt-stand lo-st">${items.length} Karten · Preise für ${withPrice} von ${open.length} offenen Karten geladen</div>`;
   }
   let ovTimer = null;
   const updateOverview = () => {
