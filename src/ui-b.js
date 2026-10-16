@@ -755,7 +755,7 @@
         const out = [], skipped = [];
         for (const p of items) {
           if (p.sold || p.active || !p.__raw) continue;
-          if (FAV.has(p.itemId)) continue;   // Favorit -> nicht einstellen
+          if (FAV.has(p.itemId, p.resourceId)) continue;   // geschützt -> nicht einstellen
           if (only != null && only !== 'all' && String(p.resourceId) !== String(only)) continue;
           const pr = priceFor(p);
           if (!pr) continue;
@@ -790,7 +790,7 @@
       function relistCandidates() {
         const out = [], none = [];
         for (const p of items) {
-          if (!p.expired || p.sold || !p.__raw || FAV.has(p.itemId)) continue;
+          if (!p.expired || p.sold || !p.__raw || FAV.has(p.itemId, p.resourceId)) continue;
           const pr = relistPrice(p);
           if (pr) out.push({ p, pr }); else none.push(p);
         }

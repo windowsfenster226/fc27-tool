@@ -6,7 +6,29 @@
   // eslint-disable-next-line no-var
   var FAV = (() => {
     if (!Array.isArray(settings.sbcLocked)) settings.sbcLocked = [];
-    const has = (id) => id != null && settings.sbcLocked.some((x) => String(x.id) === String(id));
+    if (!Array.isArray(settings.protAssets)) settings.protAssets = [];   // ganze Spieler (alle Versionen): {a: assetId, n: Name, r: Rating}
+    const A = (x) => (x == null ? null : Number(x) % 16777216);
+    const protAsset = (a) => a != null && settings.protAssets.some((x) => x.a === A(a));
+    // geschützt = diese Karte (Item-ID) ODER der ganze Spieler (Asset-ID / Resource-ID)
+    const has = (id, asset) => (id != null && settings.sbcLocked.some((x) => String(x.id) === String(id))) || protAsset(asset);
+    const st2 = { q: '', found: [], busy: false, msg: '' };
+    async function findInClub(q) {
+      q = String(q || '').trim().toLowerCase();
+      st2.q = q; st2.found = [];
+      if (q.length < 3) { st2.msg = 'Mindestens 3 Buchstaben.'; render(); return; }
+      st2.busy = true; st2.msg = 'Suche im Verein …'; render();
+      try {
+        const c = await SBCUI.loadClub((m) => { st2.msg = m; render(); }, false);
+        const seen = new Set();
+        for (const p of c.players) {
+          if (!String(`${p.name} ${p.fullName || ''}`).toLowerCase().includes(q)) continue;
+          const a = A(p.assetId);
+          if (seen.has(a)) continue; seen.add(a);
+          st2.found.push({ a, n: p.name, r: p.rating, cnt: c.players.filter((x) => A(x.assetId) === a).length });
+        }
+        st2.msg = st2.found.length ? '' : `„${q}“ nicht in deinem Verein gefunden.`;
+      } catch (e) { st2.msg = 'Fehler: ' + e.message; } finally { st2.busy = false; render(); }
+    }
     const listeners = [];
     const changed = () => listeners.forEach((f) => { try { f(); } catch (e) { /* */ } });
     function toggle(p) {
@@ -34,17 +56,36 @@
     function render() {
       if (!box) return;
       const L = settings.sbcLocked;
-      box.innerHTML = `<div class="fcpt-sgroup"><h4>⭐ Favoriten (${L.length})</h4>
-        <div class="note" style="font-size:12px;color:var(--ink2)">Diese Karten schlägt das Tool nie vor: nicht zum Verkaufen, Einstellen, Schnellverkauf, nicht für SBCs oder Diamanten-SBCs. Markieren mit ☆ in der Transferliste, bei neuen Items, im Verkaufs-Assistenten oder 🔒 im SBC-Solver.</div>
-        ${L.length ? `<div class="ni-list">${L.map((x) => `<div class="ni-r"><span class="ni-n"><b>${esc(x.rating ?? '')}</b> ${esc(x.name)}</span><button class="fcpt-smallbtn" data-favdel="${esc(x.id)}">Entfernen</button></div>`).join('')}</div>` : ''}
+      const PA = settings.protAssets;
+      box.innerHTML = `<div class="fcpt-sgroup"><h4>🔒 Geschützte Spieler (${PA.length + L.length})</h4>
+        <div class="note" style="font-size:12px;color:var(--ink2)">Geschützte Karten nimmt das Tool <b>nirgends</b>: nicht beim Verkaufen/Neu-Einstellen, nicht im Sortierer (Neue Items), kein Schnellverkauf, nicht im SBC-Solver, Diamanten-SBCs oder Verkaufs-Assistenten.</div>
+        <div class="pt-h">Ganze Spieler (alle Versionen)</div>
+        <div class="by-lst-add"><input type="text" data-pq placeholder="Spielername aus deinem Verein, z. B. Mbappé" value="${esc(st2.q)}"><button class="fcpt-smallbtn" data-pf ${st2.busy ? 'disabled' : ''}>🔍</button></div>
+        ${st2.msg ? `<div class="fcpt-stand">${esc(st2.msg)}</div>` : ''}
+        ${st2.found.length ? `<div class="ni-list">${st2.found.map((x, i) => `<div class="ni-r"><span class="ni-n"><b>${esc(x.r ?? '')}</b> ${esc(x.n)}<small>${x.cnt}× im Verein</small></span>${protAsset(x.a) ? '<span class="tg-no">🔒 geschützt</span>' : `<button class="fcpt-smallbtn go" data-padd="${i}">🔒 schützen</button>`}</div>`).join('')}</div>` : ''}
+        ${PA.length ? `<div class="ni-list">${PA.map((x) => `<div class="ni-r"><span class="ni-n">🔒 <b>${esc(x.r ?? '')}</b> ${esc(x.n)}<small>alle Versionen</small></span><button class="fcpt-smallbtn" data-pdel="${x.a}">Entfernen</button></div>`).join('')}</div>` : '<div class="pt-note">Noch kein ganzer Spieler geschützt.</div>'}
+        <div class="pt-h">Einzelne Karten (⭐ / 🔒 markiert)</div>
+        ${L.length ? `<div class="ni-list">${L.map((x) => `<div class="ni-r"><span class="ni-n"><b>${esc(x.rating ?? '')}</b> ${esc(x.name)}</span><button class="fcpt-smallbtn" data-favdel="${esc(x.id)}">Entfernen</button></div>`).join('')}</div>` : '<div class="pt-note">Einzelne Karten markierst du mit ☆ in Transferliste, Neue Items, Verkaufs-Assistent oder 🔒 im SBC-Solver.</div>'}
       </div>`;
+      const pq = box.querySelector('[data-pq]');
+      if (pq) {
+        ['keydown', 'keyup', 'keypress'].forEach((ev) => pq.addEventListener(ev, (e) => { e.stopPropagation(); if (ev === 'keydown' && e.key === 'Enter') findInClub(pq.value); }));
+      }
+      const pf = box.querySelector('[data-pf]'); if (pf) pf.addEventListener('click', (e) => { e.stopPropagation(); findInClub(pq && pq.value); });
+      box.querySelectorAll('[data-padd]').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation(); const x = st2.found[+b.dataset.padd]; if (!x || protAsset(x.a)) return;
+        settings.protAssets.push({ a: x.a, n: x.n, r: x.r }); saveSettings(); changed(); showToast(`🔒 ${x.n} geschützt – alle Versionen`); render();
+      }));
+      box.querySelectorAll('[data-pdel]').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation(); settings.protAssets = settings.protAssets.filter((x) => String(x.a) !== b.dataset.pdel); saveSettings(); changed(); render();
+      }));
       box.querySelectorAll('[data-favdel]').forEach((b) => b.addEventListener('click', (e) => {
         e.stopPropagation();
         settings.sbcLocked = settings.sbcLocked.filter((x) => String(x.id) !== b.dataset.favdel); saveSettings(); changed(); render();
       }));
     }
     function mount(el) { box = el; render(); }
-    return { has, toggle, btn, mount, onChange: (f) => listeners.push(f) };
+    return { has, protAsset, toggle, btn, mount, onChange: (f) => listeners.push(f) };
   })();
 
   // ==================================================================

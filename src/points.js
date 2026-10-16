@@ -108,7 +108,7 @@
         const d = detectTarget() || {};
         const minO = Math.max(settings.ptsMinOvr || 0, d.minOvr || 0);
         const maxO = d.maxOvr || 99;
-        let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id) && !act.has(p.id) && (settings.sbcSpecials || !p.special) && (p.rating || 0) >= minO && (p.rating || 0) <= maxO)
+        let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id) && !FAV.protAsset(p.assetId) && !act.has(p.id) && (settings.sbcSpecials || !p.special) && (p.rating || 0) >= minO && (p.rating || 0) <= maxO)
           .map((p) => { const sc = scoreOf(p); return { p, score: sc.v, live: sc.live, cost: Math.max(1, p.cost) }; })
           .filter((x) => x.score > 0);
         // große Vereine: nur die günstigsten pro Punkt behalten (Rechner bleibt schnell)

@@ -136,7 +136,7 @@
         const locked = new Set((settings.sbcLocked || []).map((x) => x.id));
         const L = [];
         for (const p of c.players) {
-          if (p.untradeable || p.loans > 0 || act.has(p.id)) continue;
+          if (p.untradeable || p.loans > 0 || act.has(p.id) || FAV.protAsset(p.assetId)) continue;
           const ent = c.ents.get(p.id);
           const resId = ent && (ent.resourceId || ent.definitionId);
           const fb = resId != null ? cacheGet(`futbin:${settings.platform}:${resId}`) : null;

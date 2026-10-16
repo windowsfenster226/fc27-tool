@@ -49,7 +49,7 @@
     // Vorschlag: teure handelbare Karten verkaufen, Duplikate ins SBC-Lager, sonst Verein
     function suggest(x) {
       if (!x.isPl) return 'club';
-      if (FAV.has(x.id)) return 'club';   // Favorit -> behalten
+      if (FAV.has(x.id, x.rid)) return 'club';   // geschützt -> behalten
       if (!x.untr && x.value && x.value >= settings.niSellMin) return 'tl';
       if (!x.untr && x.value && afterTax(x.value) < x.qs) return 'qs';
       if (x.dup) return pile('store') != null ? 'store' : (x.untr ? 'qs' : 'tl');
@@ -134,7 +134,7 @@
       if (!box) return;
       const L = st.items;
       const s = L ? sum() : null;
-      const opts = (x) => Object.keys(ACT).filter((k) => !(FAV.has(x.id) && (k === 'qs' || k === 'tl')) && (k !== 'qs' || canQS()) && (k !== 'store' || pile('store') != null) && (k !== 'tl' || !x.untr))
+      const opts = (x) => Object.keys(ACT).filter((k) => !(FAV.has(x.id, x.rid) && (k === 'qs' || k === 'tl')) && (k !== 'qs' || canQS()) && (k !== 'store' || pile('store') != null) && (k !== 'tl' || !x.untr))
         .map((k) => `<option value="${k}" ${st.choice[x.id] === k ? 'selected' : ''}>${ACT[k]}</option>`).join('');
       const rows = L ? L.map((x) => `<div class="ni-r">
           <span class="ni-n">${x.isPl ? FAV.btn({ id: x.id, name: x.name, rating: x.rating }) : ''}<b>${esc(x.rating ?? '')}</b> ${esc(x.name)}${x.untr ? ' <em>NH</em>' : ''}${x.dup ? ' <em class="d">Dup</em>' : ''}
@@ -186,7 +186,7 @@
 
     function mount(el) {
       box = el; render();
-      FAV.onChange(() => { if (st.items) { st.items.forEach((x) => { if (FAV.has(x.id)) st.choice[x.id] = 'club'; }); render(); } });
+      FAV.onChange(() => { if (st.items) { st.items.forEach((x) => { if (FAV.has(x.id, x.rid)) st.choice[x.id] = 'club'; }); render(); } });
     }
     const diag = () => ({ itemPileKeys: Object.keys(W.ItemPile || {}), move: !!(W.services && W.services.Item && W.services.Item.move), discard: canQS(), count: st.count });
     return { mount, peek, count: () => st.count, diag };

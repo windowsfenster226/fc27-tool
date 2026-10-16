@@ -353,15 +353,15 @@
     }
 
     // Konzept-Spieler einer Liga (EAs Katalog liefert pro Abfrage nur ~180 Karten, höchstes Rating zuerst)
-    async function conceptsByLeague(leagueId, setStatus) {
+    async function conceptsByLeague(leagueId, setStatus, opts) {
       const S = W.services;
       if (!S || !S.Item || typeof S.Item.searchConceptItems !== 'function') return [];
-      const all = await pagedSearch('searchConceptItems', S.Item, `Liga ${leagueId}`, setStatus || (() => {}), null, 4, { league: leagueId });
+      const all = await pagedSearch('searchConceptItems', S.Item, leagueId == null ? 'Katalog' : `Liga ${leagueId}`, setStatus || (() => {}), null, (opts && opts.pages) || 4, leagueId == null ? null : { league: leagueId });
       const out = [];
       for (const [ent] of all) {
         if (!ent) continue;
         const p = toPlayer(ent);
-        if (p && !p.special && p.rating != null) out.push(p);
+        if (p && (opts && opts.specials ? true : !p.special) && p.rating != null) out.push(p);
       }
       return out;
     }
@@ -732,7 +732,7 @@
 
     async function buildPool(c, statusFn, constraints) {
       const locked = lockedIds();
-      let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id));
+      let pool = c.players.filter((p) => !(p.loans > 0) && !locked.has(p.id) && !(typeof FAV !== 'undefined' && FAV.protAsset(p.assetId)));
       let protectedN = 0, activeWarn = false;
       if (settings.sbcProtectActive) {
         statusFn('Lese aktive Mannschaft …');

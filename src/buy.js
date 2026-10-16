@@ -888,7 +888,7 @@
     if (settings.syncOn === undefined) settings.syncOn = false;
     const SYNC = { busy: false, msg: '', at: 0, hash: null };
     const GIST_DESC = 'fc27-preis-tool-sync', GIST_FILE = 'fc27-sync.json';
-    const syncData = () => ({ snList: settings.snList || [], snipeTargets: settings.snipeTargets || [], listPresets: settings.listPresets || {}, rotExcl: settings.rotExcl || {} });
+    const syncData = () => ({ snList: settings.snList || [], snipeTargets: settings.snipeTargets || [], listPresets: settings.listPresets || {}, rotExcl: settings.rotExcl || {}, protAssets: settings.protAssets || [], sbcLocked: settings.sbcLocked || [] });
     const syncHash = () => JSON.stringify(syncData());
     function gh(method, url, body) {
       return new Promise((resolve, reject) => GM_xmlhttpRequest({
@@ -936,7 +936,7 @@
           await gh('PATCH', `/gists/${id}`, { files: { [GIST_FILE]: { content } } });
           saveSettings(); SYNC.hash = syncHash(); SYNC.msg = '🔀 Listen von beiden Geräten zusammengeführt'; render();
         } else if (remote && remote.t > localT && !localChanged) {
-          Object.assign(settings, { snList: remote.data.snList || [], snipeTargets: remote.data.snipeTargets || [], listPresets: remote.data.listPresets || {}, rotExcl: remote.data.rotExcl || {} });
+          Object.assign(settings, { snList: remote.data.snList || [], snipeTargets: remote.data.snipeTargets || [], listPresets: remote.data.listPresets || {}, rotExcl: remote.data.rotExcl || {}, protAssets: remote.data.protAssets || settings.protAssets || [], sbcLocked: remote.data.sbcLocked || settings.sbcLocked || [] });
           settings.syncT = remote.t; saveSettings(); SYNC.hash = syncHash();
           SYNC.msg = `⬇ Vom anderen Gerät übernommen (${new Date(remote.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })})`;
           render();
@@ -1265,5 +1265,5 @@
     }, true);
     function mount(el) { box = el; render(); }
     const diag = () => ({ hooked: TC.hooked, crit: !!TC.crit, keys: TC.keys, critVals: TC.crit ? Object.fromEntries(TC.keys.filter((k) => typeof TC.crit[k] !== 'object' && typeof TC.crit[k] !== 'function').slice(0, 30).map((k) => [k, TC.crit[k]])) : null, lastMs: st.lastMs, stats: st.stats });
-    return { mount, search, render, diag };
+    return { mount, search, render, diag, addList: (o) => { const ok = lstAdd(o); render(); return ok; } };
   })();
