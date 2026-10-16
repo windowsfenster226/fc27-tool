@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.53.0
+// @version      2.54.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -1422,7 +1422,7 @@ const SBC = (function () {
       name: (a, b) => String(a.name).localeCompare(String(b.name), 'de'),
     }[settings.sort] || ((a, b) => order(a) - order(b));
     const sorted = [...items].sort(cmp);
-    listEl.innerHTML = UIB.headHtml() + sorted.map(UIB.rowHtml).join('');
+    listEl.innerHTML = UIB.headHtml() + UIB.listHtml(sorted);
     sumEl.innerHTML = overviewHtml();
     updateStand();
     UIB.after();
@@ -7086,6 +7086,10 @@ const SBC = (function () {
       .tr.open>.tr-det{display:block}
       .tr-det .fcpt-card{border:1px solid var(--line);border-left-width:1px;background:var(--bg2);border-radius:12px}
       .tr-det .c-top{display:none}
+      .tr.grp>.tr-det.grp-det{padding:0 0 4px 16px;border-left:2px solid #2b3654;margin-left:14px}.grp-det .tr{border-bottom:1px solid #141b29}.grp-det .tr-row{padding-left:4px}
+      .tr .gc{display:inline-block;min-width:22px;margin-right:6px;padding:0 5px;border-radius:6px;background:#1b2336;color:var(--gold);font-size:11.5px;font-weight:700;text-align:center}
+      .tr-row .r small{font-size:10.5px;color:var(--ink3);margin-left:1px}
+      .fcpt-grpt{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);margin-left:8px;white-space:nowrap;cursor:pointer}
       .tr-det .c-stats{margin-top:0}
       .by-r.sel{outline:2px solid var(--blue);outline-offset:1px}
       #fcpt-panel kbd{display:inline-block;min-width:16px;padding:0 4px;margin-left:5px;border-radius:4px;border:1px solid currentColor;font:600 10px ui-monospace,monospace;opacity:.7;vertical-align:1px}
@@ -7524,9 +7528,62 @@ const SBC = (function () {
         <div class="tr-det">${cardHtml(p)}${LIST.fixHtml(p)}</div>
       </div>`;
     }
+    // Gleiche Spieler (gleiche Karte) in einer Leiste zusammenfassen – aufklappen zeigt die einzelnen Karten
+    if (settings.groupSame === undefined) settings.groupSame = true;
+    const grpKey = (p) => (p.sold ? null : `${p.isCons ? 'c' : 'p'}${p.resourceId}`);
+    function listHtml(sorted) {
+      if (!settings.groupSame) return sorted.map(rowHtml).join('');
+      const groups = new Map(), order = [];
+      for (const p of sorted) {
+        const k = grpKey(p) || `i${p.itemId}`;
+        if (!groups.has(k)) { groups.set(k, []); order.push(k); }
+        groups.get(k).push(p);
+      }
+      return order.map((k) => { const g = groups.get(k); return g.length === 1 ? rowHtml(g[0]) : groupHtml(k, g); }).join('');
+    }
+    function grpCells(g) {
+      const p = g[0];
+      const m = p.isPlayer ? marketPrice(p.resourceId) : CONS.price(p);
+      const pfs = g.map((x) => profitValue(x, m)).filter((v) => v != null);
+      const pf = pfs.length ? pfs.reduce((a, b) => a + b, 0) : null;
+      return {
+        mk: m ? fmt(m) : p.isPlayer ? '…' : '–',
+        pf: pf == null ? '<span class="fcpt-muted">–</span>' : `<span class="${profitCls(pf)}">${signed(pf)}</span>`,
+      };
+    }
+    function groupHtml(k, g) {
+      const p = g[0], key = `g:${k}`;
+      const bins = g.map((x) => x.buyNow).filter(Boolean);
+      const lo = bins.length ? Math.min(...bins) : null, hi = bins.length ? Math.max(...bins) : null;
+      const nAct = g.filter((x) => x.active).length, nExp = g.filter((x) => x.expired).length, nOpen = g.length - nAct - nExp;
+      const st = [nAct ? `${nAct} aktiv` : '', nExp ? `${nExp} abgel.` : '', nOpen ? `${nOpen} offen` : ''].filter(Boolean).join(' · ');
+      const lieg = g.some((x) => x.expired && expiredCount(x.itemId) >= 2);
+      const cls = nExp && !nAct ? 'expired' : nAct && !nExp ? 'active' : '';
+      const c = grpCells(g);
+      const fx = settings.listPresets && settings.listPresets[p.resourceId];
+      return `<div class="tr grp ${cls}${lieg ? ' lieg' : ''}${openRows.has(key) ? ' open' : ''}" data-row="${esc(key)}" data-rid="${p.resourceId}" data-grp="${esc(k)}">
+        <button class="tr-row" data-trow="${esc(key)}" aria-expanded="${openRows.has(key)}" title="${g.length} gleiche Karten – antippen zum Aufklappen">
+          <span class="num ovr">${p.isCons ? '🧪' : esc(p.rating ?? '')}</span>
+          <span class="nm"><span class="gc">${g.length}×</span>${esc(p.name)}<em class="st">${esc(st)}</em>${fx && nOpen + nExp ? `<em class="st fx">fest ${fmt(fx.bin)}</em>` : ''}</span>
+          <span class="num r" title="${lo != null && lo !== hi ? `${fmt(lo)} bis ${fmt(hi)}` : ''}">${lo == null ? '–' : lo === hi ? fmt(lo) : `<small>ab </small>${fmt(lo)}`}</span>
+          <span class="num r mk" data-mk>${c.mk}</span>
+          <span class="num r" data-pf>${c.pf}</span>
+        </button>
+        <div class="tr-det grp-det">${g.map(rowHtml).join('')}</div>
+      </div>`;
+    }
     const headHtml = () => '<div class="tr-h"><span>OVR</span><span>Spieler</span><span>Sofortk.</span><span>Markt</span><span>Profit</span></div>';
     function updateRow(rid) {
       panel.querySelectorAll(`.tr[data-rid="${rid}"]`).forEach((r) => {
+        if (r.dataset.grp) {
+          const g = items.filter((x) => grpKey(x) === r.dataset.grp);
+          if (!g.length) return;
+          const c = grpCells(g);
+          const mk = r.querySelector(':scope>.tr-row [data-mk]'), pf = r.querySelector(':scope>.tr-row [data-pf]');
+          if (mk) mk.textContent = c.mk;
+          if (pf) pf.innerHTML = c.pf;
+          return;
+        }
         const p = items.find((x) => String(x.itemId ?? x.resourceId) === r.dataset.row);
         if (!p) return;
         const c = rowCells(p);
@@ -7897,7 +7954,17 @@ const SBC = (function () {
       return { fixHtml, drawBar };
     })();
 
-    return { rowHtml, headHtml, updateRow, after: () => { after(); LIST.drawBar(); }, go, renderHome };
+    // Schalter neben „Sortieren“
+    try {
+      const sel = panel.querySelector('[data-set="sort"]');
+      if (sel && !panel.querySelector('[data-grpt]')) {
+        sel.insertAdjacentHTML('afterend', `<label class="fcpt-grpt" title="Gleiche Spieler in einer Leiste zusammenfassen"><input type="checkbox" data-grpt ${settings.groupSame ? 'checked' : ''}> Gleiche zusammen</label>`);
+        const cb = panel.querySelector('[data-grpt]');
+        cb.addEventListener('change', (e) => { e.stopPropagation(); settings.groupSame = cb.checked; saveSettings(); try { if (items.length) render(); } catch (er) { /* */ } });
+        cb.addEventListener('click', (e) => e.stopPropagation());
+      }
+    } catch (e) { /* */ }
+    return { rowHtml, listHtml, headHtml, updateRow, after: () => { after(); LIST.drawBar(); }, go, renderHome };
   })();
 
   function installHook() {

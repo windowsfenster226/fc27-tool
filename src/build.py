@@ -290,7 +290,7 @@ rep("""<div class="l">Wert der Liste (Markt)</div>""","""<div class="l">Listenwe
 rep("""<div class="l">Profit bei Verkauf zum Markt</div>""","""<div class="l">Möglicher Profit</div>""")
 rep("""    listEl.innerHTML = sorted.map(cardHtml).join('');
     sumEl.innerHTML = overviewHtml();
-    updateStand();""","""    listEl.innerHTML = UIB.headHtml() + sorted.map(UIB.rowHtml).join('');
+    updateStand();""","""    listEl.innerHTML = UIB.headHtml() + UIB.listHtml(sorted);
     sumEl.innerHTML = overviewHtml();
     updateStand();
     UIB.after();""")
