@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.55.1
+// @version      2.56.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -562,12 +562,28 @@ const SBC = (function () {
     mainSource: 'futbin',  // Quelle für die Spalte "Marktpreis"
     sources: { futbin: true, ea: true },
   };
-  const stored = GM_getValue(SETTINGS_KEY, {});
+  // Einstellungen doppelt sichern: Tampermonkey-Speicher + Browser-Speicher der Web App.
+  // Auf dem iPhone gehen Tampermonkey-Schreibvorgänge manchmal verloren, wenn Safari den Tab schließt/neu lädt.
+  const BK_KEY = 'fcpt_settings_bk';
+  let stored = GM_getValue(SETTINGS_KEY, {}) || {};
+  try {
+    const bk = JSON.parse(W.localStorage.getItem(BK_KEY) || 'null');
+    if (bk && typeof bk === 'object' && (bk._t || 0) > (stored._t || 0)) stored = bk;
+  } catch (e) { /* */ }
   const settings = Object.assign({}, DEFAULTS, stored);
   settings.mainSource = 'futbin';
   if (settings.sources.ea === undefined) settings.sources.ea = true;
   settings.sources = Object.assign({}, DEFAULTS.sources, stored.sources || {});
-  const saveSettings = () => GM_setValue(SETTINGS_KEY, settings);
+  const saveSettings = () => {
+    settings._t = Date.now();
+    try { GM_setValue(SETTINGS_KEY, settings); } catch (e) { /* */ }
+    try { W.localStorage.setItem(BK_KEY, JSON.stringify(settings)); } catch (e) { /* */ }
+  };
+  // beim Verlassen/Wechseln der App sicherheitshalber nochmal speichern
+  try {
+    W.addEventListener('pagehide', saveSettings);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSettings(); });
+  } catch (e) { /* */ }
 
   const log = (...a) => CONFIG.debug && console.log('[FC27-Tool]', ...a);
   if (settings.inline === undefined) settings.inline = true;
@@ -6644,8 +6660,9 @@ const SBC = (function () {
             <label title="Welche Version (Rating). Leer = jede Version dieses Spielers">⭐<input type="number" min="0" max="99" data-lr="${i}" value="${e.rating || ''}" placeholder="alle"></label>
             <label title="Höchstens so viel zahlst du für diesen Spieler">bis<input type="number" min="0" step="50" data-lm="${i}" value="${e.max || ''}" placeholder="Preis"></label>
             <button class="by-rx" data-ld="${i}" title="aus der Liste löschen">✕</button>${lstFbHtml(e, i)}</div>`).join('')}</div>
+          <div class="by-rot-tools"><button class="fcpt-smallbtn" data-lx="1" title="Liste als Code kopieren – z. B. vom PC aufs Handy übertragen">⤴ Liste exportieren</button></div>
           <div class="by-rot-tools"><button class="fcpt-smallbtn" data-lp="1">${LCHK.run ? `⏹ Stopp (${LCHK.done}/${LCHK.total})` : '💰 Futbin-Preise holen'}</button><span>„lohnt bis“ = Futbin-Preis − 5 % Steuer − ${fmt(settings.snipeMinProfit || 0)} Mindestgewinn</span></div>` : '<div class="by-keys">Noch leer – unten Spieler suchen und hinzufügen.</div>'}
-        <div class="by-lst-add"><input type="text" data-lq="1" placeholder="Spielername, z. B. Mbappé" value="${esc(LST.q)}"><button class="fcpt-smallbtn" data-lf="1" ${LST.busy ? 'disabled' : ''}>🔍</button><button class="fcpt-smallbtn" data-le="1" title="Spieler aus deiner letzten Suche in der Web App übernehmen">＋ aus EA-Suche</button></div>
+        <div class="by-lst-add"><input type="text" data-lq="1" placeholder="Spielername, z. B. Mbappé" value="${esc(LST.q)}"><button class="fcpt-smallbtn" data-lf="1" ${LST.busy ? 'disabled' : ''}>🔍</button><button class="fcpt-smallbtn" data-le="1" title="Spieler aus deiner letzten Suche in der Web App übernehmen">＋ aus EA-Suche</button><button class="fcpt-smallbtn" data-li="1" title="Liste von einem anderen Gerät übernehmen (Code einfügen)">⤵</button></div>
         ${LST.found.length ? `<div class="by-lst-found">${LST.found.map((o, i) => `<div class="pt-r"><span>${o.rating ? `<b>${o.rating}</b> ` : ''}${esc(o.name)}${o.price ? ` · ≈ ${fmt(o.price)}` : ''}</span><button class="fcpt-smallbtn" data-la="${i}">＋</button></div>`).join('')}</div>` : ''}
         <div class="by-keys">${act ? `🔄 ${act} Spieler aktiv – jeder Tipp prüft den nächsten mit seinem eigenen Max.-Preis${LST.cur ? ` · zuletzt: <b>${esc(LST.cur.name)}</b> bis ${fmt(LST.cur.max)}` : ''}` : 'Spieler ohne Preis werden nicht gesucht.'}</div></div>`;
     }
@@ -6793,6 +6810,34 @@ const SBC = (function () {
       const lf = box.querySelector('[data-lf]'); if (lf) lf.addEventListener('click', (e) => { e.stopPropagation(); doFind(); });
       const cm = box.querySelector('[data-cm]'); if (cm) cm.addEventListener('change', (e) => { e.stopPropagation(); settings.cacheMode = cm.value; BMP.bad = 0; saveSettings(); });
       const stx = box.querySelector('[data-stx]'); if (stx) stx.addEventListener('click', (e) => { e.stopPropagation(); settings.snStats = {}; saveSettings(); render(); });
+      const lx = box.querySelector('[data-lx]');
+      if (lx) lx.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const code = 'FCPT1:' + btoa(unescape(encodeURIComponent(JSON.stringify(settings.snList.map((x) => ({ a: x.asset, r: x.rid || 0, n: x.name, o: x.rating || 0, m: x.max || 0, f: x.off ? 1 : 0 }))))));
+        let ok = false;
+        try { await navigator.clipboard.writeText(code); ok = true; } catch (er) { /* */ }
+        if (ok) showToast(`📋 Liste (${settings.snList.length} Spieler) kopiert – auf dem anderen Gerät bei „⤵ importieren“ einfügen`);
+        else W.prompt('Diesen Code kopieren und auf dem anderen Gerät bei „importieren“ einfügen:', code);
+      });
+      const li = box.querySelector('[data-li]');
+      if (li) li.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const code = String(W.prompt('Code der Liste einfügen (beginnt mit FCPT1:):', '') || '').trim();
+        if (!code) return;
+        try {
+          if (!code.startsWith('FCPT1:')) throw new Error('kein gültiger Code');
+          const arr = JSON.parse(decodeURIComponent(escape(atob(code.slice(6)))));
+          let n = 0;
+          for (const x of arr) {
+            if (!x || !x.a) continue;
+            const ex = settings.snList.find((e2) => String(e2.asset) === String(x.a) && (e2.rating || 0) === (x.o || 0));
+            if (ex) { ex.max = x.m || ex.max; ex.rid = ex.rid || x.r || null; continue; }
+            settings.snList.push({ asset: x.a, rid: x.r || null, name: x.n || `#${x.a}`, rating: x.o || 0, max: x.m || 0, off: !!x.f, fb: null });
+            n++;
+          }
+          saveSettings(); showToast(`✓ ${n} Spieler importiert (${arr.length - n} schon vorhanden/aktualisiert)`); render();
+        } catch (er) { showToast('Import fehlgeschlagen: ' + er.message, true); }
+      });
       const lp = box.querySelector('[data-lp]'); if (lp) lp.addEventListener('click', (e) => { e.stopPropagation(); lstPriceCheck(); });
       box.querySelectorAll('[data-lu]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.lu]; if (en && en.fb) { en.max = lohntBis(en.fb); saveSettings(); render(); } }));
       const le = box.querySelector('[data-le]'); if (le) le.addEventListener('click', (e) => { e.stopPropagation(); lstFromEA(); render(); });

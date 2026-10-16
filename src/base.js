@@ -45,11 +45,27 @@
     mainSource: 'futbin',  // Quelle für die Spalte "Marktpreis"
     sources: { futbin: true },
   };
-  const stored = GM_getValue(SETTINGS_KEY, {});
+  // Einstellungen doppelt sichern: Tampermonkey-Speicher + Browser-Speicher der Web App.
+  // Auf dem iPhone gehen Tampermonkey-Schreibvorgänge manchmal verloren, wenn Safari den Tab schließt/neu lädt.
+  const BK_KEY = 'fcpt_settings_bk';
+  let stored = GM_getValue(SETTINGS_KEY, {}) || {};
+  try {
+    const bk = JSON.parse(W.localStorage.getItem(BK_KEY) || 'null');
+    if (bk && typeof bk === 'object' && (bk._t || 0) > (stored._t || 0)) stored = bk;
+  } catch (e) { /* */ }
   const settings = Object.assign({}, DEFAULTS, stored);
   settings.mainSource = 'futbin';
   settings.sources = Object.assign({}, DEFAULTS.sources, stored.sources || {});
-  const saveSettings = () => GM_setValue(SETTINGS_KEY, settings);
+  const saveSettings = () => {
+    settings._t = Date.now();
+    try { GM_setValue(SETTINGS_KEY, settings); } catch (e) { /* */ }
+    try { W.localStorage.setItem(BK_KEY, JSON.stringify(settings)); } catch (e) { /* */ }
+  };
+  // beim Verlassen/Wechseln der App sicherheitshalber nochmal speichern
+  try {
+    W.addEventListener('pagehide', saveSettings);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSettings(); });
+  } catch (e) { /* */ }
 
   const log = (...a) => CONFIG.debug && console.log('[FC27-Tool]', ...a);
   if (settings.inline === undefined) settings.inline = true;
