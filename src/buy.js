@@ -1085,6 +1085,15 @@
       let best = -1, bv = -Infinity;
       st.rows.forEach((r, i) => { if (!r.done && r.profBin != null && r.profBin > bv && r.profBin > 0) { bv = r.profBin; best = i; } });
       const coins = SBCUI.userCoins();
+      // Scroll-Positionen merken (sonst springen Listen beim Neuzeichnen nach oben)
+      const SCR = ['.by-lst-rows', '.by-lst-found', '.by-rot-list', '.by-list', '.by-colL', '.by-colR'];
+      const keep = { box: box.scrollTop, par: box.parentElement ? box.parentElement.scrollTop : 0 };
+      SCR.forEach((sel) => { const el = box.querySelector(sel); if (el) keep[sel] = el.scrollTop; });
+      const restore = () => {
+        box.scrollTop = keep.box; if (box.parentElement) box.parentElement.scrollTop = keep.par;
+        SCR.forEach((sel) => { const el = box.querySelector(sel); if (el && keep[sel]) el.scrollTop = keep[sel]; });
+      };
+      setTimeout(restore, 0);
       box.innerHTML = `<div class="by-colL">${rateHtml(coins)}
         ${simpleHtml()}
         <details class="by-adv"><summary>⚙ Erweitert</summary>
@@ -1134,6 +1143,7 @@
             return ar ? `<button class="by-go buy" data-by="search">KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}${kb('Leertaste')}</button>`
               : (() => { const w = paceLocked(); return `<button class="by-go ${w ? 'wait' : ''}" data-by="search" ${st.busy || w ? 'disabled' : ''}>${st.busy ? 'Sucht …' : w ? `⏳ Pause ${(w / 1000).toFixed(1).replace('.', ',')} s` : 'Suchen'}${kb('Leertaste')}</button>`; })();
           })()}${pc() ? `<div class="by-keys">${settings.snipeOneKey ? '<b>Nur Leertaste:</b> suchen – bei Treffer nochmal = kaufen · ' : ''}<kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen${settings.snipeArm ? ' (bester Deal: 1×)' : ' (2×)'} · <kbd>B</kbd> Bieten · <kbd>N</kbd> Nachbieten (<kbd>⇧N</kbd> bis Limit) · <kbd>Esc</kbd> Abbrechen</div>` : ''}</div>`;
+      restore();
       box.querySelectorAll('input[data-rf]').forEach((inp) => inp.addEventListener('change', (e) => {
         e.stopPropagation();
         const k = inp.dataset.rf; const v = Math.max(0, parseInt(inp.value, 10) || 0);
