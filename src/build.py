@@ -200,7 +200,8 @@ rep("""// @run-at       document-idle""","""// @run-at       document-idle
 
 # --- ntfy + Extras-CSS ---
 rep("""// @connect      www.futbin.com""","""// @connect      www.futbin.com
-// @connect      ntfy.sh""")
+// @connect      ntfy.sh
+// @connect      api.github.com""")
 rep("""    .fcpt-smallbtn{""","""    .tim{display:flex;flex-direction:column;gap:2px;border-radius:12px;padding:9px 12px;border:1px solid var(--line);background:var(--bg2);font-size:12.5px;color:var(--ink2)}
     .tim b{font-size:13.5px;color:var(--ink)}.tim.buy{border-color:rgba(34,197,94,.5);background:rgba(34,197,94,.08)}
     .tim.sell{border-color:rgba(239,68,68,.5);background:rgba(239,68,68,.08)}.tim.warn{border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.1)}

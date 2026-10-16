@@ -881,7 +881,90 @@
           <div class="by-rot-tools"><button class="fcpt-smallbtn" data-lp="1">${LCHK.run ? `⏹ Stopp (${LCHK.done}/${LCHK.total})` : '💰 Futbin-Preise holen'}</button><span>„lohnt bis“ = Futbin-Preis − 5 % Steuer − ${fmt(settings.snipeMinProfit || 0)} Mindestgewinn</span></div>` : '<div class="by-keys">Noch leer – unten Spieler suchen und hinzufügen.</div>'}
         <div class="by-lst-add"><input type="text" data-lq="1" placeholder="Spielername, z. B. Mbappé" value="${esc(LST.q)}"><button class="fcpt-smallbtn" data-lf="1" ${LST.busy ? 'disabled' : ''}>🔍</button><button class="fcpt-smallbtn" data-le="1" title="Spieler aus deiner letzten Suche in der Web App übernehmen">＋ aus EA-Suche</button><button class="fcpt-smallbtn" data-li="1" title="Liste von einem anderen Gerät übernehmen (Code einfügen)">⤵</button></div>
         ${LST.found.length ? `<div class="by-lst-found">${LST.found.map((o, i) => `<div class="pt-r"><span>${o.rating ? `<b>${o.rating}</b> ` : ''}${esc(o.name)}${o.price ? ` · ≈ ${fmt(o.price)}` : ''}</span><button class="fcpt-smallbtn" data-la="${i}">＋</button></div>`).join('')}</div>` : ''}
+        ${syncHtml()}
         <div class="by-keys">${act ? `🔄 ${act} Spieler aktiv – jeder Tipp prüft den nächsten mit seinem eigenen Max.-Preis${LST.cur ? ` · zuletzt: <b>${esc(LST.cur.name)}</b> bis ${fmt(LST.cur.max)}` : ''}` : 'Spieler ohne Preis werden nicht gesucht.'}</div></div>`;
+    }
+    // ---------- Sync PC ↔ Handy über einen privaten GitHub-Gist (nur Listen/Ziele/Festpreise) ----------
+    if (settings.syncOn === undefined) settings.syncOn = false;
+    const SYNC = { busy: false, msg: '', at: 0, hash: null };
+    const GIST_DESC = 'fc27-preis-tool-sync', GIST_FILE = 'fc27-sync.json';
+    const syncData = () => ({ snList: settings.snList || [], snipeTargets: settings.snipeTargets || [], listPresets: settings.listPresets || {}, rotExcl: settings.rotExcl || {} });
+    const syncHash = () => JSON.stringify(syncData());
+    function gh(method, url, body) {
+      return new Promise((resolve, reject) => GM_xmlhttpRequest({
+        method, url: 'https://api.github.com' + url, timeout: 15000,
+        headers: { Authorization: `Bearer ${settings.syncToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+        data: body ? JSON.stringify(body) : undefined,
+        onload: (r) => {
+          if (r.status >= 200 && r.status < 300) { try { resolve(JSON.parse(r.responseText || '{}')); } catch (e) { resolve({}); } return; }
+          reject(new Error(r.status === 401 ? 'Token ungültig oder abgelaufen' : r.status === 403 || r.status === 404 ? 'Token hat keine Gist-Berechtigung' : `GitHub-Fehler ${r.status}`));
+        },
+        onerror: () => reject(new Error('GitHub nicht erreichbar')), ontimeout: () => reject(new Error('GitHub antwortet nicht')),
+      }));
+    }
+    async function syncFindGist() {
+      if (settings.syncGist) return settings.syncGist;
+      const list = await gh('GET', '/gists?per_page=100');
+      const g = (list || []).find((x) => x.description === GIST_DESC && x.files && x.files[GIST_FILE]);
+      if (g) { settings.syncGist = g.id; saveSettings(); }
+      return settings.syncGist || null;
+    }
+    // Neuerer Stand gewinnt (ganzer Datensatz)
+    async function syncNow(why) {
+      if (!settings.syncOn || !settings.syncToken || SYNC.busy) return;
+      SYNC.busy = true;
+      try {
+        const id = await syncFindGist();
+        let remote = null;
+        if (id) {
+          const g = await gh('GET', `/gists/${id}`);
+          const f = g.files && g.files[GIST_FILE];
+          if (f && f.content) { try { remote = JSON.parse(f.content); } catch (e) { /* */ } }
+        }
+        const localT = settings.syncT || 0, h = syncHash();
+        const localChanged = SYNC.hash !== null && h !== SYNC.hash;
+        if (remote && !localT && (settings.snList || []).length) {
+          // erstes Mal auf diesem Gerät, hier gibt es schon eine Liste: zusammenführen statt überschreiben
+          const keyOf = (x) => `${x.asset}-${x.rating || 0}`;
+          const merged = (remote.data.snList || []).slice();
+          for (const x of settings.snList) if (!merged.some((y) => keyOf(y) === keyOf(x))) merged.push(x);
+          settings.snList = merged;
+          settings.snipeTargets = (remote.data.snipeTargets || []).concat((settings.snipeTargets || []).filter((x) => !(remote.data.snipeTargets || []).some((y) => y.id === x.id))).slice(-12);
+          settings.listPresets = Object.assign({}, remote.data.listPresets || {}, settings.listPresets || {});
+          settings.syncT = Date.now();
+          const content = JSON.stringify({ t: settings.syncT, data: syncData() });
+          await gh('PATCH', `/gists/${id}`, { files: { [GIST_FILE]: { content } } });
+          saveSettings(); SYNC.hash = syncHash(); SYNC.msg = '🔀 Listen von beiden Geräten zusammengeführt'; render();
+        } else if (remote && remote.t > localT && !localChanged) {
+          Object.assign(settings, { snList: remote.data.snList || [], snipeTargets: remote.data.snipeTargets || [], listPresets: remote.data.listPresets || {}, rotExcl: remote.data.rotExcl || {} });
+          settings.syncT = remote.t; saveSettings(); SYNC.hash = syncHash();
+          SYNC.msg = `⬇ Vom anderen Gerät übernommen (${new Date(remote.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })})`;
+          render();
+        } else if (!remote || localChanged || localT > (remote.t || 0)) {
+          if (localChanged || !localT) settings.syncT = Date.now();
+          const content = JSON.stringify({ t: settings.syncT, data: syncData() });
+          if (id) await gh('PATCH', `/gists/${id}`, { files: { [GIST_FILE]: { content } } });
+          else { const g = await gh('POST', '/gists', { description: GIST_DESC, public: false, files: { [GIST_FILE]: { content } } }); settings.syncGist = g.id; }
+          saveSettings(); SYNC.hash = syncHash();
+          SYNC.msg = `⬆ Gespeichert (${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })})`;
+        } else { SYNC.hash = h; SYNC.msg = `✓ Aktuell (${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })})`; }
+        SYNC.at = Date.now();
+      } catch (e) { SYNC.msg = '⚠ ' + e.message; } finally { SYNC.busy = false; if (box && settings.snMode === 'list') { const el = box.querySelector('[data-syst]'); if (el) el.textContent = SYNC.msg; } }
+    }
+    // Änderungen erkennen (alle 4 s) und hochladen; beim Start, Zurückkehren in den Tab und alle 2 Min. abgleichen
+    setInterval(() => {
+      if (!settings.syncOn || !settings.syncToken || SYNC.busy || document.visibilityState !== 'visible') return;
+      if (SYNC.hash !== null && syncHash() !== SYNC.hash) { syncNow('change'); return; }
+      if (Date.now() - SYNC.at > 120000) syncNow('poll');
+    }, 4000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(() => syncNow('visible'), 800); });
+    setTimeout(() => syncNow('start'), 2500);
+    function syncHtml() {
+      return `<details class="by-st by-sync"${SYNC.open ? ' open' : ''}><summary>🔄 Sync PC ↔ Handy ${settings.syncOn && settings.syncToken ? '<b class="pos">an</b>' : '(aus)'}</summary>
+        <div class="by-keys">Hält „Meine Liste“, Snipe-Ziele und Festpreise auf allen Geräten gleich – über einen <b>privaten Gist</b> in deinem GitHub-Konto. Auf jedem Gerät einmal denselben Token eintragen.</div>
+        <div class="by-lst-add"><input type="password" data-syt="1" placeholder="GitHub-Token (nur Recht „gist“)" value="${settings.syncToken ? '••••••••' : ''}" autocomplete="off"><button class="fcpt-smallbtn" data-sys="1">${settings.syncOn ? 'Jetzt abgleichen' : 'Sync einschalten'}</button>${settings.syncOn ? '<button class="fcpt-smallbtn" data-syx="1">Aus</button>' : ''}</div>
+        <div class="by-keys" data-syst="1">${esc(SYNC.msg || '')}</div>
+        <div class="by-keys">Token erstellen: github.com → Settings → Developer settings → Personal access tokens → Tokens (classic) → „Generate new token“ → nur Haken bei <b>gist</b>.</div></details>`;
     }
     function leaveList() { if (TC.crit && TC.crit === LST.crit) { TC.crit = LST.prev; TC.own = !LST.prev; LST.cur = null; } }
     // kurze Beschreibung der übernommenen EA-Suche
@@ -1055,6 +1138,22 @@
           saveSettings(); showToast(`✓ ${n} Spieler importiert (${arr.length - n} schon vorhanden/aktualisiert)`); render();
         } catch (er) { showToast('Import fehlgeschlagen: ' + er.message, true); }
       });
+      const sys = box.querySelector('[data-sys]');
+      if (sys) sys.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const t = box.querySelector('[data-syt]');
+        const v = t ? String(t.value || '').trim() : '';
+        if (v && !/^•+$/.test(v)) { settings.syncToken = v; settings.syncGist = null; }
+        if (!settings.syncToken) { SYNC.msg = 'Bitte zuerst den GitHub-Token eintragen.'; render(); return; }
+        settings.syncOn = true; saveSettings(); SYNC.msg = 'Gleiche ab …'; render();
+        SYNC.open = true;
+        syncNow('manual').then(() => render());
+      });
+      const syd = box.querySelector('.by-sync'); if (syd) syd.addEventListener('toggle', () => { SYNC.open = syd.open; });
+      const syx = box.querySelector('[data-syx]');
+      if (syx) syx.addEventListener('click', (e) => { e.stopPropagation(); settings.syncOn = false; saveSettings(); SYNC.msg = 'Sync aus.'; render(); });
+      const syt = box.querySelector('[data-syt]');
+      if (syt) { ['keydown', 'keyup', 'keypress'].forEach((ev) => syt.addEventListener(ev, (e) => e.stopPropagation())); }
       const lp = box.querySelector('[data-lp]'); if (lp) lp.addEventListener('click', (e) => { e.stopPropagation(); lstPriceCheck(); });
       box.querySelectorAll('[data-lu]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.lu]; if (en && en.fb) { en.max = lohntBis(en.fb); saveSettings(); render(); } }));
       const le = box.querySelector('[data-le]'); if (le) le.addEventListener('click', (e) => { e.stopPropagation(); lstFromEA(); render(); });
