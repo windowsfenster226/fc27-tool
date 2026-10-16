@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.54.0
+// @version      2.55.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -6239,22 +6239,50 @@ const SBC = (function () {
       return { raw, p, bin, cur, nb, lead: String(a.bidState || '').toLowerCase() === 'highest', exp: a.expires, endAt: Date.now() + (toNum(a.expires) || 0) * 1000, tid: a.tradeId, market, maxBid, profBin: market ? afterTax(market) - bin : null, profBid: market ? afterTax(market) - nb : null, done: null, busy: false };
     }
 
+    // ---------- Tempo (gegen EA-Sperren) ----------
+    if (settings.snPace === undefined) settings.snPace = 'normal';
+    const PACE = {
+      safe: { gap: 4000, jit: 1500, buy: 6000, pass: 1500, label: '🐢 Sicher', note: 'ca. 11–15 Suchen/Min, Pause nach Kauf 6 s – für lange Sessions' },
+      normal: { gap: 2800, jit: 1000, buy: 4000, pass: 1000, label: '⚖ Normal', note: 'ca. 16–20 Suchen/Min, Pause nach Kauf 4 s' },
+      fast: { gap: 1500, jit: 700, buy: 2500, pass: 500, label: '⚡ Schnell', note: 'ca. 27–40 Suchen/Min – nur kurz nutzen, hohes Sperr-Risiko' },
+    };
+    const nextGap = () => { const P = PACE[settings.snPace] || PACE.normal; return P.gap + Math.random() * P.jit; };
+    function paceWait() {
+      const P = PACE[settings.snPace] || PACE.normal;
+      const now = Date.now();
+      let w = (st.lastSearch || 0) + (st.gap || 0) - now;
+      if (st.lastBuyAt) w = Math.max(w, st.lastBuyAt + P.buy - now);
+      // nach EA-Warnung (gelb) automatisch etwas ruhiger
+      try { if (rate().lvl === 'warn') w = Math.max(w, (st.lastSearch || 0) + P.gap * 1.6 - now); } catch (e) { /* */ }
+      return Math.max(0, Math.round(w));
+    }
     async function search() {
       if (st.busy) return;
       if (Date.now() - st.lastSearch < 600) return;   // Doppeltipp abfangen
+      // Tempo-Bremse: Mindestabstand (mit leichter Zufallsstreuung) zwischen zwei Suchen und nach einem Kauf.
+      // Ein zu früher Tastendruck wird NICHT verworfen, sondern genau einmal zum frühesten erlaubten Zeitpunkt ausgeführt.
+      const wait = paceWait();
+      if (wait > 0) {
+        if (!st.pending) {
+          st.pendingAt = Date.now() + wait;
+          st.pending = setTimeout(() => { st.pending = null; st.pendingAt = 0; search(); }, wait);
+        }
+        st.msg = `⏳ Tempo-Bremse: nächste Suche in ${(Math.max(0, st.pendingAt - Date.now()) / 1000).toFixed(1).replace('.', ',')} s`; render();
+        return;
+      }
       if (typeof GUARD !== 'undefined' && GUARD.blocked()) { st.msg = `🛑 ${GUARD.level().text} – Pause empfohlen. Nochmal tippen = trotzdem suchen.`; render(); return; }
       if (findConfirmButton()) { st.msg = 'In der Web App ist noch ein Kauf-Dialog offen – dort erst bestätigen oder abbrechen.'; render(); return; }
       st.busy = true; st.msg = 'Suche …'; st.arm = null; render();
-      const t0 = Date.now(); st.lastSearch = t0;
+      const t0 = Date.now(); st.lastSearch = t0; st.gap = nextGap();
       try {
         const why = applySimple();
         if (why) { st.msg = why; return; }
         if (rotOn() && (!ROT.list.length || ROT.key !== `${settings.rfMin}-${settings.rfMax || 99}`)) { st.busy = false; await loadRotation(); return; }
         if (settings.snipeTurbo && TC.crit && W.services.Item.bid) {
-          const multi = settings.snDouble && ((settings.snMode === 'list' && lstActive().length > 1) || (rotOn() && rotActive().length > 1));
+          const multi = settings.snDouble && settings.snPace !== 'safe' && ((settings.snMode === 'list' && lstActive().length > 1) || (rotOn() && rotActive().length > 1));
           let offers = [], passNames = [];
           for (let pass = 0; pass < (multi ? 2 : 1); pass++) {
-            if (pass) { await sleep(120 + Math.random() * 180); if (settings.snMode === 'list') applySimple(); }
+            if (pass) { await sleep(PACE[settings.snPace || 'normal'].pass + Math.random() * 400); if (settings.snMode === 'list') applySimple(); }
             st.stats.n++;
             offers = await directSearch();
             st.t = Date.now(); st.stats.ms += st.lastMs;
@@ -6342,6 +6370,7 @@ const SBC = (function () {
       if ((SBCUI.userCoins() ?? Infinity) < amount) { r.done = { bad: true, t: 'nicht genug Münzen' }; render(); return; }
       r.busy = true;
       const tb = performance.now();
+      if (kind === 'buy') st.lastBuyAt = Date.now();
       const pr = obs(S.bid(r.raw, amount));   // Anfrage sofort raus, erst danach zeichnen
       render();
       try {
@@ -6422,7 +6451,7 @@ const SBC = (function () {
       const fl = st.flash && Date.now() < st.flash.until ? st.flash : null;
       b.className = fl ? (fl.ok ? 'ok' : 'fail') : ar ? 'buy' : st.busy ? 'busy' : '';
       if (coolLeft() && !fl) { b.className = 'fail'; b.innerHTML = `⛔ ${coolLeft()} s`; fb.querySelector('.sb-st').textContent = `EA-Code ${st.coolCode} – Pause`; return; }
-      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? (st.arm.startsWith('bid:') ? `BIETEN ${fmt(ar.nb)}` : `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}`) : st.busy ? 'Sucht …' : `⚡ ${rfOn() ? `${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}` : settings.snMode === 'list' ? 'Liste' : 'Snipe'}${bidMode() ? ' 🔨' : ''}${(settings.snipeInstant || rfOn()) && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
+      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? (st.arm.startsWith('bid:') ? `BIETEN ${fmt(ar.nb)}` : `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}`) : st.busy ? 'Sucht …' : st.pending ? `⏳ ${(Math.max(0, st.pendingAt - Date.now()) / 1000).toFixed(1).replace('.', ',')} s` : `⚡ ${rfOn() ? `${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}` : settings.snMode === 'list' ? 'Liste' : 'Snipe'}${bidMode() ? ' 🔨' : ''}${(settings.snipeInstant || rfOn()) && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
       const rr = rate();
       if (rr.lvl === 'red' && !ar && !fl) { fb.querySelector('.sb-st').textContent = `🔴 Pause · ${rr.m}/${rr.lim} pro Min${rr.wait ? ` · grün in ${rr.wait} s` : ''}`; return; }
@@ -6615,15 +6644,17 @@ const SBC = (function () {
       const rot = settings.snMode === 'rating', lst = settings.snMode === 'list';
       const seg = `<div class="by-seg"><button data-sm="ea" class="${!rot && !lst ? 'on' : ''}" title="Genau deine Suche aus der Web App – ein Spieler oder Filter wie Gold + Liga">🔎 Meine Suche</button><button data-sm="rating" class="${rot ? 'on' : ''}">⭐ Rating</button><button data-sm="list" class="${lst ? 'on' : ''}">📋 Liste</button></div>`;
       const bd = bidMode();
+      const P0 = PACE[settings.snPace] || PACE.normal;
+      const pace = `<div class="by-kind by-pace" title="${esc(P0.note)}">${Object.entries(PACE).map(([k, v]) => `<button data-pace="${k}" class="${(settings.snPace || 'normal') === k ? 'on' : ''}">${v.label}</button>`).join('')}</div><div class="by-keys">Tempo: ${esc(P0.note)}${settings.snPace === 'safe' && settings.snDouble ? ' · „2 Spieler pro Druck“ ist im sicheren Tempo aus' : ''}</div>`;
       const kind = `<div class="by-kind"><button data-sk="bin" class="${bd ? '' : 'on'}">⚡ Sofortkauf</button><button data-sk="bid" class="${bd ? 'on' : ''}">🔨 Auktion bieten</button></div>`;
       const instOrEnd = bd ? `<label class="inl" title="Nur Auktionen, die bald enden">endet in max.<input type="number" min="1" max="60" data-sn="bdMaxMin" value="${settings.bdMaxMin}"> Min.</label>`
         : `<label class="ck"><input type="checkbox" data-bo="inst" ${settings.snipeInstant ? 'checked' : ''}> Sofort kaufen</label>`;
       const bdNote = bd ? `<div class="by-keys">🔨 Sucht Auktionen, deren nächstes Gebot unter deinem ${lst ? 'Preis pro Spieler' : 'Max. Gebot'} liegt – die bald endende steht oben. Leertaste = suchen, bei Treffer nochmal = bieten. Wirst du überboten, meldet sich das Tool.</div>` : '';
-      if (lst) return `<div class="by-simple">${seg}${kind}<div class="by-sin">${instOrEnd}</div>${bdNote}${lstHtml()}</div>`;
+      if (lst) return `<div class="by-simple">${seg}${kind}${pace}<div class="by-sin">${instOrEnd}</div>${bdNote}${lstHtml()}</div>`;
       const ready = rot ? (ROT.list.length && ROT.key === `${settings.rfMin}-${settings.rfMax || 99}` ? `🔄 ${rotActive().length} Spieler mit Rating ${settings.snRating}${settings.snRatingUp ? '+' : ''} – jeder Tipp prüft einen gezielt${ROT.cur ? ` · zuletzt: ${esc(ROT.cur.name)}` : ''}` : 'Beim ersten Tipp lädt das Tool alle passenden Spieler (einmalig 1–2 Min.).')
         : (TC.crit && !TC.own ? `Deine Suche aus der Web App: ${esc(critSummary())}` : 'Stell in der Web App deine Suche ein (Spieler oder nur Filter wie Gold + Liga) und drück dort einmal „Suchen“ – dann hier nur noch Leertaste/Knopf.');
       return `<div class="by-simple">
-        ${seg}${kind}
+        ${seg}${kind}${pace}
         <div class="by-sin">
           ${rot ? `<label>Rating<input type="number" min="45" max="99" data-sn="snRating" value="${settings.snRating}"></label><label class="ck"><input type="checkbox" data-sn="snRatingUp" ${settings.snRatingUp ? 'checked' : ''}> und höher</label>` : ''}
           <label>${bd ? 'Max. Gebot' : 'Max. Preis'}<input type="number" min="0" step="50" data-sn="snMax" value="${settings.snMax || ''}" placeholder="${critMaxBuy() ? fmt(critMaxBuy()) : bd && st.bidLimit ? fmt(st.bidLimit) : 'z. B. 12000'}"></label>
@@ -6760,6 +6791,7 @@ const SBC = (function () {
       box.querySelectorAll('[data-lo]').forEach((c) => c.addEventListener('change', (e) => { e.stopPropagation(); const en = settings.snList[+c.dataset.lo]; if (en) { en.off = !c.checked; saveSettings(); setTimeout(render, 0); } }));
       box.querySelectorAll('[data-ld]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const en = settings.snList[+b2.dataset.ld]; settings.snList.splice(+b2.dataset.ld, 1); if (LST.cur === en) LST.cur = null; saveSettings(); render(); }));
       box.querySelectorAll('[data-ob]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); const k = b2.dataset.ob, t = b2.dataset.obt; if (k === 'x') TARGETS.dismiss(t); else TARGETS.rebid(t, k); render(); }));
+      box.querySelectorAll('[data-pace]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snPace = b2.dataset.pace; saveSettings(); render(); }));
       box.querySelectorAll('[data-sk]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snKind = b2.dataset.sk; st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
       box.querySelectorAll('[data-sm]').forEach((b2) => b2.addEventListener('click', (e) => { e.stopPropagation(); settings.snMode = b2.dataset.sm; if (settings.snMode !== 'rating') { settings.rfMin = 0; settings.rfMax = 0; rotRestore(); } if (settings.snMode !== 'list') leaveList(); st.rows = []; st.arm = null; st.msg = ''; saveSettings(); render(); }));
       box.querySelectorAll('[data-sn]').forEach((inp) => inp.addEventListener('change', (e) => {
