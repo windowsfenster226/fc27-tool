@@ -199,6 +199,7 @@
       .by-note,.by-empty{font-size:12px;color:var(--ink2);line-height:1.45}.by-empty{padding:18px 4px;text-align:center;font-size:14px}
       .by-bar{position:sticky;bottom:0;margin:auto -14px 0;padding:10px 14px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,#0b0f18 30%);display:flex;flex-direction:column;align-items:center;gap:8px}
       .by-msg{font-size:13px;color:var(--ink);background:#151c2e;border:1px solid #263049;border-radius:12px;padding:8px 12px;text-align:center}
+      .by-go.wait,.by-go:disabled.wait{background:#2b3140;color:#9aa4b6;cursor:not-allowed}
       .by-go{width:100%;height:60px;border-radius:18px;border:0;background:var(--gold);color:#15120a;font:800 19px system-ui,sans-serif;cursor:pointer}
       .by-go:disabled{opacity:.6}
       .by-go.buy{background:#f97316;color:#fff;animation:fcptArm 1s infinite}.by-go.buy small{font-size:14px;opacity:.9}

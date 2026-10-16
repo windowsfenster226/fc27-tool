@@ -489,12 +489,33 @@
       try { if (rate().lvl === 'warn') w = Math.max(w, (st.lastSearch || 0) + P.gap * 1.6 - now); } catch (e) { /* */ }
       return Math.max(0, Math.round(w));
     }
+    // Sicher/Normal: verbleibende Pause, in der der Such-Knopf gesperrt ist (0 = frei)
+    function paceLocked() { return settings.snPace !== 'fast' && !st.busy && !(st.arm && st.armMs > 4000) ? paceWait() : 0; }
+    let paceWasLocked = false;
+    setInterval(() => {
+      const w = paceLocked();
+      if (!w && !paceWasLocked) return;
+      paceWasLocked = !!w;
+      if (box) {
+        const g = box.querySelector('.by-go[data-by="search"]');
+        if (g && !g.classList.contains('buy')) {
+          g.disabled = !!w || st.busy; g.classList.toggle('wait', !!w);
+          g.innerHTML = `${st.busy ? 'Sucht …' : w ? `⏳ Pause ${(w / 1000).toFixed(1).replace('.', ',')} s` : 'Suchen'}${kb('Leertaste')}`;
+        }
+        if (!w && /^⏳ Pause/.test(st.msg || '')) { st.msg = ''; const m = box.querySelector('.by-msg'); if (m) m.remove(); }
+      }
+      updateFloat();
+    }, 200);
     async function search() {
       if (st.busy) return;
       if (Date.now() - st.lastSearch < 600) return;   // Doppeltipp abfangen
       // Tempo-Bremse: Mindestabstand (mit leichter Zufallsstreuung) zwischen zwei Suchen und nach einem Kauf.
       // Ein zu früher Tastendruck wird NICHT verworfen, sondern genau einmal zum frühesten erlaubten Zeitpunkt ausgeführt.
       const wait = paceWait();
+      if (wait > 0 && settings.snPace !== 'fast') {   // Sicher/Normal: Knopf ist während der Pause gesperrt – Tastendruck wird ignoriert
+        st.msg = `⏳ Pause – Suchen in ${(wait / 1000).toFixed(1).replace('.', ',')} s wieder frei`; render();
+        return;
+      }
       if (wait > 0) {
         if (!st.pending) {
           st.pendingAt = Date.now() + wait;
@@ -657,6 +678,7 @@
       #fcpt-snipebtn button small{font-size:12px;font-weight:700;opacity:.9}
       #fcpt-snipebtn .sb-grip{position:absolute;left:-14px;top:50%;width:12px;height:28px;margin-top:-14px;border-radius:6px;background:rgba(11,15,23,.7);color:#a3aec2;font:700 10px/28px system-ui;text-align:center;touch-action:none}
       #fcpt-snipebtn button.buy{background:#f97316;color:#fff;animation:fcptArm 1s infinite}
+      #fcpt-snipebtn button.wait{background:#3a3f4d;color:#c7cedb;cursor:not-allowed}
       #fcpt-snipebtn button.busy{opacity:.75}
       #fcpt-snipebtn button.ok{background:#16a34a;color:#fff}
       #fcpt-snipebtn button.fail{background:#dc2626;color:#fff;animation:fcptShake .35s}
@@ -682,9 +704,10 @@
       if (ob) rb.textContent = ob.worth ? `🔔 Überboten: ${ob.p.name} – nachbieten ${fmt(ob.nb)}` : `🔔 ${ob.p.name}: über Limit (✕)`;
       const ar = armedRow();
       const fl = st.flash && Date.now() < st.flash.until ? st.flash : null;
-      b.className = fl ? (fl.ok ? 'ok' : 'fail') : ar ? 'buy' : st.busy ? 'busy' : '';
+      b.className = fl ? (fl.ok ? 'ok' : 'fail') : ar ? 'buy' : st.busy ? 'busy' : paceLocked() ? 'wait' : '';
+      b.disabled = !fl && !ar && !!paceLocked();
       if (coolLeft() && !fl) { b.className = 'fail'; b.innerHTML = `⛔ ${coolLeft()} s`; fb.querySelector('.sb-st').textContent = `EA-Code ${st.coolCode} – Pause`; return; }
-      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? (st.arm.startsWith('bid:') ? `BIETEN ${fmt(ar.nb)}` : `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}`) : st.busy ? 'Sucht …' : st.pending ? `⏳ ${(Math.max(0, st.pendingAt - Date.now()) / 1000).toFixed(1).replace('.', ',')} s` : `⚡ ${rfOn() ? `${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}` : settings.snMode === 'list' ? 'Liste' : 'Snipe'}${bidMode() ? ' 🔨' : ''}${(settings.snipeInstant || rfOn()) && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
+      b.innerHTML = fl ? `${esc(fl.text)}${fl.sub ? ` <small>· ${esc(fl.sub)}</small>` : ''}` : ar ? (st.arm.startsWith('bid:') ? `BIETEN ${fmt(ar.nb)}` : `KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}`) : st.busy ? 'Sucht …' : paceLocked() ? `⏳ ${(paceLocked() / 1000).toFixed(1).replace('.', ',')} s` : st.pending ? `⏳ ${(Math.max(0, st.pendingAt - Date.now()) / 1000).toFixed(1).replace('.', ',')} s` : `⚡ ${rfOn() ? `${settings.rfMin}${settings.rfMax ? `–${settings.rfMax}` : '+'}` : settings.snMode === 'list' ? 'Liste' : 'Snipe'}${bidMode() ? ' 🔨' : ''}${(settings.snipeInstant || rfOn()) && critMaxBuy() ? ` <small>≤ ${fmt(critMaxBuy())}</small>` : ''}`;
       const done = st.rows.find((r) => r.done);
       const rr = rate();
       if (rr.lvl === 'red' && !ar && !fl) { fb.querySelector('.sb-st').textContent = `🔴 Pause · ${rr.m}/${rr.lim} pro Min${rr.wait ? ` · grün in ${rr.wait} s` : ''}`; return; }
@@ -963,7 +986,7 @@
             const ar = settings.snipeOneKey && st.arm && /^(buy|bid):/.test(st.arm) && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null;
             if (ar && st.arm.startsWith('bid:')) return `<button class="by-go buy" data-by="search">BIETEN ${fmt(ar.nb)}${ar.profBid != null ? ` <small>(${sign(ar.profBid)})</small>` : ''}${kb('Leertaste')}</button>`;
             return ar ? `<button class="by-go buy" data-by="search">KAUFEN ${fmt(ar.bin)}${ar.profBin != null ? ` <small>(${sign(ar.profBin)})</small>` : ''}${kb('Leertaste')}</button>`
-              : `<button class="by-go" data-by="search" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Sucht …' : 'Suchen'}${kb('Leertaste')}</button>`;
+              : (() => { const w = paceLocked(); return `<button class="by-go ${w ? 'wait' : ''}" data-by="search" ${st.busy || w ? 'disabled' : ''}>${st.busy ? 'Sucht …' : w ? `⏳ Pause ${(w / 1000).toFixed(1).replace('.', ',')} s` : 'Suchen'}${kb('Leertaste')}</button>`; })();
           })()}${pc() ? `<div class="by-keys">${settings.snipeOneKey ? '<b>Nur Leertaste:</b> suchen – bei Treffer nochmal = kaufen · ' : ''}<kbd>↑</kbd><kbd>↓</kbd> Angebot wählen · <kbd>K</kbd> Kaufen${settings.snipeArm ? ' (bester Deal: 1×)' : ' (2×)'} · <kbd>B</kbd> Bieten · <kbd>N</kbd> Nachbieten (<kbd>⇧N</kbd> bis Limit) · <kbd>Esc</kbd> Abbrechen</div>` : ''}</div>`;
       box.querySelectorAll('input[data-rf]').forEach((inp) => inp.addEventListener('change', (e) => {
         e.stopPropagation();
