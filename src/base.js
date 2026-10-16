@@ -61,6 +61,17 @@
     try { GM_setValue(SETTINGS_KEY, settings); } catch (e) { /* */ }
     try { W.localStorage.setItem(BK_KEY, JSON.stringify(settings)); } catch (e) { /* */ }
   };
+  // Tagesstatistik (Suchen, Käufe, ausgegeben) für die Übersicht – 100 Tage
+  if (!settings.dayLog || typeof settings.dayLog !== 'object') settings.dayLog = {};
+  const dayKey = (t = Date.now()) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function dayLog(k, v = 1) {
+    const key = dayKey();
+    const e = settings.dayLog[key] || (settings.dayLog[key] = { s: 0, b: 0, sp: 0 });
+    e[k] = (e[k] || 0) + v;
+    const ks = Object.keys(settings.dayLog).sort();
+    while (ks.length > 100) delete settings.dayLog[ks.shift()];
+    clearTimeout(dayLog.t); dayLog.t = setTimeout(saveSettings, 1500);
+  }
   // beim Verlassen/Wechseln der App sicherheitshalber nochmal speichern
   try {
     W.addEventListener('pagehide', saveSettings);

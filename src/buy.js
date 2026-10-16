@@ -45,7 +45,7 @@
     function result(r, ok, why) {
       st.log.unshift({ t: Date.now(), name: `${r.p.rating ?? ''} ${r.p.name}`.trim(), price: r.bin, ok, why });
       st.log = st.log.slice(0, 12);
-      if (ok) st.stats.buys++; else st.stats.miss++;
+      if (ok) { st.stats.buys++; dayLog('b'); dayLog('sp', r.bin || 0); } else st.stats.miss++;
       { const key = st.lastKey || { k: `${r.p.resourceId}-0`, name: null };
         stat({ k: key.k, name: key.name || `${r.p.rating ?? ''} ${r.p.name}`.trim() }, (e) => { if (ok) { e.buy++; e.spent += r.bin || 0; } else e.miss++; }); saveSettings(); }
       const short = String(why || '').replace(/ – .*/, '').slice(0, 28);
@@ -274,6 +274,7 @@
         ${r.block ? `<div class="by-rate-w">⛔ ${esc(r.block)} – 5–10 Min. nichts suchen</div>` : r.lvl !== 'ok' && r.wait ? `<div class="by-rate-w">In ${r.wait} Sek. wieder im grünen Bereich${r.lvl === 'red' ? ' – bis dahin Pause' : ''}</div>` : ''}</div>`;
     }
     function noteSearch() {
+      dayLog('s');
       st.hist.push(Date.now());
       const r = rate();
       if (r.lvl !== 'ok' && r.lvl !== rateLvl && Date.now() - rateWarnT > 30000 && r.own >= r.gMin) {

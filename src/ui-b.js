@@ -210,6 +210,28 @@
       #fcpt-panel.v-home .fcpt-list,#fcpt-panel.v-home .fcpt-trade,#fcpt-panel.v-home .fcpt-settings,#fcpt-panel.v-home .fcpt-sum,#fcpt-panel.v-home .fcpt-toolbar{display:none !important}
       #fcpt-panel.v-trade .fcpt-subtabs{display:none}
       #fcpt-panel[data-sub="verein"] .fcpt-subpane[data-pane="futter"]{display:block !important}
+.d-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+      .d-t{position:relative;background:linear-gradient(180deg,#1a1f2c,#12161f);border:1px solid #262d3d;border-radius:12px;padding:10px 12px 12px;display:flex;flex-direction:column;align-items:center;gap:2px;overflow:hidden;cursor:default}
+      .d-t[data-dgo]{cursor:pointer}.d-t[data-dgo]:hover{border-color:#3a4562}
+      .d-t::before{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:var(--dc,#f2c14e)}
+      .d-t .l{align-self:stretch;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c9a24a;border-bottom:1px solid #262d3d;padding-bottom:6px;margin-bottom:4px}
+      .d-t .v{font-size:26px;font-weight:800;color:var(--dc,#f2c14e);line-height:1.15}.d-t .s{font-size:11px;color:var(--ink3);text-align:center}
+      .d-t.gold{--dc:#f2c14e}.d-t.pink{--dc:#f472b6}.d-t.violet{--dc:#c084fc}.d-t.teal{--dc:#2dd4bf}.d-t.orange{--dc:#fb923c}.d-t.purple{--dc:#a78bfa}.d-t.blue{--dc:#60a5fa}.d-t.green{--dc:#34d399}
+      .d-charts{display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:8px}
+      .d-c{background:linear-gradient(180deg,#1a1f2c,#12161f);border:1px solid #262d3d;border-radius:12px;padding:10px 12px}
+      .d-ch{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c9a24a;margin-bottom:8px}
+      .d-bars{display:flex;align-items:flex-end;gap:8px;height:120px}
+      .d-bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:3px;min-width:0}
+      .d-bar i{display:block;width:70%;max-width:36px;min-height:2px;border-radius:4px 4px 0 0;background:linear-gradient(180deg,#f2c14e,#b8860b)}.d-bar i.neg{background:#ef4444}
+      .d-bar .bv{font-size:10px;color:var(--ink2);white-space:nowrap}.d-bar .bv.neg{color:#ff6b6b}.d-bar .bl{font-size:10px;color:var(--ink3)}
+      html.fcpt-fill .d-grid{grid-template-columns:repeat(4,minmax(0,1fr))}html.fcpt-fill .d-charts{grid-template-columns:repeat(2,minmax(0,1fr))}
+      @media (max-width:520px){html.fcpt-fill .d-grid{grid-template-columns:repeat(2,minmax(0,1fr))}html.fcpt-fill .d-charts{grid-template-columns:1fr}}
+      @media (min-width:900px){.d-charts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      html.fcpt-fill #fcpt-panel{position:fixed !important;left:var(--fcpt-fl,0px) !important;right:0 !important;top:0 !important;bottom:var(--fcpt-fb,0px) !important;width:auto !important;max-width:none !important;height:auto !important;max-height:none !important;border-radius:0 !important;transform:none !important;z-index:99990 !important}
+      html.fcpt-fill .fcpt-resize{display:none}
+      .fcpt-navbtn{position:relative}.fcpt-navbtn .fcpt-navic{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#f9d85a,#e0a800);color:#1a1300;font:800 11px system-ui,sans-serif}
+      .fcpt-navbtn .fcpt-navl{display:block;font-size:11px;margin-top:3px}
+      .fcpt-navbtn.fcpt-on .fcpt-navic{box-shadow:0 0 0 2px #fff}
       .h-kpi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
       .h-kpi>div{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:3px}
       .h-kpi .l{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
@@ -487,19 +509,44 @@
       const sold = items.filter((p) => p.sold);
       const soldP = sold.reduce((a, p) => a + (p.profit || 0), 0);
       const A = alarms();
+      // ---- Übersicht im Kachel-Stil ----
+      const today = sumSince(d0.getTime());
+      const dl = settings.dayLog[dayKey()] || { s: 0, b: 0, sp: 0 };
+      const tg = typeof TARGETS !== 'undefined' && TARGETS.summary ? TARGETS.summary() : null;
+      const coins = SBCUI.userCoins();
+      const un = NEWITEMS.count();
+      const tile = (cls, l, v, s, go2) => `<div class="d-t ${cls}"${go2 ? ` data-dgo="${go2}" role="button" tabindex="0"` : ''}><span class="l">${l}</span><span class="v num">${v}</span><span class="s">${s || '&nbsp;'}</span></div>`;
+      // Profit pro Tag (7 Tage) und pro Monat (3 Monate) aus der Historie
+      const days = [];
+      for (let i = 6; i >= 0; i--) { const f = d0.getTime() - i * 864e5; const rows = history.filter((h) => h.t >= f && h.t < f + 864e5); days.push({ l: new Date(f).toLocaleDateString('de-DE', { weekday: 'short' }), v: rows.reduce((a, h) => a + (h.profit || 0), 0) }); }
+      const months = [];
+      for (let i = 2; i >= 0; i--) { const m = new Date(d0.getFullYear(), d0.getMonth() - i, 1), m2 = new Date(d0.getFullYear(), d0.getMonth() - i + 1, 1); const rows = history.filter((h) => h.t >= m.getTime() && h.t < m2.getTime()); months.push({ l: m.toLocaleDateString('de-DE', { month: 'short' }), v: rows.reduce((a, h) => a + (h.profit || 0), 0) }); }
+      const bars = (arr) => {
+        const max = Math.max(1, ...arr.map((x) => Math.abs(x.v)));
+        return `<div class="d-bars">${arr.map((x) => `<div class="d-bar" title="${esc(x.l)}: ${signed(x.v)}"><span class="bv ${x.v < 0 ? 'neg' : ''}">${x.v ? (Math.abs(x.v) >= 1e6 ? (x.v / 1e6).toFixed(1).replace('.', ',') + ' M' : Math.abs(x.v) >= 1000 ? Math.round(x.v / 1000) + ' k' : x.v) : ''}</span><i class="${x.v < 0 ? 'neg' : ''}" style="height:${Math.round((Math.abs(x.v) / max) * 100)}%"></i><span class="bl">${esc(x.l)}</span></div>`).join('')}</div>`;
+      };
       home.innerHTML = `
-        ${TIMING.html()}
-        <div class="h-kpi">
-          <div><span class="l">Transferliste</span><span class="v num">${listVal ? fmt(listVal) : '–'}</span><span class="s">${open.length} offene Karten · Marktwert</span></div>
-          <div><span class="l">Profit bei Verkauf</span><span class="v num ${possible >= 0 ? 'fcpt-pos-v' : 'fcpt-neg-v'}">${items.length ? signed(possible) : '–'}</span><span class="s">nach 5 % Steuer</span></div>
-          <div><span class="l">Verkauft</span><span class="v num fcpt-pos-v">${sold.length ? signed(soldP) : '–'}</span><span class="s">${sold.length} Karten</span></div>
-          <div><span class="l">7 Tage</span><span class="v num ${wk >= 0 ? 'fcpt-pos-v' : 'fcpt-neg-v'}">${signed(wk)}</span><span class="s">Profit laut Historie</span></div>
+        <div class="d-grid">
+          ${tile('gold', 'Profit heute', `<span class="${today.profit >= 0 ? 'fcpt-pos-v' : 'fcpt-neg-v'}">${signed(today.profit)}</span>`, `${today.n} verkauft`, 'hist')}
+          ${tile('pink', 'Gekauft heute', fmt(dl.b || 0), dl.sp ? `${fmt(dl.sp)} Münzen ausgegeben` : 'per Snipe', 'buy')}
+          ${tile('violet', 'Transferziele', tg && tg.loaded ? fmt(tg.lead + tg.outbid) : '–', tg && tg.loaded ? `${tg.lead} führend · ${tg.outbid} überboten` : 'in „Meine Gebote“ laden', 'buy')}
+          ${tile('teal', 'Münzen', coins != null ? fmt(coins) : '–', tg && tg.tied ? `${fmt(tg.tied)} in Geboten` : '')}
+          ${tile('orange', 'Suchen heute', fmt(dl.s || 0), (() => { try { const r = GUARD.stats(); return `${r.sMin}/Min · ${r.sHour}/Std`; } catch (e) { return ''; } })(), 'buy')}
+          ${tile('purple', 'Nicht zugewiesen', un != null ? fmt(un) : '–', un ? 'jetzt sortieren' : 'alles sortiert', 'trade:verein')}
+          ${tile('blue', 'Transferliste', fmt(items.length), `${open.length} offen${listVal ? ` · ${fmt(listVal)}` : ''}`, 'list')}
+          ${tile('green', 'Verkauft (Liste)', sold.length ? signed(soldP) : '–', `${sold.length} Karten · 7 Tage ${signed(wk)}`, 'list')}
         </div>
+        <div class="d-charts">
+          <div class="d-c"><div class="d-ch">Profit – letzte 7 Tage</div>${bars(days)}</div>
+          <div class="d-c"><div class="d-ch">Profit – letzte 3 Monate</div>${bars(months)}</div>
+        </div>
+        ${TIMING.html()}
         <div class="h-sec"><span>Alarme</span><span>${A.length}</span></div>
         ${A.length ? `<div class="h-al">${A.map((a, i) => `<button data-al="${i}"><span class="ic ${a.k}">${svg(a.ic, 16)}</span><span class="tx"><b>${esc(a.t)}</b><span>${esc(a.s)}</span></span><span class="cv">${svg('chev', 16)}</span></button>`).join('')}</div>`
           : `<div class="h-empty">${items.length ? 'Keine Alarme. Watchlist und Verkaufsziele findest du unter Markt und in der Transferliste.' : 'Noch keine Daten – lade deine Transferliste.'}</div>`}
         <div class="h-btns"><button class="pri" data-act="refresh">Transferliste laden</button><button data-act="reload">Preise neu holen</button></div>`;
       home.querySelectorAll('[data-al]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); go(A[+b.dataset.al].go); }));
+      home.querySelectorAll('[data-dgo]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); const g = b.dataset.dgo; if (g.startsWith('trade:')) { settings.tradeSub = g.slice(6); saveSettings(); go('trade:markt'); setTimeout(() => { const t = panel.querySelector(`[data-sub="${g.slice(6)}"]`); if (t) t.click(); }, 50); } else go(g); }));
       badge();
     }
 
@@ -642,6 +689,13 @@
       const hc = hRow.querySelector('input');
       hc.checked = !!settings.helpAll;
       hc.addEventListener('change', (e) => { e.stopPropagation(); settings.helpAll = hc.checked; saveSettings(); panel.classList.toggle('help-all', settings.helpAll); });
+      const eRow = document.createElement('div');
+      eRow.className = 'fcpt-set';
+      eRow.innerHTML = '<span>Menüpunkt „FC27 Tool“ in der Web App<small>Eigener Eintrag in EAs Navigation – das Tool öffnet sich dann direkt in der Inhaltsfläche der Web App</small></span><input type="checkbox" class="fcpt-sw" data-uib="embed">';
+      grp.appendChild(eRow);
+      const ec = eRow.querySelector('input');
+      ec.checked = settings.embed !== false;
+      ec.addEventListener('change', (e) => { e.stopPropagation(); settings.embed = ec.checked; saveSettings(); injectNav(); });
       const ds = pcRow.querySelector('select');
       ds.value = settings.dock;
       ds.addEventListener('change', (e) => { e.stopPropagation(); settings.dock = ds.value; saveSettings(); applyDock(); });
@@ -691,6 +745,7 @@
       document.documentElement.style.setProperty('--fcpt-w', w + 'px');
     }
     function applyDock() {
+      if (document.documentElement.classList.contains('fcpt-fill')) { document.documentElement.classList.remove('fcpt-dock'); if (panel.parentNode !== document.body) document.body.appendChild(panel); return; }
       const want = settings.dock === 'on' || (settings.dock === 'auto' && isPC() && W.innerWidth >= 1200);
       const on = want && isWide() && panel.classList.contains('open');
       if (on && panel.parentNode !== document.documentElement) document.documentElement.appendChild(panel);
@@ -699,6 +754,53 @@
       applyWidth();
       if (on !== applyDock.last) { applyDock.last = on; try { W.dispatchEvent(new Event('resize')); } catch (e) { /* */ } }
     }
+    // ---------- Web-App-Modus: eigener Menüpunkt in EAs Navigation, das Tool füllt die Inhaltsfläche ----------
+    if (settings.embed === undefined) settings.embed = true;
+    let fill = false, navBtn = null;
+    const eaNav = () => document.querySelector('.ut-tab-bar') || document.querySelector('nav[class*="tab-bar"]');
+    function placeFill() {
+      const n = eaNav(); const r = n ? n.getBoundingClientRect() : null;
+      let l = 0, b = 0;
+      if (r && r.width && r.height) {
+        if (r.height > r.width && r.left < 40) l = Math.round(r.right);              // Navigation links (PC)
+        else if (r.top > W.innerHeight / 2) b = Math.round(W.innerHeight - r.top);   // Navigation unten (Handy)
+      }
+      document.documentElement.style.setProperty('--fcpt-fl', l + 'px');
+      document.documentElement.style.setProperty('--fcpt-fb', b + 'px');
+    }
+    function setFill(on) {
+      fill = on;
+      document.documentElement.classList.toggle('fcpt-fill', on);
+      if (navBtn) navBtn.classList.toggle('fcpt-on', on);
+      if (on) {
+        placeFill();
+        if (!panel.classList.contains('open')) { panel.classList.add('open'); if (!items.length) { try { refresh(); } catch (e) { /* */ } } }
+        go('home');
+      } else if (panel.classList.contains('open')) panel.classList.remove('open');
+      applyDock();
+    }
+    function injectNav() {
+      const n = eaNav();
+      if (!settings.embed) { if (navBtn) { navBtn.remove(); navBtn = null; } if (fill) setFill(false); return; }
+      if (!n || (navBtn && n.contains(navBtn))) return;
+      const ref = n.querySelector('.ut-tab-bar-item') || n.querySelector('button');
+      navBtn = document.createElement('button');
+      navBtn.type = 'button';
+      navBtn.className = (ref ? ref.className.split(/\s+/).filter((c) => c && !/^icon-|selected|active/.test(c)).join(' ') : 'ut-tab-bar-item') + ' fcpt-navbtn';
+      navBtn.innerHTML = '<span class="fcpt-navic">FC</span><span class="fcpt-navl">FC27 Tool</span>';
+      navBtn.title = 'FC27 Preis-Tool öffnen';
+      navBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); setFill(!fill); }, true);
+      n.appendChild(navBtn);
+      if (!n.__fcptNav) {
+        n.__fcptNav = true;
+        // anderer Menüpunkt von EA angetippt -> Tool schließen, EA-Seite zeigen
+        n.addEventListener('click', (e) => { if (fill && navBtn && !navBtn.contains(e.target)) setFill(false); }, true);
+      }
+    }
+    setInterval(injectNav, 1500); injectNav();
+    W.addEventListener('resize', () => { if (fill) placeFill(); });
+    // Panel über ✕ geschlossen -> Web-App-Modus beenden
+    new MutationObserver(() => { if (fill && !panel.classList.contains('open')) setFill(false); }).observe(panel, { attributes: true, attributeFilter: ['class'] });
     const grip = document.createElement('div');
     grip.className = 'fcpt-resize';
     grip.title = 'Breite ziehen';
