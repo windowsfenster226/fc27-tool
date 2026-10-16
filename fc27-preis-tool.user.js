@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.59.0
+// @version      2.60.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -6861,9 +6861,8 @@ const SBC = (function () {
       let best = -1, bv = -Infinity;
       st.rows.forEach((r, i) => { if (!r.done && r.profBin != null && r.profBin > bv && r.profBin > 0) { bv = r.profBin; best = i; } });
       const coins = SBCUI.userCoins();
-      box.innerHTML = `${rateHtml(coins)}
+      box.innerHTML = `<div class="by-colL">${rateHtml(coins)}
         ${simpleHtml()}
-        ${outbidHtml()}
         <details class="by-adv"><summary>⚙ Erweitert</summary>
         <div class="by-opts">
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
@@ -6893,16 +6892,17 @@ const SBC = (function () {
         ${targetsHtml()}
         ${statsHtml()}
         </details>
-        ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
         ${st.log.length ? `<details class="by-log" ${st.log.length && !st.log[0].ok ? 'open' : ''}><summary>Letzte Snipes: ${st.stats.buys} ✓ · ${st.stats.miss} ✗</summary>${st.log.map((l) => `<div class="pt-r ${l.ok ? '' : 'miss'}"><span>${l.ok ? '✓' : '✗'} ${esc(l.name)} · ${fmt(l.price)}</span><span>${l.ok ? 'gekauft' : esc(l.why)} · ${new Date(l.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div>`).join('')}</details>` : ''}
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · ${st.stats.miss} verpasst · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
+        </div><div class="by-colR">${outbidHtml()}
+        ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = !bidMode() && st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
         ${st.arm && st.armMs > 4000 ? (st.arm.startsWith('bid:') ? `<div class="by-ready">Auktion bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder B)' : '<b>B</b> oder Klick'} bietet. <b>Esc</b> = nicht bieten.</div>` : `<div class="by-ready">Bester Deal bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder K)' : '<b>K</b>, <b>Enter</b> oder Klick'} kauft ihn. <b>Esc</b> = nicht kaufen.</div>`) : ''}
         ${st.rows.length ? `<div class="by-h"><b>${esc(st.label)}</b><span>${st.rows.length} Angebote · ${agoText(st.t)}</span></div>
           <div class="by-list">${st.rows.map((r, i) => rowHtml(r, i, best)).join('')}</div>
           <div class="by-note">Kaufen: ${settings.buyConfirm ? (settings.snipeArm ? `bester Deal ab +${fmt(settings.snipeMinProfit)} ist sofort bereit (1×), sonst zweimal tippen` : 'zweimal tippen (Sicherheit)') : 'ein Tipp'} · Bieten: ${settings.bidConfirm ? 'zweimal tippen' : 'ein Tipp, der Betrag steht auf dem Knopf'} · Gewinn = Marktpreis nach 5 % Steuer minus Preis</div>`
         : `<div class="by-empty">${st.busy ? '' : 'Oben wählen, was du snipen willst, Max. Preis eintragen – dann nur noch <b>Suchen</b> bzw. Leertaste.'}</div>`}
-        <div class="by-tg" data-el="bytg"></div>
+        <div class="by-tg" data-el="bytg"></div></div>
         <div class="by-bar">${st.msg ? `<div class="by-msg">${esc(st.msg)}</div>` : ''}
           ${(() => {
             const ar = settings.snipeOneKey && st.arm && /^(buy|bid):/.test(st.arm) && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null;
@@ -7611,6 +7611,55 @@ const SBC = (function () {
       @media (min-width:900px){.d-charts{grid-template-columns:repeat(2,minmax(0,1fr))}}
       html.fcpt-fill #fcpt-panel{position:fixed !important;left:var(--fcpt-fl,0px) !important;right:0 !important;top:0 !important;bottom:var(--fcpt-fb,0px) !important;width:auto !important;max-width:none !important;height:auto !important;max-height:none !important;border-radius:0 !important;transform:none !important;z-index:99990 !important}
       html.fcpt-fill .fcpt-resize{display:none}
+      /* ===== Großansicht (Web-App-Modus) – großflächiges Layout ===== */
+      .by-colL,.by-colR{display:contents}
+      html.fcpt-fill #fcpt-panel{font-size:15px;box-shadow:none;border-left:0;background:#0a0e15}
+      @media (min-width:900px){
+        html.fcpt-fill #fcpt-panel .fcpt-rail{order:-1;width:228px;align-items:stretch;padding:18px 14px;gap:4px;background:linear-gradient(180deg,#0f1420,#0a0e15);border-right:1px solid #1a2236}
+        html.fcpt-fill #fcpt-panel .fcpt-rail .lg{width:auto;height:auto;background:transparent;color:var(--ink);justify-content:flex-start;gap:10px;font:800 17px 'IBM Plex Sans',system-ui,sans-serif;margin:0 6px 18px}
+        html.fcpt-fill #fcpt-panel .fcpt-rail .lg::before{content:'FC';display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#f9d85a,#d99a00);color:#15120a;font-size:15px}
+        html.fcpt-fill #fcpt-panel .fcpt-rail .lg{font-size:0}
+        html.fcpt-fill #fcpt-panel .fcpt-rail .lg::after{content:'FC27 Tool';font:800 17px 'IBM Plex Sans',system-ui,sans-serif;color:var(--ink)}
+        html.fcpt-fill #fcpt-panel .fcpt-rail button{width:100%;height:46px;flex-direction:row;justify-content:flex-start;gap:12px;padding:0 14px;border-radius:12px;color:#9aa5b9}
+        html.fcpt-fill #fcpt-panel .fcpt-rail button .lb{display:block;font:600 14px 'IBM Plex Sans',system-ui,sans-serif}
+        html.fcpt-fill #fcpt-panel .fcpt-rail button .tip{display:none}
+        html.fcpt-fill #fcpt-panel .fcpt-rail button.on{background:linear-gradient(90deg,rgba(242,193,78,.16),rgba(242,193,78,.02));color:var(--gold);box-shadow:inset 3px 0 0 var(--gold)}
+        html.fcpt-fill #fcpt-panel .fcpt-rail button .bd{top:13px;right:12px;left:auto}
+        html.fcpt-fill #fcpt-panel .fcpt-rail [data-rail="mini"]{display:none}
+        html.fcpt-fill #fcpt-panel .fcpt-body{border-right:0}
+        html.fcpt-fill #fcpt-panel .fcpt-head{padding:20px 36px 14px;background:linear-gradient(180deg,#121a2a,#0a0e15)}
+        html.fcpt-fill #fcpt-panel .fcpt-brand .t{font-size:24px;font-weight:700}
+        html.fcpt-fill #fcpt-panel .fcpt-qs{font-size:13px;gap:10px}
+        html.fcpt-fill #fcpt-panel .fcpt-qs>*{background:#121a29;border:1px solid #1f2a40;border-radius:999px;padding:4px 12px}
+        html.fcpt-fill #fcpt-panel .fcpt-home,html.fcpt-fill #fcpt-panel .fcpt-settings,html.fcpt-fill #fcpt-panel .fcpt-trade{padding:24px 36px 60px}
+        html.fcpt-fill #fcpt-panel .fcpt-home>*,html.fcpt-fill #fcpt-panel .fcpt-settings>*{max-width:1500px;width:100%;margin-left:auto;margin-right:auto}
+        html.fcpt-fill #fcpt-panel .fcpt-home{gap:18px}
+        html.fcpt-fill .d-grid{gap:16px}.d-t{transition:transform .12s,border-color .12s}
+        html.fcpt-fill .d-t{padding:16px 18px 18px;border-radius:16px}html.fcpt-fill .d-t[data-dgo]:hover{transform:translateY(-2px)}
+        html.fcpt-fill .d-t .l{font-size:12px}html.fcpt-fill .d-t .v{font-size:38px}html.fcpt-fill .d-t .s{font-size:12.5px}
+        html.fcpt-fill .d-charts{gap:16px}html.fcpt-fill .d-c{padding:16px 18px;border-radius:16px}html.fcpt-fill .d-bars{height:200px}html.fcpt-fill .d-bar .bv,html.fcpt-fill .d-bar .bl{font-size:12px}
+        html.fcpt-fill #fcpt-panel .fcpt-sgroup{padding:18px 20px;border-radius:16px;gap:14px}
+        html.fcpt-fill #fcpt-panel .fcpt-sgroup h4{font-size:16px}
+        /* Transferliste: breite Tabelle */
+        html.fcpt-fill #fcpt-panel .fcpt-list{padding:0 36px 90px}
+        html.fcpt-fill #fcpt-panel .fcpt-list>*{max-width:1500px;width:100%;margin-left:auto;margin-right:auto}
+        html.fcpt-fill .tr-h,html.fcpt-fill .tr-row{grid-template-columns:44px minmax(0,1fr) 130px 130px 130px;gap:14px;padding:0 18px}
+        html.fcpt-fill .tr-row{min-height:52px;font-size:15px}html.fcpt-fill .tr-h{font-size:11.5px;padding-top:14px;padding-bottom:10px}
+        html.fcpt-fill #fcpt-panel .fcpt-sum,html.fcpt-fill #fcpt-panel .fcpt-toolbar{padding-left:36px;padding-right:36px}
+        /* Kaufen & Bieten: links Einstellungen, rechts Treffer */
+        html.fcpt-fill #fcpt-panel.v-buy .fcpt-buy{padding:24px 36px 0;gap:0}
+        html.fcpt-fill .by-r{padding:12px 16px}html.fcpt-fill .by-n .nm{font-size:16px}
+      }
+      @media (min-width:1150px){
+        html.fcpt-fill #fcpt-panel.v-buy .fcpt-buy{display:grid !important;grid-template-columns:minmax(400px,540px) minmax(0,1fr);grid-template-rows:1fr auto;column-gap:28px;align-items:start}
+        html.fcpt-fill .by-colL,html.fcpt-fill .by-colR{display:flex;flex-direction:column;gap:14px;min-width:0;padding-bottom:20px}
+        html.fcpt-fill .by-colR:empty{display:none}
+        html.fcpt-fill .fcpt-buy>.by-bar{grid-column:1 / -1}
+        html.fcpt-fill .by-colR .by-list{max-height:none}
+        html.fcpt-fill #fcpt-panel .fcpt-subpane{column-count:2;column-gap:22px}
+        html.fcpt-fill #fcpt-panel .fcpt-subpane>*{break-inside:avoid;margin-bottom:18px;display:block}
+      }
+      @media (min-width:1700px){html.fcpt-fill #fcpt-panel .fcpt-subpane{column-count:3}}
       .fcpt-navbtn{position:relative}.fcpt-navbtn .fcpt-navic{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#f9d85a,#e0a800);color:#1a1300;font:800 11px system-ui,sans-serif}
       .fcpt-navbtn .fcpt-navl{display:block;font-size:11px;margin-top:3px}
       .fcpt-navbtn.fcpt-on .fcpt-navic{box-shadow:0 0 0 2px #fff}
@@ -8075,6 +8124,13 @@ const SBC = (function () {
       eRow.className = 'fcpt-set';
       eRow.innerHTML = '<span>Menüpunkt „FC27 Tool“ in der Web App<small>Eigener Eintrag in EAs Navigation – das Tool öffnet sich dann direkt in der Inhaltsfläche der Web App</small></span><input type="checkbox" class="fcpt-sw" data-uib="embed">';
       grp.appendChild(eRow);
+      const bRow = document.createElement('div');
+      bRow.className = 'fcpt-set';
+      bRow.innerHTML = '<span>Großansicht<small>Tool füllt die ganze Inhaltsfläche der Web App (Menü links/unten bleibt sichtbar). Aus = schmales Seitenfenster wie früher</small></span><input type="checkbox" class="fcpt-sw" data-uib="big">';
+      grp.appendChild(bRow);
+      const bc = bRow.querySelector('input');
+      bc.checked = settings.bigView !== false;
+      bc.addEventListener('change', (e) => { e.stopPropagation(); settings.bigView = bc.checked; saveSettings(); setFill(bc.checked, { keepOpen: true }); });
       const ec = eRow.querySelector('input');
       ec.checked = settings.embed !== false;
       ec.addEventListener('change', (e) => { e.stopPropagation(); settings.embed = ec.checked; saveSettings(); injectNav(); });
@@ -8150,15 +8206,15 @@ const SBC = (function () {
       document.documentElement.style.setProperty('--fcpt-fl', l + 'px');
       document.documentElement.style.setProperty('--fcpt-fb', b + 'px');
     }
-    function setFill(on) {
+    function setFill(on, o2 = {}) {
       fill = on;
       document.documentElement.classList.toggle('fcpt-fill', on);
       if (navBtn) navBtn.classList.toggle('fcpt-on', on);
       if (on) {
         placeFill();
         if (!panel.classList.contains('open')) { panel.classList.add('open'); if (!items.length) { try { refresh(); } catch (e) { /* */ } } }
-        go('home');
-      } else if (panel.classList.contains('open')) panel.classList.remove('open');
+        if (o2.home) go('home');
+      } else if (!o2.keepOpen && panel.classList.contains('open')) panel.classList.remove('open');
       applyDock();
     }
     function injectNav() {
@@ -8171,7 +8227,7 @@ const SBC = (function () {
       navBtn.className = (ref ? ref.className.split(/\s+/).filter((c) => c && !/^icon-|selected|active/.test(c)).join(' ') : 'ut-tab-bar-item') + ' fcpt-navbtn';
       navBtn.innerHTML = '<span class="fcpt-navic">FC</span><span class="fcpt-navl">FC27 Tool</span>';
       navBtn.title = 'FC27 Preis-Tool öffnen';
-      navBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); setFill(!fill); }, true);
+      navBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); setFill(!fill, { home: true }); }, true);
       n.appendChild(navBtn);
       if (!n.__fcptNav) {
         n.__fcptNav = true;
@@ -8181,8 +8237,13 @@ const SBC = (function () {
     }
     setInterval(injectNav, 1500); injectNav();
     W.addEventListener('resize', () => { if (fill) placeFill(); });
-    // Panel über ✕ geschlossen -> Web-App-Modus beenden
-    new MutationObserver(() => { if (fill && !panel.classList.contains('open')) setFill(false); }).observe(panel, { attributes: true, attributeFilter: ['class'] });
+    // Panel über ✕ geschlossen -> Web-App-Modus beenden · Großansicht: Tool öffnet sich immer großflächig
+    if (settings.bigView === undefined) settings.bigView = true;
+    new MutationObserver(() => {
+      const o = panel.classList.contains('open');
+      if (fill && !o) setFill(false);
+      else if (!fill && o && settings.bigView) setFill(true);
+    }).observe(panel, { attributes: true, attributeFilter: ['class'] });
     const grip = document.createElement('div');
     grip.className = 'fcpt-resize';
     grip.title = 'Breite ziehen';

@@ -1024,9 +1024,8 @@
       let best = -1, bv = -Infinity;
       st.rows.forEach((r, i) => { if (!r.done && r.profBin != null && r.profBin > bv && r.profBin > 0) { bv = r.profBin; best = i; } });
       const coins = SBCUI.userCoins();
-      box.innerHTML = `${rateHtml(coins)}
+      box.innerHTML = `<div class="by-colL">${rateHtml(coins)}
         ${simpleHtml()}
-        ${outbidHtml()}
         <details class="by-adv"><summary>⚙ Erweitert</summary>
         <div class="by-opts">
           <label title="Nach jeder Suche ist der beste lohnende Deal schon „Sicher?“ – dann reicht 1× K, Enter oder Klick"><input type="checkbox" data-bo="arm" ${settings.snipeArm ? 'checked' : ''}> Schnellkauf</label>
@@ -1056,16 +1055,17 @@
         ${targetsHtml()}
         ${statsHtml()}
         </details>
-        ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
         ${st.log.length ? `<details class="by-log" ${st.log.length && !st.log[0].ok ? 'open' : ''}><summary>Letzte Snipes: ${st.stats.buys} ✓ · ${st.stats.miss} ✗</summary>${st.log.map((l) => `<div class="pt-r ${l.ok ? '' : 'miss'}"><span>${l.ok ? '✓' : '✗'} ${esc(l.name)} · ${fmt(l.price)}</span><span>${l.ok ? 'gekauft' : esc(l.why)} · ${new Date(l.t).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div>`).join('')}</details>` : ''}
         ${st.stats.n ? `<div class="by-stats">${st.stats.n} Suchen · ${st.stats.hits} Treffer · ${st.stats.buys} gekauft · ${st.stats.miss} verpasst · Ø ${fmt(Math.round(st.stats.ms / st.stats.n))} ms</div>` : ''}
+        </div><div class="by-colR">${outbidHtml()}
+        ${st.flash && Date.now() < st.flash.until ? `<div class="by-flash ${st.flash.ok ? 'ok' : 'fail'}">${esc(st.flash.text)}${st.flash.sub ? ` – ${esc(st.flash.sub)}` : ''}</div>` : ''}
         ${(() => { const r0 = st.rows.find((r) => r.maxBid); const one = !bidMode() && st.rows.length && new Set(st.rows.map((r) => r.p.resourceId)).size === 1; return one && r0 ? `<button class="by-max" data-by="max" data-v="${r0.maxBid}" title="Setzt in der Web App „Max. Sofortkauf“ – dann zeigt EA nur noch lohnende Angebote">Max. Sofortkauf in EA auf <b>${fmt(r0.maxBid)}</b> setzen (lohnt bis)</button>` : ''; })()}
         ${st.arm && st.armMs > 4000 ? (st.arm.startsWith('bid:') ? `<div class="by-ready">Auktion bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder B)' : '<b>B</b> oder Klick'} bietet. <b>Esc</b> = nicht bieten.</div>` : `<div class="by-ready">Bester Deal bereit – ${settings.snipeOneKey ? '<b>Leertaste</b> (oder K)' : '<b>K</b>, <b>Enter</b> oder Klick'} kauft ihn. <b>Esc</b> = nicht kaufen.</div>`) : ''}
         ${st.rows.length ? `<div class="by-h"><b>${esc(st.label)}</b><span>${st.rows.length} Angebote · ${agoText(st.t)}</span></div>
           <div class="by-list">${st.rows.map((r, i) => rowHtml(r, i, best)).join('')}</div>
           <div class="by-note">Kaufen: ${settings.buyConfirm ? (settings.snipeArm ? `bester Deal ab +${fmt(settings.snipeMinProfit)} ist sofort bereit (1×), sonst zweimal tippen` : 'zweimal tippen (Sicherheit)') : 'ein Tipp'} · Bieten: ${settings.bidConfirm ? 'zweimal tippen' : 'ein Tipp, der Betrag steht auf dem Knopf'} · Gewinn = Marktpreis nach 5 % Steuer minus Preis</div>`
         : `<div class="by-empty">${st.busy ? '' : 'Oben wählen, was du snipen willst, Max. Preis eintragen – dann nur noch <b>Suchen</b> bzw. Leertaste.'}</div>`}
-        <div class="by-tg" data-el="bytg"></div>
+        <div class="by-tg" data-el="bytg"></div></div>
         <div class="by-bar">${st.msg ? `<div class="by-msg">${esc(st.msg)}</div>` : ''}
           ${(() => {
             const ar = settings.snipeOneKey && st.arm && /^(buy|bid):/.test(st.arm) && st.armMs > 4000 ? st.rows[+st.arm.split(':')[1]] : null;
