@@ -114,7 +114,10 @@ rep("""  const SOURCES = {
         if (!raw || !raw.marketAverage) {
           for (const r of cap.raw.values()) { if (r.resourceId === p.resourceId && r.marketAverage) { raw = r; break; } }
         }
-        return raw && raw.marketAverage > 0 ? raw.marketAverage : null;
+        if (!(raw && raw.marketAverage > 0)) return null;
+        // EAs Durchschnitt hinkt hinterher (oft deutlich zu hoch) -> mit günstigstem Rating-Preis/EA-Mindestpreis korrigieren
+        const rar = raw.rareflag ?? 0;
+        return eaAvgValue(raw.marketAverage, raw.rating ?? p.rating, rar, rar > 1, raw.marketDataMinPrice) || null;
       },
     },
     futbin: {""")

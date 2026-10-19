@@ -158,8 +158,12 @@
     avg = Number(avg) || 0;
     const r = Number(rating) || 0;
     let floor = null;
-    try { const d = RATINGS.get(); floor = (d && d.prices && d.prices[r]) || null; } catch (e) { /* */ }
-    if (!floor && !special && r && r < 81) floor = estCardValue(r, rarity);   // Bronze/Silber/niedriges Gold
+    try {
+      const d = RATINGS.get(); floor = (d && d.prices && d.prices[r]) || null;
+      // Rating-Preise fehlen noch -> einmal im Hintergrund von Futbin laden (für die nächste Anzeige)
+      if (!d && !eaAvgValue.loading && Date.now() - (eaAvgValue.tried || 0) > 600000) { eaAvgValue.loading = true; eaAvgValue.tried = Date.now(); RATINGS.load().catch(() => {}).then(() => { eaAvgValue.loading = false; }); }
+    } catch (e) { /* */ }
+    if (!floor && !special && r && r < 83) floor = estCardValue(r, rarity);   // Bronze/Silber/niedriges Gold
     const mp = Number(minPrice) || 0;
     if (floor && mp) floor = Math.max(floor, mp);                             // nie unter EAs Mindestpreis
     if (!avg) return special ? null : floor;                                  // kein EA-Wert: Schätzung für normale Karten
@@ -1063,10 +1067,15 @@
       const consV = !p.isPlayer && typeof CONS !== 'undefined' ? CONS.price(p) : null;
       const main = p.isPlayer ? ((prices[settings.mainSource] && prices[settings.mainSource].v) ||
         keys.map((k) => prices[k] && prices[k].v).find(Boolean) || null) : consV;
+      // Nur mit echtem Futbin-Preis (bzw. Chemie-Style-Preis) als Schnäppchen markieren – EA-Schätzung ist dafür zu ungenau
+      const reliable = !p.isPlayer || !!(prices.futbin && prices.futbin.v);
       let profitHtml = '';
       if (isMarket) {
         root.classList.remove('fcpt-bargain');
-        if (main && p.buyNow) {
+        if (main && p.buyNow && !reliable) {
+          const v = afterTax(main) - p.buyNow;
+          profitHtml = `<span class="fcpt-chip" title="Nur grobe Schätzung aus EAs Durchschnitt (korrigiert) – Futbin-Preis fehlt">≈ Gewinn ${signed(v)}?</span>`;
+        } else if (main && p.buyNow) {
           const v = afterTax(main) - p.buyNow;
           if (v >= settings.minBargain) {
             root.classList.add('fcpt-bargain');
