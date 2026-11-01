@@ -994,6 +994,13 @@
       const sc = sRow.querySelector('input');
       sc.checked = settings.eaSkin !== false;
       sc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaSkin = sc.checked; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
+      const cRow = document.createElement('div');
+      cRow.className = 'fcpt-set';
+      cRow.innerHTML = '<span>Kompakte Spielerliste im Verein<small>Verein → Spieler: kleinere Zeilen und mehrere Spalten nebeneinander, damit mehr Spieler auf einmal sichtbar sind</small></span><input type="checkbox" class="fcpt-sw" data-uib="clubc">';
+      grp.appendChild(cRow);
+      const cc = cRow.querySelector('input');
+      cc.checked = settings.clubCompact !== false;
+      cc.addEventListener('change', (e) => { e.stopPropagation(); settings.clubCompact = cc.checked; saveSettings(); try { markClubList(); } catch (x) { /* */ } });
       const bRow = document.createElement('div');
       bRow.className = 'fcpt-set';
       bRow.innerHTML = '<span>Großansicht<small>Tool füllt die ganze Inhaltsfläche der Web App (Menü links/unten bleibt sichtbar). Aus = schmales Seitenfenster wie früher</small></span><input type="checkbox" class="fcpt-sw" data-uib="big">';
@@ -1097,6 +1104,34 @@
       html.fcpt-easkin .btn-standard.call-to-action:disabled,html.fcpt-easkin .btn-standard.call-to-action.disabled{opacity:.45}
       html.fcpt-easkin .fcpt-navbtn .fcpt-navic{clip-path:polygon(50% 0,100% 14%,100% 60%,50% 100%,0 60%,0 14%);border-radius:0;height:30px}
     `);
+
+    // ---------- Verein → Spieler: kompakte Liste, mehrere Spalten (nur Optik) ----------
+    if (settings.clubCompact === undefined) settings.clubCompact = true;
+    GM_addStyle(`
+      html.fcpt-clubc .fcpt-clubl{display:grid !important;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:6px;padding:8px !important;align-content:start}
+      html.fcpt-clubc .fcpt-clubl>.listFUTItem{zoom:.8;margin:0 !important;border:1px solid #23262e !important;border-radius:8px !important;overflow:hidden;background-color:#0e0f12 !important;transition:border-color .12s,background-color .12s}
+      html.fcpt-clubc .fcpt-clubl>.listFUTItem:nth-child(even){background-color:#121317 !important}
+      html.fcpt-clubc .fcpt-clubl>.listFUTItem:hover{border-color:#8a6d1c !important}
+      html.fcpt-clubc .fcpt-clubl>.listFUTItem.selected{border-color:#f0bf2e !important;background-color:#17150d !important;box-shadow:inset 3px 0 0 #f0bf2e !important}
+      html.fcpt-clubc .fcpt-clubl>.listFUTItem .rowContent{padding-top:4px !important;padding-bottom:4px !important;min-height:0 !important}
+      html.fcpt-clubc .fcpt-clubl>.listFUTItem .name{font-weight:700 !important}
+      html.fcpt-clubc .fcpt-clubl>.listFUTItem .rating{color:#f0bf2e !important;font-weight:800 !important}
+      @media (max-width:700px){html.fcpt-clubc .fcpt-clubl{grid-template-columns:1fr;gap:4px;padding:4px !important}html.fcpt-clubc .fcpt-clubl>.listFUTItem{zoom:.88}}
+    `);
+    const CLUB_RX = /^(spieler|players|verein|club|meine spieler)$/i;
+    function markClubList() {
+      const de = document.documentElement;
+      de.classList.toggle('fcpt-clubc', settings.clubCompact !== false);
+      if (settings.clubCompact === false) return;
+      let lists = [...document.querySelectorAll('.ut-club-search-results-view ul, .ut-club-items-view ul, [class*="club-search-results"] ul')];
+      if (!lists.length) {
+        const t = document.querySelector('.ut-navigation-bar-view h1, .ut-navigation-bar-view .title');
+        if (t && CLUB_RX.test((t.textContent || '').trim())) lists = [...document.querySelectorAll('.paginated-item-list ul, ul.itemList')];
+      }
+      document.querySelectorAll('.fcpt-clubl').forEach((u) => { if (!lists.includes(u)) u.classList.remove('fcpt-clubl'); });
+      lists.forEach((u) => { if (u.querySelector(':scope > .listFUTItem')) u.classList.add('fcpt-clubl'); });
+    }
+    setInterval(() => { try { markClubList(); } catch (e) { /* */ } }, 800);
     function applyEaSkin() { document.documentElement.classList.toggle('fcpt-easkin', settings.ufm !== false && settings.eaSkin !== false); }
     applyEaSkin();
     let fill = false, navBtn = null;
