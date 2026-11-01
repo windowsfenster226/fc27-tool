@@ -1168,13 +1168,6 @@
       html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.profit b{color:#4ade80 !important}
       html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.loss,html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.loss b{color:#f8a3a3 !important}
       html.fcpt-easkin .SearchResults .listFUTItem,html.fcpt-easkin .ut-market-search-results-view .listFUTItem,html.fcpt-easkin .ut-search-results-view .listFUTItem{zoom:.84}
-      /* Preis-Spalte rechts statt Leiste unten (PC): spart eine ganze Zeile pro Spieler */
-      @media (min-width:900px){
-        html.fcpt-easkin .listFUTItem.fcpt-has-inline{display:grid !important;grid-template-columns:minmax(0,1fr) 168px !important;align-items:stretch !important}
-        html.fcpt-easkin .listFUTItem.fcpt-has-inline > :not(.fcpt-inline):not(.fcpt-buybadge){grid-column:1 !important;min-width:0}
-        html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline{grid-column:2 !important;grid-row:1 / span 9 !important;flex-direction:column !important;flex-wrap:nowrap !important;align-items:flex-start !important;justify-content:center !important;gap:5px !important;border-top:0 !important;border-left:1px solid rgba(255,255,255,.07) !important;border-radius:0 9px 9px 0 !important;padding:10px 14px !important;font-size:12.5px !important}
-        html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip{display:flex !important;justify-content:space-between;width:100%;gap:10px}
-      }
       /* Farbiger Streifen links: grün = lohnt sich, rot = zu teuer */
       html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-bargain,html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-good{box-shadow:inset 4px 0 0 #3dd68c,0 4px 14px rgba(0,0,0,.25) !important}
       html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-bad{box-shadow:inset 4px 0 0 #e05252,0 4px 14px rgba(0,0,0,.25) !important}
