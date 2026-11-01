@@ -986,7 +986,14 @@
       grp.appendChild(uRow);
       const uc = uRow.querySelector('input');
       uc.checked = settings.ufm !== false;
-      uc.addEventListener('change', (e) => { e.stopPropagation(); settings.ufm = uc.checked; saveSettings(); panel.classList.toggle('ufm', settings.ufm); quick(); if (cur === 'home') renderHome(); });
+      uc.addEventListener('change', (e) => { e.stopPropagation(); settings.ufm = uc.checked; saveSettings(); panel.classList.toggle('ufm', settings.ufm); try { applyEaSkin(); } catch (x) { /* */ } quick(); if (cur === 'home') renderHome(); });
+      const sRow = document.createElement('div');
+      sRow.className = 'fcpt-set';
+      sRow.innerHTML = '<span>„Stadion“ auch für EAs Web App<small>Färbt EAs Menü, Kopfzeile, Kacheln, Listen und Hauptknöpfe schwarz/gold. Nur Optik – Bedienung bleibt gleich</small></span><input type="checkbox" class="fcpt-sw" data-uib="easkin">';
+      grp.appendChild(sRow);
+      const sc = sRow.querySelector('input');
+      sc.checked = settings.eaSkin !== false;
+      sc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaSkin = sc.checked; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
       const bRow = document.createElement('div');
       bRow.className = 'fcpt-set';
       bRow.innerHTML = '<span>Großansicht<small>Tool füllt die ganze Inhaltsfläche der Web App (Menü links/unten bleibt sichtbar). Aus = schmales Seitenfenster wie früher</small></span><input type="checkbox" class="fcpt-sw" data-uib="big">';
@@ -1057,6 +1064,41 @@
     }
     // ---------- Web-App-Modus: eigener Menüpunkt in EAs Navigation, das Tool füllt die Inhaltsfläche ----------
     if (settings.embed === undefined) settings.embed = true;
+
+    // ---------- Design „Stadion“ auch für EAs Web App (nur Farben/Schrift – Bedienung bleibt unverändert) ----------
+    if (settings.eaSkin === undefined) settings.eaSkin = true;
+    GM_addStyle(`
+      html.fcpt-easkin,html.fcpt-easkin body{background-color:#060708 !important}
+      html.fcpt-easkin .ut-root-view,html.fcpt-easkin .ut-content,html.fcpt-easkin .ut-content-container,html.fcpt-easkin .ut-navigation-container-view,html.fcpt-easkin .ut-split-view{background-color:#060708 !important}
+      /* Menüleiste */
+      html.fcpt-easkin .ut-tab-bar,html.fcpt-easkin nav[class*="tab-bar"]{background:linear-gradient(180deg,#0b0b0c,#000) !important;border-color:#211e15 !important}
+      html.fcpt-easkin .ut-tab-bar-item{color:#f4f1e8 !important;font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;text-transform:uppercase !important;letter-spacing:.06em !important;background:transparent !important;transition:background .12s,color .12s}
+      html.fcpt-easkin .ut-tab-bar-item:hover{color:#ffe58a !important}
+      html.fcpt-easkin .ut-tab-bar-item.selected,html.fcpt-easkin .ut-tab-bar-item.fcpt-on{color:#f0bf2e !important;background:linear-gradient(90deg,rgba(240,191,46,.22),rgba(240,191,46,0) 90%) !important;box-shadow:inset 4px 0 0 #f0bf2e}
+      @media (max-width:1023px){html.fcpt-easkin .ut-tab-bar-item.selected,html.fcpt-easkin .ut-tab-bar-item.fcpt-on{background:linear-gradient(0deg,rgba(240,191,46,.22),rgba(240,191,46,0)) !important;box-shadow:inset 0 -3px 0 #f0bf2e}}
+      html.fcpt-easkin .ut-tab-bar-item::before,html.fcpt-easkin .ut-tab-bar-item *{color:inherit !important}
+      /* Kopfzeile */
+      html.fcpt-easkin .ut-navigation-bar-view,html.fcpt-easkin header.ut-navigation-bar-view{background:linear-gradient(180deg,#141414,#060708) !important;border-bottom:1px solid #2a2618 !important}
+      html.fcpt-easkin .ut-navigation-bar-view h1,html.fcpt-easkin .ut-navigation-bar-view .title{font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;font-style:italic;text-transform:uppercase;letter-spacing:.04em;color:#f4f1e8 !important}
+      html.fcpt-easkin .view-navbar-currency-coins,html.fcpt-easkin .view-navbar-currency-coins *{color:#f0bf2e !important}
+      html.fcpt-easkin .ut-navigation-button-control{color:#f0bf2e !important}
+      /* Kacheln (Startseite, Transfers, Verein …) */
+      html.fcpt-easkin .tile,html.fcpt-easkin .ut-tile-view{border:1px solid #2c2717 !important;border-radius:6px !important;box-shadow:inset 0 -3px 0 #c99a1c,0 8px 24px rgba(0,0,0,.45) !important;transition:transform .12s,border-color .12s}
+      html.fcpt-easkin .tile:hover,html.fcpt-easkin .ut-tile-view:hover{border-color:#f0bf2e !important}
+      html.fcpt-easkin .tile .tileHeader,html.fcpt-easkin .tile header h1,html.fcpt-easkin .ut-tile-view h1{font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;font-style:italic;text-transform:uppercase;letter-spacing:.02em;color:#f4f1e8 !important;text-shadow:0 2px 10px rgba(0,0,0,.7)}
+      /* Abschnitte, Listen, Filter */
+      html.fcpt-easkin .ut-section-header-view,html.fcpt-easkin .section-header{background:#111 !important;color:#d9b54a !important;font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;text-transform:uppercase;letter-spacing:.08em;border-color:#2a2618 !important}
+      html.fcpt-easkin .listFUTItem{background-color:#0e0f12 !important;border-color:#2a2618 !important}
+      html.fcpt-easkin .listFUTItem.selected{background-color:#16140c !important;box-shadow:inset 3px 0 0 #f0bf2e !important}
+      html.fcpt-easkin .ut-pinned-list-container,html.fcpt-easkin .ut-pinned-list,html.fcpt-easkin .ut-quick-list-panel-view,html.fcpt-easkin .ut-item-search-view,html.fcpt-easkin .ut-club-search-filters-view,html.fcpt-easkin .ut-search-filter-control,html.fcpt-easkin .ut-navigation-container-view--content,html.fcpt-easkin .ut-no-results-view{background-color:#0b0b0d !important;border-color:#2a2618 !important}
+      html.fcpt-easkin .ea-dialog-view{background:#0e0f12 !important;border:1px solid #3a3420 !important}
+      /* Knöpfe: Hauptaktion in Gold */
+      html.fcpt-easkin .btn-standard.call-to-action,html.fcpt-easkin .btn-standard.primary{background:linear-gradient(180deg,#ffd75e,#e0a800) !important;color:#141006 !important;border-color:#e0a800 !important;font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;text-transform:uppercase;letter-spacing:.06em}
+      html.fcpt-easkin .btn-standard.call-to-action:disabled,html.fcpt-easkin .btn-standard.call-to-action.disabled{opacity:.45}
+      html.fcpt-easkin .fcpt-navbtn .fcpt-navic{clip-path:polygon(50% 0,100% 14%,100% 60%,50% 100%,0 60%,0 14%);border-radius:0;height:30px}
+    `);
+    function applyEaSkin() { document.documentElement.classList.toggle('fcpt-easkin', settings.ufm !== false && settings.eaSkin !== false); }
+    applyEaSkin();
     let fill = false, navBtn = null;
     const eaNav = () => document.querySelector('.ut-tab-bar') || document.querySelector('nav[class*="tab-bar"]');
     function placeFill() {
