@@ -1116,17 +1116,23 @@
       html.fcpt-clubc .fcpt-clubl>.listFUTItem .rowContent{padding-top:4px !important;padding-bottom:4px !important;min-height:0 !important}
       html.fcpt-clubc .fcpt-clubl>.listFUTItem .name{font-weight:700 !important}
       html.fcpt-clubc .fcpt-clubl>.listFUTItem .rating{color:#f0bf2e !important;font-weight:800 !important}
-      @media (max-width:700px){html.fcpt-clubc .fcpt-clubl{grid-template-columns:1fr;gap:4px;padding:4px !important}html.fcpt-clubc .fcpt-clubl>.listFUTItem{zoom:.88}}
+      @media (max-width:700px){
+        html.fcpt-clubc .fcpt-clubl{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:5px !important}
+        html.fcpt-clubc .fcpt-clubl>.listFUTItem{zoom:.56;border-radius:12px !important}
+        html.fcpt-clubc .fcpt-clubl>.listFUTItem .fcpt-inline{font-size:15px !important;flex-wrap:wrap}
+      }
+      html.fcpt-easkin .ut-fifa-header-view,html.fcpt-easkin .ut-app-header{background:linear-gradient(180deg,#141414,#060708) !important}
     `);
-    const CLUB_RX = /^(spieler|players|verein|club|meine spieler)$/i;
+    const CLUB_RX = /(spieler|players|profis|verein|club)/i, NOT_CLUB = /(transfer|sbc|markt|market|aufgabe|challenge)/i;
     function markClubList() {
       const de = document.documentElement;
       de.classList.toggle('fcpt-clubc', settings.clubCompact !== false);
       if (settings.clubCompact === false) return;
       let lists = [...document.querySelectorAll('.ut-club-search-results-view ul, .ut-club-items-view ul, [class*="club-search-results"] ul')];
       if (!lists.length) {
-        const t = document.querySelector('.ut-navigation-bar-view h1, .ut-navigation-bar-view .title');
-        if (t && CLUB_RX.test((t.textContent || '').trim())) lists = [...document.querySelectorAll('.paginated-item-list ul, ul.itemList')];
+        const t = document.querySelector('.ut-navigation-bar-view h1, .ut-navigation-bar-view .title, h1.title');
+        const tt = t ? (t.textContent || '').trim() : '';
+        if (CLUB_RX.test(tt) && !NOT_CLUB.test(tt)) lists = [...new Set([...document.querySelectorAll('.listFUTItem')].map((li) => li.parentElement).filter((u) => u && !u.closest('#fcpt-panel')))];
       }
       document.querySelectorAll('.fcpt-clubl').forEach((u) => { if (!lists.includes(u)) u.classList.remove('fcpt-clubl'); });
       lists.forEach((u) => { if (u.querySelector(':scope > .listFUTItem')) u.classList.add('fcpt-clubl'); });
