@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.69.2
+// @version      2.70.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -8476,6 +8476,13 @@ const SBC = (function () {
       const uc = uRow.querySelector('input');
       uc.checked = settings.ufm !== false;
       uc.addEventListener('change', (e) => { e.stopPropagation(); settings.ufm = uc.checked; saveSettings(); panel.classList.toggle('ufm', settings.ufm); try { applyEaSkin(); } catch (x) { /* */ } quick(); if (cur === 'home') renderHome(); });
+      const lRow = document.createElement('div');
+      lRow.className = 'fcpt-set';
+      lRow.innerHTML = '<span>EA-Layout „Manager“<small>Wie Manager-Spiele: Menü links mit großen Symbolen (auch am Handy), goldene Rahmen, Wappen und Transferlisten-Balken in der Kopfzeile</small></span><input type="checkbox" class="fcpt-sw" data-uib="ealay">';
+      grp.appendChild(lRow);
+      const lc = lRow.querySelector('input');
+      lc.checked = settings.eaLayout !== false;
+      lc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaLayout = lc.checked; saveSettings(); try { layoutEa(); } catch (x) { /* */ } });
       const sRow = document.createElement('div');
       sRow.className = 'fcpt-set';
       sRow.innerHTML = '<span>„Stadion“ auch für EAs Web App<small>Färbt EAs Menü, Kopfzeile, Kacheln, Listen und Hauptknöpfe schwarz/gold. Nur Optik – Bedienung bleibt gleich</small></span><input type="checkbox" class="fcpt-sw" data-uib="easkin">';
@@ -8665,6 +8672,90 @@ const SBC = (function () {
       lists.forEach((u) => { if (u.querySelector(':scope > .listFUTItem')) u.classList.add('fcpt-clubl'); });
     }
     setInterval(() => { try { markClubList(); } catch (e) { /* */ } }, 800);
+
+    // ---------- EA-Layout „Manager“: wie Manager-Spiele – Menü links mit großen Symbolen, goldene Rahmen,
+    // Wappen + Belegungsbalken in der Kopfzeile, Hintergrund mit Goldschlieren. Nur Optik/Anordnung.
+    if (settings.eaLayout === undefined) settings.eaLayout = true;
+    const RAILW = 82;
+    GM_addStyle(`
+      html:root.fcpt-ufmx.fcpt-easkin,html:root.fcpt-ufmx.fcpt-easkin body{background:linear-gradient(118deg,transparent 0 34%,rgba(212,165,33,.10) 36%,transparent 41%,transparent 63%,rgba(212,165,33,.07) 65%,transparent 69%),radial-gradient(1100px 600px at 25% -5%,rgba(255,255,255,.07),transparent 60%),linear-gradient(180deg,#1d1e21,#0a0a0b) fixed !important}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-root-view,html:root.fcpt-ufmx.fcpt-easkin .ut-content,html:root.fcpt-ufmx.fcpt-easkin .ut-content-container,html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-container-view,html:root.fcpt-ufmx.fcpt-easkin .ut-split-view{background:transparent !important}
+      /* Menü: große helle Symbole, schmale Großschrift, aktiver Punkt dunkel abgesetzt + gold */
+      html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar{background:linear-gradient(90deg,#0b0b0c,#161618) !important;border:0 !important;border-right:2px solid #2d2a20 !important;box-shadow:6px 0 24px rgba(0,0,0,.45)}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item{font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-weight:700 !important;font-style:normal !important;letter-spacing:.05em !important;color:#dcd8cc !important;text-shadow:0 2px 0 rgba(0,0,0,.6)}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item::before{color:#f3f1ea !important;filter:drop-shadow(0 3px 0 rgba(0,0,0,.55))}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item.selected,html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item.fcpt-on{background:linear-gradient(180deg,#24221b,#17160f) !important;color:#f0bf2e !important;box-shadow:inset 0 1px 0 #4a4128,inset 0 -1px 0 #4a4128 !important;border-radius:0 !important}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item.selected::before,html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item.fcpt-on::before{color:#f0bf2e !important;filter:drop-shadow(0 0 10px rgba(240,191,46,.45)) drop-shadow(0 3px 0 rgba(0,0,0,.55))}
+      /* Menü links am Handy */
+      html.fcpt-vrail .ut-tab-bar{position:fixed !important;left:0 !important;right:auto !important;top:var(--fcpt-rt,0px) !important;bottom:0 !important;width:${RAILW}px !important;height:auto !important;flex-direction:column !important;justify-content:flex-start !important;align-items:stretch !important;overflow-y:auto !important;overflow-x:hidden !important;z-index:60 !important;padding:6px 0 calc(env(safe-area-inset-bottom,0px) + 6px) !important}
+      html.fcpt-vrail .ut-tab-bar-item{flex:none !important;width:100% !important;max-width:none !important;min-width:0 !important;min-height:84px !important;display:flex !important;flex-direction:column !important;align-items:center !important;justify-content:center !important;gap:6px;font-size:10.5px !important;letter-spacing:.01em !important;padding:6px 1px !important;white-space:normal !important;word-break:break-word;text-align:center;border-bottom:1px solid rgba(255,255,255,.04) !important}
+      html.fcpt-vrail .ut-tab-bar-item::before{font-size:34px !important;line-height:1 !important;margin:0 !important}
+      html.fcpt-vrail .ut-tab-bar-item *{font-size:inherit !important;overflow:visible !important}
+      html.fcpt-vrail .fcpt-navbtn .fcpt-navic{width:36px;height:42px;font-size:13px}
+      html.fcpt-vrail .fcpt-navbtn .fcpt-nl-l{display:none}
+      /* Kopfzeile: Wappen vor dem Titel, Münzen als Kästen, Belegungsbalken */
+      html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view{background:linear-gradient(180deg,rgba(40,40,44,.92),rgba(14,14,16,.92)) !important;border-bottom:1px solid #3a3420 !important;position:relative;padding-bottom:12px !important;box-sizing:content-box}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view h1,html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view .title{font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-style:normal !important;font-weight:800 !important;letter-spacing:.04em !important;color:#f6f4ee !important;display:inline-flex !important;align-items:center;gap:10px}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view h1::before,html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view .title::before{content:'';flex:none;width:30px;height:36px;background:url("__SHIELD__") center/contain no-repeat;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+      html:root.fcpt-ufmx.fcpt-easkin .fcpt-hud{position:absolute;left:50%;bottom:3px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;font:700 10px 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;color:#cfc8b2;pointer-events:none;white-space:nowrap}
+      html:root.fcpt-ufmx.fcpt-easkin .fcpt-hud i{display:block;width:110px;height:5px;border-radius:3px;background:#2a271d;overflow:hidden;box-shadow:inset 0 0 0 1px #3a3420}
+      html:root.fcpt-ufmx.fcpt-easkin .fcpt-hud i b{display:block;height:100%;background:linear-gradient(90deg,#b8860b,#f0bf2e,#ffe58a)}
+      html:root.fcpt-ufmx.fcpt-easkin .view-navbar-currency>*,html:root.fcpt-ufmx.fcpt-easkin .view-navbar-currency-coins,html:root.fcpt-ufmx.fcpt-easkin .view-navbar-currency-points{background:linear-gradient(180deg,#1c1c1f,#0d0d0e) !important;border:1px solid #3a3420 !important;border-radius:6px !important;padding:2px 8px !important;box-shadow:0 3px 8px rgba(0,0,0,.4);font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-weight:700 !important}
+      /* Kacheln: dünner Goldrahmen, eckig, Lichtschlieren, große schmale Großschrift */
+      html:root.fcpt-ufmx.fcpt-easkin .tile,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view{background-color:#141416 !important;border:2px solid #a8873a !important;border-radius:3px !important;box-shadow:inset 0 0 0 1px rgba(0,0,0,.7),0 0 0 1px #2c2717,0 14px 30px rgba(0,0,0,.55) !important}
+      html:root.fcpt-ufmx.fcpt-easkin .tile::after,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view::after{border-radius:0;background:linear-gradient(118deg,transparent 30%,rgba(255,240,200,.10) 38%,transparent 46%),radial-gradient(90% 60% at 80% 10%,rgba(212,165,33,.20),transparent 60%),linear-gradient(0deg,rgba(0,0,0,.55),transparent 45%)}
+      html:root.fcpt-ufmx.fcpt-easkin .tile header,html:root.fcpt-ufmx.fcpt-easkin .tile .tileHeader,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view h1{position:relative;z-index:2}
+      html:root.fcpt-ufmx.fcpt-easkin .tile .tileHeader,html:root.fcpt-ufmx.fcpt-easkin .tile header h1,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view h1{font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-style:normal !important;font-weight:800 !important;letter-spacing:.02em !important;color:#f6f4ee !important;font-size:1.6em !important;text-shadow:0 3px 0 rgba(0,0,0,.55),0 0 18px rgba(0,0,0,.6) !important}
+      html:root.fcpt-ufmx.fcpt-easkin .tile img,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view img,html:root.fcpt-ufmx.fcpt-easkin .tile svg{filter:drop-shadow(0 8px 0 rgba(0,0,0,.35)) drop-shadow(0 0 22px rgba(240,191,46,.25))}
+      html:root.fcpt-ufmx.fcpt-easkin .listFUTItem{border-radius:3px !important}
+      html:root.fcpt-ufmx.fcpt-easkin .ut-section-header-view,html:root.fcpt-ufmx.fcpt-easkin .section-header{font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-style:normal !important;background:linear-gradient(90deg,rgba(212,165,33,.16),transparent 70%) !important;border-left:3px solid #f0bf2e !important}
+    `.replace('__SHIELD__', "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 40'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffe58a'/%3E%3Cstop offset='.5' stop-color='%23f0bf2e'/%3E%3Cstop offset='1' stop-color='%239a6a00'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M17 1l15 5v13c0 10-7 17-15 20C9 36 2 29 2 19V6z' fill='url(%23g)'/%3E%3Cpath d='M17 5l11 3.6V19c0 7.6-5 13-11 15.6C11 32 6 26.6 6 19V8.6z' fill='%230b0b0c'/%3E%3Ctext x='17' y='24' text-anchor='middle' font-family='Arial' font-weight='800' font-style='italic' font-size='13' fill='%23f0bf2e'%3E27%3C/text%3E%3C/svg%3E"));
+    const shifted = new Map();   // Element -> ursprüngliche Inline-Styles
+    function unshift() { shifted.forEach((v, el) => { el.style.marginLeft = v.ml; el.style.width = v.w; el.style.left = v.l; }); shifted.clear(); }
+    function layoutEa() {
+      const de = document.documentElement;
+      const on = de.classList.contains('fcpt-easkin') && settings.eaLayout !== false;
+      de.classList.toggle('fcpt-ufmx', on);
+      const n = eaNav && eaNav();
+      const mobile = W.innerWidth < 1024;
+      let wantRail = on && mobile && !!n;
+      if (wantRail && !de.classList.contains('fcpt-vrail')) {
+        // nur wenn die Leiste wirklich unten liegt (sonst ist sie schon links)
+        const r = n.getBoundingClientRect();
+        if (!(r.top > W.innerHeight / 2 && r.width > r.height)) wantRail = false;
+      }
+      de.classList.toggle('fcpt-vrail', wantRail);
+      if (!wantRail) { if (shifted.size) unshift(); }
+      else {
+        const hd = document.querySelector('.ut-fifa-header-view');
+        const rt = hd ? Math.max(0, Math.round(hd.getBoundingClientRect().bottom)) : 0;
+        de.style.setProperty('--fcpt-rt', rt + 'px');
+        const host = n.parentElement;
+        if (host) for (const el of host.children) {
+          if (el === n || el.id === 'fcpt-panel' || el.id === 'fcpt-btn' || shifted.has(el)) continue;
+          const cs = getComputedStyle(el);
+          if (cs.display === 'none') continue;
+          const r = el.getBoundingClientRect();
+          if (r.bottom <= rt + 2) continue;   // EA-Banner oben bleibt volle Breite
+          shifted.set(el, { ml: el.style.marginLeft, w: el.style.width, l: el.style.left });
+          if (cs.position === 'absolute' || cs.position === 'fixed') el.style.left = (parseFloat(cs.left) || 0) + RAILW + 'px';
+          else { el.style.marginLeft = RAILW + 'px'; el.style.width = `calc(100% - ${RAILW}px)`; }
+        }
+      }
+      // Belegungsbalken in EAs Kopfzeile
+      const nb = document.querySelector('.ut-navigation-bar-view');
+      if (on && nb) {
+        let h = nb.querySelector('.fcpt-hud');
+        if (!h) { h = document.createElement('div'); h.className = 'fcpt-hud'; h.innerHTML = '<span>TRANSFERLISTE</span><i><b></b></i><em></em>'; nb.appendChild(h); }
+        const c = items.length;
+        h.style.display = c ? 'flex' : 'none';
+        h.querySelector('b').style.width = Math.min(100, c) + '%';
+        h.querySelector('em').textContent = `${c}/100`;
+      } else document.querySelectorAll('.fcpt-hud').forEach((x) => x.remove());
+      try { if (typeof placeFill === 'function' && document.documentElement.classList.contains('fcpt-fill')) placeFill(); } catch (e) { /* */ }
+    }
+    setInterval(() => { try { layoutEa(); } catch (e) { /* */ } }, 1000);
+    W.addEventListener('resize', () => { try { unshift(); document.documentElement.classList.remove('fcpt-vrail'); layoutEa(); } catch (e) { /* */ } });
     // ---------- EA-Farben umschreiben: liest EAs eigene Stylesheets und ersetzt Blautöne durch Schwarz/Gold,
     // verkleinert Schriftgrößen. Zustände (Hover, Ausgewählt) bleiben erhalten, weil die Regeln selbst angepasst werden.
     if (settings.eaFont === undefined) settings.eaFont = 0.9;
