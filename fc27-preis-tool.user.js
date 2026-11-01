@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.72.0
+// @version      2.72.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -1364,11 +1364,12 @@ const SBC = (function () {
   const LIVE_MS = 30 * 60000;
   for (const k of Object.keys(settings.livePx)) if (Date.now() - settings.livePx[k].t > 6 * 3600000) delete settings.livePx[k];
   function liveGet(rid) { const e = settings.livePx[rid]; return e && Date.now() - e.t < LIVE_MS ? e : null; }
-  function setLive(rid, v, n, s) { settings.livePx[rid] = { v: v || 0, n: n || 0, s: s || 0, t: Date.now() }; saveSettings(); }
+  function setLive(rid, v, n, s, o) { settings.livePx[rid] = { v: v || 0, n: n || 0, s: s || 0, o: o || 0, t: Date.now() }; saveSettings(); }
   const agoMin = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'gerade' : `vor ${m} Min`; };
   function liveChip(p) {
     const e = liveGet(p.resourceId);
-    if (e) return `<span class="fcpt-chip live" title="Günstigster Sofortkauf dieser Karte auf dem EA-Markt (${e.n} Angebot${e.n === 1 ? '' : 'e'} gesehen, ${e.s} Suche${e.s === 1 ? '' : 'n'}) – ${agoMin(e.t)}">📡 Live <b>${e.v ? fmt(e.v) : 'kein Angebot'}</b></span>`;
+    if (e && e.v) return `<button type="button" class="fcpt-chip live" data-live="${esc(p.resourceId)}" title="Günstigster Sofortkauf genau dieser Karte auf dem EA-Markt (${e.n} Angebot${e.n === 1 ? '' : 'e'} gesehen, ${e.s} Suche${e.s === 1 ? '' : 'n'}) – ${agoMin(e.t)}. Tippen = erneut prüfen">📡 Live <b>${fmt(e.v)}</b></button>`;
+    if (e) return `<button type="button" class="fcpt-chip warn" data-live="${esc(p.resourceId)}" title="${e.o ? `Nur ${e.o} Angebot(e) anderer Versionen dieses Spielers gefunden – diese Version wird gerade nicht angeboten oder ist untergegangen.` : 'EA hat gerade kein einziges Sofortkauf-Angebot dieser Karte geliefert.'} ${agoMin(e.t)}. Tippen = erneut prüfen">📡 Live: ${e.o ? 'nur andere Versionen' : 'nichts auf dem Markt'} ↻</button>`;
     return `<button type="button" class="fcpt-chip fcpt-livebtn" data-live="${esc(p.resourceId)}" title="Aktuellen Preis direkt auf dem EA-Transfermarkt prüfen (1–4 Suchen)">📡 Live-Preis</button>`;
   }
   // Quellen uneinig? (Futbin vs. EA-Ø mehr als 35 % auseinander)
@@ -1382,7 +1383,7 @@ const SBC = (function () {
     const ref = b.__ref || marketPrice(p.resourceId);
     b.disabled = true; b.textContent = '📡 prüfe …';
     BUY.livePrice(p, ref).then((r) => {
-      showToast(r.v ? `📡 ${p.name}: günstigster Sofortkauf ${fmt(r.v)} (${r.n} Angebot${r.n === 1 ? '' : 'e'})` : `📡 ${p.name}: gerade kein Angebot auf dem Markt`);
+      showToast(r.v ? `📡 ${p.name}: günstigster Sofortkauf ${fmt(r.v)} (${r.n} Angebot${r.n === 1 ? '' : 'e'})` : r.other ? `📡 ${p.name}: diese Version gerade nicht auf dem Markt – nur ${r.other} Angebot(e) anderer Versionen. Preis bleibt Futbin/EA-Ø.` : `📡 ${p.name}: EA zeigt gerade kein Sofortkauf-Angebot dieser Karte (deine eigenen Angebote zeigt EA dir in der Suche nie). Preis bleibt Futbin/EA-Ø.`);
     }).catch((err) => { showToast('📡 ' + err.message, true); b.disabled = false; b.textContent = '📡 Live-Preis'; })
       .finally(() => { if (b.__redraw) b.__redraw(); try { if (panel.classList.contains('open')) render(); } catch (x) { /* */ } });
   }, true);
@@ -7257,7 +7258,7 @@ const SBC = (function () {
       const kDef = keyOf(/^masked_?def_?id$/i, 'maskedDefId'), kMax = keyOf(/^max_?(buy|bin|buynow)$/i, 'maxBuy'), kMin = keyOf(/^min_?(buy|bin|buynow)$/i, 'minBuy');
       C[kDef] = Number(p.resourceId) % 16777216;
       liveBusy = true;
-      let hi = ref ? roundPrice(ref * 1.2) : 0, best = null, n = 0, searches = 0, full = false;
+      let hi = ref ? roundPrice(ref * 1.2) : 0, best = null, n = 0, searches = 0, full = false, seen = 0, other = 0;
       try {
         for (let i = 0; i < 4; i++) {
           C[kMax] = hi || 0; C[kMin] = 0;
@@ -7265,7 +7266,9 @@ const SBC = (function () {
           const ev = await obs(S.searchTransferMarket(C, 1), 8000);
           if (ev && ev.success === false) { cooldown(ev.status); throw new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`); }
           const raw = ((ev && (ev.response || ev.data)) || {}).items || [];
-          const got = raw.map((r) => mapItem(r)).filter((x) => x && String(x.resourceId) === String(p.resourceId) && x.active && x.buyNow);
+          const mapped = raw.map((r) => mapItem(r)).filter(Boolean);
+          seen += raw.length; other += mapped.filter((x) => String(x.resourceId) !== String(p.resourceId)).length;
+          const got = mapped.filter((x) => String(x.resourceId) === String(p.resourceId) && x.active && x.buyNow);
           full = raw.length >= 20;
           if (got.length) {
             const m = Math.min(...got.map((x) => x.buyNow));
@@ -7283,8 +7286,8 @@ const SBC = (function () {
           await sleep(700 + Math.random() * 500);
         }
       } finally { liveBusy = false; }
-      setLive(p.resourceId, best, n, searches);
-      return { v: best, n, searches };
+      setLive(p.resourceId, best, n, searches, other);
+      return { v: best, n, searches, seen, other };
     }
     return { mount, search, render, diag, livePrice, addList: (o) => { const ok = lstAdd(o); render(); return ok; } };
   })();

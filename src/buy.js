@@ -1370,7 +1370,7 @@
       const kDef = keyOf(/^masked_?def_?id$/i, 'maskedDefId'), kMax = keyOf(/^max_?(buy|bin|buynow)$/i, 'maxBuy'), kMin = keyOf(/^min_?(buy|bin|buynow)$/i, 'minBuy');
       C[kDef] = Number(p.resourceId) % 16777216;
       liveBusy = true;
-      let hi = ref ? roundPrice(ref * 1.2) : 0, best = null, n = 0, searches = 0, full = false;
+      let hi = ref ? roundPrice(ref * 1.2) : 0, best = null, n = 0, searches = 0, full = false, seen = 0, other = 0;
       try {
         for (let i = 0; i < 4; i++) {
           C[kMax] = hi || 0; C[kMin] = 0;
@@ -1378,7 +1378,9 @@
           const ev = await obs(S.searchTransferMarket(C, 1), 8000);
           if (ev && ev.success === false) { cooldown(ev.status); throw new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`); }
           const raw = ((ev && (ev.response || ev.data)) || {}).items || [];
-          const got = raw.map((r) => mapItem(r)).filter((x) => x && String(x.resourceId) === String(p.resourceId) && x.active && x.buyNow);
+          const mapped = raw.map((r) => mapItem(r)).filter(Boolean);
+          seen += raw.length; other += mapped.filter((x) => String(x.resourceId) !== String(p.resourceId)).length;
+          const got = mapped.filter((x) => String(x.resourceId) === String(p.resourceId) && x.active && x.buyNow);
           full = raw.length >= 20;
           if (got.length) {
             const m = Math.min(...got.map((x) => x.buyNow));
@@ -1396,8 +1398,8 @@
           await sleep(700 + Math.random() * 500);
         }
       } finally { liveBusy = false; }
-      setLive(p.resourceId, best, n, searches);
-      return { v: best, n, searches };
+      setLive(p.resourceId, best, n, searches, other);
+      return { v: best, n, searches, seen, other };
     }
     return { mount, search, render, diag, livePrice, addList: (o) => { const ok = lstAdd(o); render(); return ok; } };
   })();
