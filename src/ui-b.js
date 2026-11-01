@@ -1167,7 +1167,29 @@
       html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip b{color:#f4f1e8 !important;font-weight:700 !important}
       html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.profit b{color:#4ade80 !important}
       html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.loss,html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.loss b{color:#f8a3a3 !important}
-      html.fcpt-easkin .SearchResults .listFUTItem,html.fcpt-easkin .ut-market-search-results-view .listFUTItem,html.fcpt-easkin .ut-search-results-view .listFUTItem{zoom:.88}
+      html.fcpt-easkin .SearchResults .listFUTItem,html.fcpt-easkin .ut-market-search-results-view .listFUTItem,html.fcpt-easkin .ut-search-results-view .listFUTItem{zoom:.84}
+      /* Preis-Spalte rechts statt Leiste unten (PC): spart eine ganze Zeile pro Spieler */
+      @media (min-width:900px){
+        html.fcpt-easkin .listFUTItem.fcpt-has-inline{display:grid !important;grid-template-columns:minmax(0,1fr) 168px !important;align-items:stretch !important}
+        html.fcpt-easkin .listFUTItem.fcpt-has-inline > :not(.fcpt-inline):not(.fcpt-buybadge){grid-column:1 !important;min-width:0}
+        html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline{grid-column:2 !important;grid-row:1 / span 9 !important;flex-direction:column !important;flex-wrap:nowrap !important;align-items:flex-start !important;justify-content:center !important;gap:5px !important;border-top:0 !important;border-left:1px solid rgba(255,255,255,.07) !important;border-radius:0 9px 9px 0 !important;padding:10px 14px !important;font-size:12.5px !important}
+        html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip{display:flex !important;justify-content:space-between;width:100%;gap:10px}
+      }
+      /* Farbiger Streifen links: grün = lohnt sich, rot = zu teuer */
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-bargain,html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-good{box-shadow:inset 4px 0 0 #3dd68c,0 4px 14px rgba(0,0,0,.25) !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-bad{box-shadow:inset 4px 0 0 #e05252,0 4px 14px rgba(0,0,0,.25) !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-meh{box-shadow:inset 4px 0 0 #8a8678,0 4px 14px rgba(0,0,0,.25) !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline.fcpt-watchhit{box-shadow:inset 4px 0 0 #f0bf2e,0 4px 14px rgba(0,0,0,.25) !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline:hover{transform:translateX(2px)}
+      html:root.fcpt-easkin .listFUTItem.fcpt-has-inline.selected{background:linear-gradient(90deg,rgba(240,191,46,.13),rgba(240,191,46,.04)),var(--t2,#202226) !important}
+      /* EAs Preisangaben in der Zeile: kleine graue Beschriftung, kräftige Zahl */
+      html.fcpt-easkin .listFUTItem .auction .label,html.fcpt-easkin .listFUTItem .auctionValue .label,html.fcpt-easkin .listFUTItem .auctionStartPrice .label{font-size:10.5px !important;text-transform:uppercase;letter-spacing:.06em;color:#8f8b80 !important}
+      html.fcpt-easkin .listFUTItem .auction .value,html.fcpt-easkin .listFUTItem .auctionValue .value,html.fcpt-easkin .listFUTItem .auctionStartPrice .value{font-weight:700 !important;color:#f4f1e8 !important}
+      html.fcpt-easkin .listFUTItem .name{font-size:1.05em !important}
+      /* Detail-Bereich rechts und „Nächste“-Leiste */
+      html.fcpt-easkin .DetailPanel,html.fcpt-easkin .ut-navigation-container-view--content .DetailView,html.fcpt-easkin .ut-item-details-view{background:var(--t1,#18191c) !important;border:1px solid var(--tb,#3a3420) !important;border-radius:12px !important}
+      html.fcpt-easkin .pagingContainer,html.fcpt-easkin .ut-pagination-control,html.fcpt-easkin .pagination{background:var(--t1,#18191c) !important;border:1px solid var(--tb,#3a3420) !important;border-radius:10px !important;box-shadow:0 -6px 18px rgba(0,0,0,.35)}
+      html.fcpt-easkin .pagingContainer button,html.fcpt-easkin .pagination button{color:#f0bf2e !important;font-weight:700 !important}
       @media (max-width:700px){html.fcpt-easkin .SearchResults .listFUTItem,html.fcpt-easkin .ut-market-search-results-view .listFUTItem,html.fcpt-easkin .ut-search-results-view .listFUTItem{zoom:.92}}
       html.fcpt-easkin .fcpt-navbtn .fcpt-navic{clip-path:polygon(50% 0,100% 14%,100% 60%,50% 100%,0 60%,0 14%);border-radius:0;height:30px}
     `);
