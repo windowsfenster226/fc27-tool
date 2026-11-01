@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.68.0
+// @version      2.69.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -7849,7 +7849,7 @@ const SBC = (function () {
         html.fcpt-fill #fcpt-panel.ufm .u-hero{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
         html.fcpt-fill #fcpt-panel.ufm .u-tile{min-height:250px;padding:20px 22px}
         html.fcpt-fill #fcpt-panel.ufm .u-tile:nth-child(-n+2){grid-column:span 2;min-height:290px}
-        html.fcpt-fill #fcpt-panel.ufm .u-tile .u-t{font-size:44px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile .u-t{font-size:clamp(26px,2.5vw,44px);overflow-wrap:anywhere}
         html.fcpt-fill #fcpt-panel.ufm .u-tile:nth-child(-n+2) .u-t{font-size:56px}
         html.fcpt-fill #fcpt-panel.ufm .u-tile .art svg{width:260px;height:260px}
         html.fcpt-fill #fcpt-panel.ufm .u-tile .u-s{font-size:14px}
@@ -8473,6 +8473,13 @@ const SBC = (function () {
       const sc = sRow.querySelector('input');
       sc.checked = settings.eaSkin !== false;
       sc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaSkin = sc.checked; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
+      const tRow = document.createElement('div');
+      tRow.className = 'fcpt-set';
+      tRow.innerHTML = '<span>Helligkeit des Designs<small>Für Tool und EAs Web App. Dunkel = Schwarz, Mittel = Graphit, Hell = helles Grau</small></span><select data-uib="tone"><option value="dark">Dunkel</option><option value="mid">Mittel</option><option value="light">Hell</option></select>';
+      grp.appendChild(tRow);
+      const ts = tRow.querySelector('select');
+      ts.value = settings.uiTone;
+      ts.addEventListener('change', (e) => { e.stopPropagation(); settings.uiTone = ts.value; saveSettings(); applyTone(); try { applyEaSkin(); } catch (x) { /* */ } });
       const fRow = document.createElement('div');
       fRow.className = 'fcpt-set';
       fRow.innerHTML = '<span>Schriftgröße in EAs Web App<small>Kleiner = mehr auf einen Blick. Gilt nur, wenn „Stadion“ für EA an ist</small></span><select data-uib="eafont"><option value="1">Normal (100 %)</option><option value="0.95">Etwas kleiner (95 %)</option><option value="0.9">Kompakt (90 %)</option><option value="0.85">Sehr kompakt (85 %)</option></select>';
@@ -8676,7 +8683,7 @@ const SBC = (function () {
         if (textProp) return sat >= 0.6 && l >= 0.4 && l <= 0.7 ? out(44, 0.86, 0.56, v[3]) : blue && l >= 0.55 ? out(42, 0.08, Math.max(l, 0.72), v[3]) : null;
         if (accent) return out(44, 0.86, 0.56, v[3]);
         if (!blue) return null;
-        if (l < 0.6) return out(40, 0.07, l * 0.6, v[3]);
+        if (l < 0.6) return out(40, 0.07, settings.uiTone === 'light' ? 0.17 + l * 0.55 : settings.uiTone === 'mid' ? 0.1 + l * 0.55 : l * 0.6, v[3]);
         return out(42, 0.1, l, v[3]);
       }
       function fixRule(rule) {
@@ -8727,6 +8734,34 @@ const SBC = (function () {
       setInterval(() => { try { scan(); } catch (e) { /* */ } }, 2000);
       return { scan, reset, count: () => changed.length };
     })();
+
+    // ---------- Helligkeit des Stadion-Designs (Dunkel / Mittel / Hell) ----------
+    if (settings.uiTone === undefined) settings.uiTone = 'mid';
+    GM_addStyle(`
+      html.fcpt-tone-mid{--t0:#1b1c20;--t1:#222328;--t2:#2a2b31;--t3:#33353b;--tb:#3f3b2c;--tx:#f4f1e8;--tx2:#c9c4b6}
+      html.fcpt-tone-light{--t0:#2c2e34;--t1:#35373e;--t2:#3e4048;--t3:#484b53;--tb:#5a5440;--tx:#fbf9f3;--tx2:#dcd7ca}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm,html[class*="fcpt-tone-"] #fcpt-panel.ufm .fcpt-body{background:var(--t0) !important}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm{--bg:var(--t0);--bg2:var(--t1);--bg3:var(--t2);--line:var(--tb);--ink2:var(--tx2)}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm .fcpt-head{background:linear-gradient(180deg,var(--t2),var(--t0)) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm .fcpt-rail{background:linear-gradient(180deg,var(--t1),var(--t0)) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm .d-t,html[class*="fcpt-tone-"] #fcpt-panel.ufm .d-c,html[class*="fcpt-tone-"] #fcpt-panel.ufm .fcpt-sgroup{background:linear-gradient(180deg,var(--t2),var(--t1)) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm .u-bdg button,html[class*="fcpt-tone-"] #fcpt-panel.ufm .fcpt-icons .ic,html[class*="fcpt-tone-"] #fcpt-panel.ufm .fcpt-qs>*{background:var(--t2) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm .u-tile{border-color:var(--tb)}
+      html[class*="fcpt-tone-"] #fcpt-panel.ufm .u-tile::after{background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.09) 45%,transparent 55%),linear-gradient(0deg,rgba(0,0,0,.55) 0%,rgba(0,0,0,.05) 60%,transparent 100%)}
+      html[class*="fcpt-tone-"].fcpt-easkin,html[class*="fcpt-tone-"].fcpt-easkin body,html[class*="fcpt-tone-"].fcpt-easkin .ut-root-view,html[class*="fcpt-tone-"].fcpt-easkin .ut-content,html[class*="fcpt-tone-"].fcpt-easkin .ut-content-container,html[class*="fcpt-tone-"].fcpt-easkin .ut-navigation-container-view,html[class*="fcpt-tone-"].fcpt-easkin .ut-split-view{background-color:var(--t0) !important}
+      html[class*="fcpt-tone-"].fcpt-easkin .ut-tab-bar,html[class*="fcpt-tone-"].fcpt-easkin nav[class*="tab-bar"]{background:linear-gradient(180deg,var(--t1),var(--t0)) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"].fcpt-easkin .ut-navigation-bar-view,html[class*="fcpt-tone-"].fcpt-easkin .ut-fifa-header-view,html[class*="fcpt-tone-"].fcpt-easkin .ut-app-header{background:linear-gradient(180deg,var(--t3),var(--t1)) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"].fcpt-easkin .listFUTItem{background-color:var(--t2) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"].fcpt-easkin .listFUTItem.selected{background-color:#4a4330 !important}
+      html[class*="fcpt-tone-"].fcpt-easkin .ut-section-header-view,html[class*="fcpt-tone-"].fcpt-easkin .section-header{background:var(--t1) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"].fcpt-easkin .ut-pinned-list-container,html[class*="fcpt-tone-"].fcpt-easkin .ut-pinned-list,html[class*="fcpt-tone-"].fcpt-easkin .ut-quick-list-panel-view,html[class*="fcpt-tone-"].fcpt-easkin .ut-item-search-view,html[class*="fcpt-tone-"].fcpt-easkin .ut-club-search-filters-view,html[class*="fcpt-tone-"].fcpt-easkin .ut-search-filter-control,html[class*="fcpt-tone-"].fcpt-easkin .ut-navigation-container-view--content,html[class*="fcpt-tone-"].fcpt-easkin .ut-no-results-view,html[class*="fcpt-tone-"].fcpt-easkin .ea-dialog-view{background-color:var(--t1) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"].fcpt-easkin .tile,html[class*="fcpt-tone-"].fcpt-easkin .ut-tile-view{border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"].fcpt-clubc .fcpt-clubl>.listFUTItem{background-color:var(--t2) !important;border-color:var(--tb) !important}
+      html[class*="fcpt-tone-"].fcpt-clubc .fcpt-clubl>.listFUTItem:nth-child(even){background-color:var(--t3) !important}
+      html[class*="fcpt-tone-"].fcpt-clubc .fcpt-clubl>.listFUTItem.selected{background-color:#4a4330 !important}
+    `);
+    function applyTone() { const de = document.documentElement; de.classList.remove('fcpt-tone-mid', 'fcpt-tone-light'); if (settings.uiTone === 'mid' || settings.uiTone === 'light') de.classList.add('fcpt-tone-' + settings.uiTone); }
+    applyTone();
     function applyEaSkin() { document.documentElement.classList.toggle('fcpt-easkin', settings.ufm !== false && settings.eaSkin !== false); try { EASK.reset(); EASK.scan(); } catch (e) { /* */ } }
     applyEaSkin();
     let fill = false, navBtn = null;
