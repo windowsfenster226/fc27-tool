@@ -5,6 +5,7 @@
   // eslint-disable-next-line no-var
   var UIB = (() => {
     if (settings.uiMini === undefined) settings.uiMini = false;
+    if (settings.ufm === undefined) settings.ufm = true;   // Design „Stadion“ (Schwarz/Gold, große Kacheln)
     if (settings.iosBottom === undefined) settings.iosBottom = 80;   // Platz für Safaris untere Leiste (iPhone)
     const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const I = {
@@ -32,7 +33,7 @@
     try {
       const l = document.createElement('link');
       l.rel = 'stylesheet';
-      l.href = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap';
+      l.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;1,800&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap';
       document.head.appendChild(l);
     } catch (e) { /* ohne Webfonts */ }
 
@@ -309,6 +310,88 @@
       @media (min-width:900px){.d-charts{grid-template-columns:repeat(2,minmax(0,1fr))}}
       html.fcpt-fill #fcpt-panel{position:fixed !important;left:var(--fcpt-fl,0px) !important;right:0 !important;top:0 !important;bottom:var(--fcpt-fb,0px) !important;width:auto !important;max-width:none !important;height:auto !important;max-height:none !important;border-radius:0 !important;transform:none !important;z-index:99990 !important}
       html.fcpt-fill .fcpt-resize{display:none}
+      /* ===== Design „Stadion“ (Schwarz/Gold, wie Manager-Spiele) ===== */
+      #fcpt-panel.ufm{--bg:#060708;--bg2:#0e0f12;--bg3:#16171b;--line:#2a2618;--gold:#f0bf2e;--ink:#f4f1e8;--ink2:#b7b2a3;--ink3:#857f6f;background:#060708}
+      #fcpt-panel.ufm .fcpt-body{background:radial-gradient(1200px 500px at 70% -10%,rgba(240,191,46,.07),transparent 60%),#060708}
+      #fcpt-panel.ufm .fcpt-head{background:linear-gradient(180deg,#121212,#060708);border-bottom:1px solid #2a2618}
+      #fcpt-panel.ufm .fcpt-brand .t,#fcpt-panel.ufm .fcpt-vtitle{font-family:'Barlow Condensed','IBM Plex Sans',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+      #fcpt-panel .u-shield{display:none;width:34px;height:40px;flex:none}
+      #fcpt-panel.ufm .u-shield{display:block}#fcpt-panel.ufm .fcpt-logo{display:none}
+      #fcpt-panel .u-prog,#fcpt-panel .u-bdg{display:none}
+      #fcpt-panel.ufm .u-prog{display:flex;align-items:center;gap:8px;margin-top:4px;font:700 11px 'Barlow Condensed',sans-serif;letter-spacing:.08em;color:#cfc8b2;text-transform:uppercase}
+      #fcpt-panel.ufm .u-prog i{display:block;width:150px;height:7px;border-radius:4px;background:#25221a;overflow:hidden;box-shadow:inset 0 0 0 1px #3a3420}
+      #fcpt-panel.ufm .u-prog i b{display:block;height:100%;background:linear-gradient(90deg,#b8860b,#f0bf2e,#ffe58a);border-radius:4px}
+      #fcpt-panel.ufm .u-prog i b.full{background:linear-gradient(90deg,#c0392b,#ff6b6b)}
+      #fcpt-panel.ufm .u-prog em{font-style:normal;color:#f4f1e8}
+      #fcpt-panel.ufm .u-bdg{display:flex;gap:6px;align-items:center}
+      #fcpt-panel.ufm .u-bdg button{position:relative;width:36px;height:36px;border-radius:10px;border:1px solid #2f2a1b;background:#121212;color:#f4f1e8;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+      #fcpt-panel.ufm .u-bdg button b{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;box-sizing:border-box;border-radius:9px;background:#f0bf2e;color:#111;font:800 11px/18px 'Barlow Condensed',sans-serif;text-align:center}
+      #fcpt-panel.ufm .u-bdg button b.z{display:none}
+      #fcpt-panel.ufm .fcpt-icons .ic{background:#121212;border:1px solid #2f2a1b;color:#f4f1e8}
+      #fcpt-panel.ufm .fcpt-qs>*{background:#111 !important;border-color:#2f2a1b !important}
+      /* Leiste: kräftige weiße Symbole, Großbuchstaben, aktiver Punkt in Gold mit Pfeilen */
+      #fcpt-panel.ufm .fcpt-rail{background:linear-gradient(180deg,#0b0b0c,#000);border-color:#211e15}
+      #fcpt-panel.ufm .fcpt-rail button{color:#f4f1e8}
+      #fcpt-panel.ufm .fcpt-rail button svg{stroke-width:2.1}
+      #fcpt-panel.ufm .fcpt-rail .lb{font-family:'Barlow Condensed',sans-serif !important;font-weight:800 !important;text-transform:uppercase;letter-spacing:.06em}
+      #fcpt-panel.ufm .fcpt-rail button.on{background:linear-gradient(90deg,rgba(240,191,46,.18),rgba(240,191,46,0));color:#f0bf2e;box-shadow:none}
+      #fcpt-panel.ufm .fcpt-rail .lg{background:transparent}
+      .u-hero{display:none}
+      #fcpt-panel.ufm .u-hero{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+      .u-tile{position:relative;overflow:hidden;min-height:150px;border-radius:6px;border:1px solid #2c2717;background:#0d0d0f;color:#f4f1e8;text-align:left;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;justify-content:flex-end;font:inherit;transition:transform .12s,border-color .12s,box-shadow .12s;isolation:isolate}
+      .u-tile::before{content:'';position:absolute;inset:0;z-index:-2;background:var(--ub,linear-gradient(135deg,#1d2a1a,#0b0d0b 70%))}
+      .u-tile::after{content:'';position:absolute;inset:0;z-index:-1;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.07) 45%,transparent 55%),linear-gradient(0deg,rgba(0,0,0,.85) 0%,rgba(0,0,0,.15) 55%,transparent 100%)}
+      .u-tile .art{position:absolute;right:-18px;top:-6px;z-index:-1;color:rgba(255,255,255,.11);transform:rotate(-8deg)}
+      .u-tile .art svg{width:150px;height:150px;stroke-width:1.4}
+      .u-tile .u-t{font:italic 800 26px/0.95 'Barlow Condensed','IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.01em;text-shadow:0 2px 10px rgba(0,0,0,.6)}
+      .u-tile .u-s{margin-top:6px;font:600 12px 'IBM Plex Sans',system-ui,sans-serif;color:#cfc8b2}
+      .u-tile .u-c{position:absolute;top:10px;right:10px;display:flex;gap:6px}
+      .u-tile .u-c span{min-width:34px;height:28px;padding:0 9px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:4px;background:rgba(0,0,0,.65);border:1px solid rgba(240,191,46,.55);font:800 15px 'Barlow Condensed',sans-serif;color:#f4f1e8}
+      .u-tile .u-c span.g{background:#f0bf2e;color:#141006;border-color:#f0bf2e;font-size:12px;letter-spacing:.08em}
+      .u-tile .u-c span.r{border-color:#ff6b6b;color:#ffb3b3}
+      .u-tile::marker{content:''}
+      .u-tile .bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,#b8860b,#f0bf2e,transparent)}
+      @media (hover:hover){.u-tile:hover{transform:translateY(-2px);border-color:#f0bf2e;box-shadow:0 10px 30px rgba(240,191,46,.12)}}
+      .u-tile.buy{--ub:linear-gradient(135deg,#25401f 0%,#0f1a0d 55%,#060806 100%)}
+      .u-tile.sell{--ub:linear-gradient(135deg,#1f2c45 0%,#0c1220 55%,#05070b 100%)}
+      .u-tile.club{--ub:linear-gradient(135deg,#40241f 0%,#1a0d0b 55%,#080505 100%)}
+      .u-tile.mkt{--ub:linear-gradient(135deg,#3d3214 0%,#18130a 55%,#070605 100%)}
+      .u-tile.sbc{--ub:linear-gradient(135deg,#2e1f40 0%,#130d1a 55%,#060508 100%)}
+      .u-tile.hist{--ub:linear-gradient(135deg,#143a38 0%,#0a1817 55%,#050807 100%)}
+      #fcpt-panel.ufm .u-tile:nth-child(-n+2){grid-column:span 2}
+      @media (max-width:600px){#fcpt-panel.ufm .u-bdg{display:none}#fcpt-panel.ufm .u-prog i{width:90px}.u-tile{min-height:118px;padding:12px}.u-tile .u-t{font-size:21px}#fcpt-panel.ufm .u-tile:nth-child(-n+2) .u-t{font-size:30px}.u-tile .art svg{width:110px;height:110px}.u-tile .u-s{font-size:11px}}
+      html.fcpt-fill #fcpt-panel.ufm .fcpt-head{background:linear-gradient(180deg,#141414,#060708)}
+      #fcpt-panel.ufm .fcpt-ver{background:#1e1a10;color:#d9b54a}
+      #fcpt-panel.ufm .d-t,#fcpt-panel.ufm .d-c{background:linear-gradient(180deg,#141414,#0b0b0c);border-color:#2a2618;border-radius:6px}
+      #fcpt-panel.ufm .d-t .l,#fcpt-panel.ufm .d-ch{font-family:'Barlow Condensed',sans-serif;font-size:12.5px;letter-spacing:.1em;color:#d9b54a;border-color:#2a2618}
+      #fcpt-panel.ufm .h-sec{font-family:'Barlow Condensed',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+      #fcpt-panel.ufm .h-btns .pri{background:linear-gradient(180deg,#ffd75e,#e0a800);color:#141006;border:0;font-family:'Barlow Condensed',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:.06em;font-size:15px}
+      @media (min-width:900px){
+        html.fcpt-fill #fcpt-panel.ufm .u-hero{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile{min-height:250px;padding:20px 22px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile:nth-child(-n+2){grid-column:span 2;min-height:290px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile .u-t{font-size:44px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile:nth-child(-n+2) .u-t{font-size:56px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile .art svg{width:260px;height:260px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile .u-s{font-size:14px}
+        html.fcpt-fill #fcpt-panel.ufm .u-tile .u-c span{height:36px;min-width:44px;font-size:20px}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail{width:250px;padding:18px 0;gap:2px;background:linear-gradient(180deg,#0b0b0c,#000);border-right:1px solid #211e15}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail .lg{margin:0 20px 22px}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail .lg::before{background:linear-gradient(160deg,#ffe58a,#f0bf2e 45%,#a87600);clip-path:polygon(50% 0,100% 14%,100% 60%,50% 100%,0 60%,0 14%);border-radius:0;width:38px;height:44px}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail .lg::after{content:'FC27 TOOL';font:italic 800 24px 'Barlow Condensed',sans-serif;letter-spacing:.03em;color:#f4f1e8}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail button{height:62px;padding:0 26px;gap:16px;border-radius:0;color:#f4f1e8}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail button svg{width:30px;height:30px}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail button .lb{font-size:21px;letter-spacing:.07em}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail button.on{color:#f0bf2e;background:linear-gradient(90deg,rgba(240,191,46,.2),rgba(240,191,46,0) 85%);box-shadow:inset 4px 0 0 #f0bf2e}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail button.on .lb::before{content:'‹‹';margin-right:8px;color:#f0bf2e}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail button.on .lb::after{content:'››';margin-left:8px;color:#f0bf2e}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-rail button .bd{top:18px;right:18px;background:#f0bf2e;color:#141006}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-head{padding:16px 36px 12px}
+        html.fcpt-fill #fcpt-panel.ufm .fcpt-brand .t{font-size:30px}
+        html.fcpt-fill #fcpt-panel.ufm .u-shield{width:42px;height:50px}
+        html.fcpt-fill #fcpt-panel.ufm .u-prog{font-size:13px}html.fcpt-fill #fcpt-panel.ufm .u-prog i{width:240px;height:9px}
+        html.fcpt-fill #fcpt-panel.ufm .u-bdg button{width:42px;height:42px}
+      }
       /* ===== Großansicht (Web-App-Modus) – großflächiges Layout ===== */
       .by-colL,.by-colR{display:contents}
       html.fcpt-fill #fcpt-panel{font-size:15px;box-shadow:none;border-left:0;background:#0a0e15}
@@ -519,6 +602,14 @@
     const tEl = panel.querySelector('.fcpt-brand .t');
     const verEl = tEl && tEl.querySelector('.fcpt-ver');
     if (tEl) { tEl.innerHTML = '<span class="fcpt-vtitle">Transferliste</span> '; if (verEl) tEl.appendChild(verEl); }
+    // Design „Stadion“: Wappen, goldener Belegungsbalken, Zähler-Abzeichen
+    panel.classList.toggle('ufm', settings.ufm !== false);
+    const logoEl = panel.querySelector('.fcpt-logo');
+    if (logoEl) logoEl.insertAdjacentHTML('afterend', '<svg class="u-shield" viewBox="0 0 34 40" aria-hidden="true"><defs><linearGradient id="fcptSg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe58a"/><stop offset=".5" stop-color="#f0bf2e"/><stop offset="1" stop-color="#9a6a00"/></linearGradient></defs><path d="M17 1l15 5v13c0 10-7 17-15 20C9 36 2 29 2 19V6z" fill="url(#fcptSg)" stroke="#2a2006" stroke-width="1.5"/><path d="M17 5l11 3.6V19c0 7.6-5 13-11 15.6C11 32 6 26.6 6 19V8.6z" fill="#0b0b0c"/><text x="17" y="24" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="800" font-style="italic" font-size="13" fill="#f0bf2e">27</text></svg>');
+    if (tEl) tEl.insertAdjacentHTML('afterend', '<div class="u-prog" title="Belegung der Transferliste"><span>Transferliste</span><i><b></b></i><em class="num">0/100</em></div>');
+    const icons = panel.querySelector('.fcpt-icons');
+    if (icons) icons.insertAdjacentHTML('afterbegin', `<div class="u-bdg"><button data-ub="home" aria-label="Alarme">${svg('star', 18)}<b class="z">0</b></button><button data-ub="trade:verein" aria-label="Nicht zugewiesene Items">${svg('list', 18)}<b class="z">0</b></button></div>`);
+    panel.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('.u-bdg [data-ub]'); if (!b) return; e.stopPropagation(); const g = b.dataset.ub; if (g.startsWith('trade:')) { settings.tradeSub = g.slice(6); saveSettings(); go('trade:markt'); setTimeout(() => { const t = panel.querySelector(`[data-sub="${g.slice(6)}"]`); if (t) t.click(); }, 50); } else go(g); }, true);
     const qs = document.createElement('div');
     qs.className = 'fcpt-qs';
     const head = panel.querySelector('.fcpt-head');
@@ -621,6 +712,14 @@
       const t = TIMING.info();
       const col = t.cls === 'sell' ? '#ff6b6b' : t.cls === 'buy' ? '#3dd68c' : t.cls === 'warn' ? '#ffae5c' : '#7c889e';
       const g = GUARD.level();
+      try {
+        const n = items.length, pb = panel.querySelector('.u-prog b'), pe = panel.querySelector('.u-prog em');
+        if (pb) { pb.style.width = Math.min(100, n) + '%'; pb.classList.toggle('full', n >= 95); }
+        if (pe) pe.textContent = `${n}/100`;
+        const setB = (k, v) => { const b = panel.querySelector(`.u-bdg [data-ub="${k}"] b`); if (b) { b.textContent = v > 99 ? '99+' : String(v || 0); b.classList.toggle('z', !v); } };
+        setB('home', alarms().length);
+        setB('trade:verein', NEWITEMS.count() || 0);
+      } catch (e) { /* */ }
       qs.innerHTML = `${coins != null ? `<span><b class="num">${fmt(coins)}</b> Münzen</span>` : ''}${g.s.sMin || g.level !== 'ok' ? `<span title="Sperren-Schutz"><i class="dot" style="background:${g.level === 'red' ? '#ff6b6b' : g.level === 'warn' ? '#ffae5c' : '#3dd68c'}"></i>${g.s.sMin} Suchen/Min</span>` : ''}<span>Heute <b class="num ${today >= 0 ? 'p' : ''}">${signed(today)}</b></span><span title="${esc(t.text)}"><i class="dot" style="background:${col}"></i>${esc(t.title)}</span>`;
     }
     function renderHome() {
@@ -654,7 +753,17 @@
         const max = Math.max(1, ...arr.map((x) => Math.abs(x.v)));
         return `<div class="d-bars">${arr.map((x) => `<div class="d-bar" title="${esc(x.l)}: ${signed(x.v)}"><span class="bv ${x.v < 0 ? 'neg' : ''}">${x.v ? (Math.abs(x.v) >= 1e6 ? (x.v / 1e6).toFixed(1).replace('.', ',') + ' M' : Math.abs(x.v) >= 1000 ? Math.round(x.v / 1000) + ' k' : x.v) : ''}</span><i class="${x.v < 0 ? 'neg' : ''}" style="height:${Math.round((Math.abs(x.v) / max) * 100)}%"></i><span class="bl">${esc(x.l)}</span></div>`).join('')}</div>`;
       };
-      home.innerHTML = `
+      const nAct = items.filter((p) => p.active).length, nExp = items.filter((p) => p.expired).length;
+      const hero = (cls, go2, ic, title, sub, cnt) => `<button class="u-tile ${cls}" data-dgo="${go2}"><span class="art">${svg(ic, 150)}</span><span class="u-c">${cnt}</span><span class="u-t">${title}</span><span class="u-s">${sub}</span><i class="bar"></i></button>`;
+      const heroHtml = `<div class="u-hero">
+          ${hero('buy', 'buy', 'buy', 'Spieler<br>kaufen', `${fmt(dl.s || 0)} Suchen heute${dl.sp ? ` · ${fmt(dl.sp)} ausgegeben` : ''}`, `<span title="heute gekauft">${fmt(dl.b || 0)}</span>${tg && tg.loaded && tg.outbid ? `<span class="r" title="überboten">${tg.outbid}</span>` : ''}`)}
+          ${hero('sell', 'list', 'list', 'Spieler<br>verkaufen', `${nExp} abgelaufen · ${sold.length} verkauft${sold.length ? ` (${signed(soldP)})` : ''}`, `<span title="Belegung">${items.length}/100</span>${nAct ? `<span class="g">${nAct} AKTIV</span>` : ''}`)}
+          ${hero('club', 'trade:verein', 'club', 'Verein &amp;<br>Futter', un ? 'Neue Items jetzt sortieren' : 'Alles sortiert', un ? `<span>${fmt(un)}</span>` : '')}
+          ${hero('mkt', 'trade:markt', 'market', 'Markt &amp;<br>Icons', esc(TIMING.info().title || 'Marktlage'), '')}
+          ${hero('sbc', 'sbc', 'sbc', 'SBC<br>lösen', 'SBC in der Web App öffnen – Solver startet hier', '')}
+          ${hero('hist', 'hist', 'hist', 'Historie &amp;<br>Statistik', `Heute ${signed(today.profit)} · 7 Tage ${signed(wk)}`, '')}
+        </div>`;
+      home.innerHTML = `${heroHtml}
         <div class="d-grid">
           ${tile('gold', 'Profit heute', `<span class="${today.profit >= 0 ? 'fcpt-pos-v' : 'fcpt-neg-v'}">${signed(today.profit)}</span>`, `${today.n} verkauft`, 'hist')}
           ${tile('pink', 'Gekauft heute', fmt(dl.b || 0), dl.sp ? `${fmt(dl.sp)} Münzen ausgegeben` : 'per Snipe', 'buy')}
@@ -871,6 +980,13 @@
       eRow.className = 'fcpt-set';
       eRow.innerHTML = '<span>Menüpunkt „FC27 Tool“ in der Web App<small>Eigener Eintrag in EAs Navigation – das Tool öffnet sich dann direkt in der Inhaltsfläche der Web App</small></span><input type="checkbox" class="fcpt-sw" data-uib="embed">';
       grp.appendChild(eRow);
+      const uRow = document.createElement('div');
+      uRow.className = 'fcpt-set';
+      uRow.innerHTML = '<span>Design „Stadion“<small>Schwarz/Gold mit großen Kacheln und kräftiger Menüleiste. Aus = bisheriges blaues Design</small></span><input type="checkbox" class="fcpt-sw" data-uib="ufm">';
+      grp.appendChild(uRow);
+      const uc = uRow.querySelector('input');
+      uc.checked = settings.ufm !== false;
+      uc.addEventListener('change', (e) => { e.stopPropagation(); settings.ufm = uc.checked; saveSettings(); panel.classList.toggle('ufm', settings.ufm); quick(); if (cur === 'home') renderHome(); });
       const bRow = document.createElement('div');
       bRow.className = 'fcpt-set';
       bRow.innerHTML = '<span>Großansicht<small>Tool füllt die ganze Inhaltsfläche der Web App (Menü links/unten bleibt sichtbar). Aus = schmales Seitenfenster wie früher</small></span><input type="checkbox" class="fcpt-sw" data-uib="big">';
