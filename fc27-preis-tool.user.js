@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.70.0
+// @version      2.70.1
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -8636,6 +8636,18 @@ const SBC = (function () {
         html.fcpt-easkin .fcpt-navbtn .fcpt-navl{margin-top:4px}
         html.fcpt-easkin .ut-tab-bar-item.selected,html.fcpt-easkin .ut-tab-bar-item.fcpt-on{border-radius:10px 10px 0 0}
       }
+      /* Transfermarkt / Listen: Karte + Preiszeile als EIN Kasten, ruhiger und kompakter */
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline{background:var(--t2,#202226) !important;border:1px solid var(--tb,#3a3420) !important;border-radius:10px !important;padding:0 !important;margin:0 0 8px !important;box-shadow:0 4px 14px rgba(0,0,0,.25) !important;transition:border-color .12s}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline:hover{border-color:#7a6424 !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline.selected{border-color:#f0bf2e !important;box-shadow:0 0 0 1px #f0bf2e,0 6px 18px rgba(0,0,0,.35) !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline > :not(.fcpt-inline):not(.fcpt-buybadge){background:transparent !important;border-color:transparent !important;box-shadow:none !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline{margin:0 !important;border:0 !important;border-top:1px solid rgba(255,255,255,.06) !important;border-radius:0 0 9px 9px !important;background:rgba(0,0,0,.22) !important;padding:5px 14px !important;font-size:11.5px !important;gap:2px 18px !important;font-family:'IBM Plex Sans',system-ui,sans-serif !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip{color:#a9a69c !important;font-weight:500 !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip b{color:#f4f1e8 !important;font-weight:700 !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.profit b{color:#4ade80 !important}
+      html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.loss,html.fcpt-easkin .listFUTItem.fcpt-has-inline > .fcpt-inline .fcpt-chip.loss b{color:#f8a3a3 !important}
+      html.fcpt-easkin .SearchResults .listFUTItem,html.fcpt-easkin .ut-market-search-results-view .listFUTItem,html.fcpt-easkin .ut-search-results-view .listFUTItem{zoom:.88}
+      @media (max-width:700px){html.fcpt-easkin .SearchResults .listFUTItem,html.fcpt-easkin .ut-market-search-results-view .listFUTItem,html.fcpt-easkin .ut-search-results-view .listFUTItem{zoom:.92}}
       html.fcpt-easkin .fcpt-navbtn .fcpt-navic{clip-path:polygon(50% 0,100% 14%,100% 60%,50% 100%,0 60%,0 14%);border-radius:0;height:30px}
     `);
 
