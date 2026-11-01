@@ -1132,6 +1132,24 @@
       html.fcpt-easkin .ut-navigation-bar-view h1,html.fcpt-easkin .ut-navigation-bar-view .title{font-size:1.15em !important}
       html.fcpt-easkin .ea-dialog-view--title,html.fcpt-easkin .ea-dialog-view h1{font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;text-transform:uppercase;letter-spacing:.04em;color:#f0bf2e !important}
       html.fcpt-easkin input,html.fcpt-easkin select{accent-color:#f0bf2e}
+      /* Kacheln: Graphit mit goldenem Schimmer, Symbole leuchten leicht */
+      html.fcpt-easkin .tile,html.fcpt-easkin .ut-tile-view{background-color:#24262c !important;border-color:#3b3828 !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),inset 0 -3px 0 #d4a521,0 10px 26px rgba(0,0,0,.4) !important;border-radius:10px !important;overflow:hidden}
+      html.fcpt-easkin .tile::after,html.fcpt-easkin .ut-tile-view::after{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:radial-gradient(120% 70% at 85% 0%,rgba(240,191,46,.13),transparent 55%),linear-gradient(180deg,rgba(255,255,255,.04),transparent 40%)}
+      html.fcpt-easkin .tile,html.fcpt-easkin .ut-tile-view{position:relative}
+      html.fcpt-easkin .tile img,html.fcpt-easkin .ut-tile-view img,html.fcpt-easkin .tile svg{filter:drop-shadow(0 6px 16px rgba(240,191,46,.22))}
+      html.fcpt-easkin .tile .tileHeader,html.fcpt-easkin .tile header h1,html.fcpt-easkin .ut-tile-view h1{color:#f6d46a !important}
+      html.fcpt-tone-mid.fcpt-easkin .tile,html.fcpt-tone-mid.fcpt-easkin .ut-tile-view{background-color:#2a2c33 !important}
+      html.fcpt-tone-light.fcpt-easkin .tile,html.fcpt-tone-light.fcpt-easkin .ut-tile-view{background-color:#3a3d45 !important}
+      /* Untere Menüleiste am Handy: gleich breite Punkte, kleinere Schrift, nichts abgeschnitten */
+      @media (max-width:1023px){
+        html.fcpt-easkin .ut-tab-bar{display:flex !important;justify-content:stretch !important}
+        html.fcpt-easkin .ut-tab-bar-item{flex:1 1 0 !important;min-width:0 !important;padding-left:2px !important;padding-right:2px !important;font-size:9px !important;letter-spacing:0 !important;white-space:nowrap;overflow:hidden;text-overflow:clip}
+        html.fcpt-easkin .ut-tab-bar-item *{font-size:inherit !important;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+        html.fcpt-easkin .ut-tab-bar-item::before{font-size:24px !important}
+        html.fcpt-easkin .fcpt-navbtn .fcpt-nl-l{display:none}
+        html.fcpt-easkin .fcpt-navbtn .fcpt-navl{margin-top:4px}
+        html.fcpt-easkin .ut-tab-bar-item.selected,html.fcpt-easkin .ut-tab-bar-item.fcpt-on{border-radius:10px 10px 0 0}
+      }
       html.fcpt-easkin .fcpt-navbtn .fcpt-navic{clip-path:polygon(50% 0,100% 14%,100% 60%,50% 100%,0 60%,0 14%);border-radius:0;height:30px}
     `);
 
@@ -1211,11 +1229,11 @@
         const blue = h >= 185 && h <= 268 && sat >= 0.12, teal = h >= 140 && h < 185 && sat >= 0.35 && l >= 0.3;
         if (!blue && !teal) return null;
         const accent = sat >= 0.5 && l >= 0.4 && l <= 0.8;
-        if (textProp) return sat >= 0.6 && l >= 0.4 && l <= 0.7 ? out(44, 0.86, 0.56, v[3]) : blue && l >= 0.55 ? out(42, 0.08, Math.max(l, 0.72), v[3]) : null;
+        if (textProp) return sat >= 0.6 && l >= 0.4 && l <= 0.7 ? out(44, 0.86, 0.56, v[3]) : blue && l >= 0.55 ? out(220, 0.08, Math.max(l, 0.72), v[3]) : null;
         if (accent) return out(44, 0.86, 0.56, v[3]);
         if (!blue) return null;
-        if (l < 0.6) return out(40, 0.07, settings.uiTone === 'light' ? 0.17 + l * 0.55 : settings.uiTone === 'mid' ? 0.1 + l * 0.55 : l * 0.6, v[3]);
-        return out(42, 0.1, l, v[3]);
+        if (l < 0.6) return out(225, 0.07, settings.uiTone === 'light' ? 0.17 + l * 0.55 : settings.uiTone === 'mid' ? 0.1 + l * 0.55 : l * 0.6, v[3]);
+        return out(220, 0.08, l, v[3]);
       }
       function fixRule(rule) {
         const st = rule.style; if (!st) return;
@@ -1326,7 +1344,7 @@
       navBtn = document.createElement('button');
       navBtn.type = 'button';
       navBtn.className = (ref ? ref.className.split(/\s+/).filter((c) => c && !/^icon-|selected|active/.test(c)).join(' ') : 'ut-tab-bar-item') + ' fcpt-navbtn';
-      navBtn.innerHTML = '<span class="fcpt-navic">FC</span><span class="fcpt-navl">FC27 Tool</span>';
+      navBtn.innerHTML = '<span class="fcpt-navic">FC</span><span class="fcpt-navl"><span class="fcpt-nl-l">FC27 </span>Tool</span>';
       navBtn.title = 'FC27 Preis-Tool öffnen';
       navBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); setFill(!fill, { home: true }); }, true);
       n.appendChild(navBtn);
