@@ -564,6 +564,16 @@
         .fcpt-rail button{width:44px}
         .tr-h,.tr-row{grid-template-columns:28px minmax(0,1fr) 62px 62px 58px;gap:6px;padding:0 10px}
         #fcpt-btn{width:48px;height:48px;right:12px;bottom:88px}
+        /* Handy: ganze Seite scrollt als Einheit, statt Kopf fest + winziger Listenbereich */
+        #fcpt-panel .fcpt-body{overflow-y:auto;-webkit-overflow-scrolling:touch}
+        #fcpt-panel .fcpt-list{flex:none !important;overflow:visible !important;max-height:none !important}
+        #fcpt-panel .fcpt-brand{min-width:0;overflow:hidden}
+        #fcpt-panel .fcpt-brand .t{font-size:19px !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        #fcpt-panel .fcpt-brand .fcpt-ver{display:none}
+        #fcpt-panel .fcpt-icons{flex:none}
+        #fcpt-panel .fcpt-top{flex-wrap:nowrap;gap:8px}
+        html.fcpt-fill #fcpt-panel.fcpt-ios .fcpt-rail{padding-bottom:6px}
+        #fcpt-panel .fcpt-rail{position:relative;z-index:2;background:linear-gradient(180deg,var(--t1,#0b0b0c),var(--t0,#000)) !important}
       }
     `);
 
