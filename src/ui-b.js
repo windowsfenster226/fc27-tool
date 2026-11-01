@@ -994,6 +994,13 @@
       const sc = sRow.querySelector('input');
       sc.checked = settings.eaSkin !== false;
       sc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaSkin = sc.checked; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
+      const fRow = document.createElement('div');
+      fRow.className = 'fcpt-set';
+      fRow.innerHTML = '<span>Schriftgröße in EAs Web App<small>Kleiner = mehr auf einen Blick. Gilt nur, wenn „Stadion“ für EA an ist</small></span><select data-uib="eafont"><option value="1">Normal (100 %)</option><option value="0.95">Etwas kleiner (95 %)</option><option value="0.9">Kompakt (90 %)</option><option value="0.85">Sehr kompakt (85 %)</option></select>';
+      grp.appendChild(fRow);
+      const fs = fRow.querySelector('select');
+      fs.value = String(settings.eaFont);
+      fs.addEventListener('change', (e) => { e.stopPropagation(); settings.eaFont = parseFloat(fs.value) || 1; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
       const cRow = document.createElement('div');
       cRow.className = 'fcpt-set';
       cRow.innerHTML = '<span>Kompakte Spielerliste im Verein<small>Verein → Spieler: kleinere Zeilen und mehrere Spalten nebeneinander, damit mehr Spieler auf einmal sichtbar sind</small></span><input type="checkbox" class="fcpt-sw" data-uib="clubc">';
@@ -1102,6 +1109,12 @@
       /* Knöpfe: Hauptaktion in Gold */
       html.fcpt-easkin .btn-standard.call-to-action,html.fcpt-easkin .btn-standard.primary{background:linear-gradient(180deg,#ffd75e,#e0a800) !important;color:#141006 !important;border-color:#e0a800 !important;font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;text-transform:uppercase;letter-spacing:.06em}
       html.fcpt-easkin .btn-standard.call-to-action:disabled,html.fcpt-easkin .btn-standard.call-to-action.disabled{opacity:.45}
+      html.fcpt-easkin body,html.fcpt-easkin .ut-root-view{font-family:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif !important;-webkit-font-smoothing:antialiased}
+      html.fcpt-easkin .ut-root-view ::-webkit-scrollbar{width:8px;height:8px}html.fcpt-easkin .ut-root-view ::-webkit-scrollbar-thumb{background:#3a3420;border-radius:4px}html.fcpt-easkin .ut-root-view ::-webkit-scrollbar-track{background:transparent}
+      html.fcpt-easkin .listFUTItem .name{font-weight:700 !important;letter-spacing:.01em}
+      html.fcpt-easkin .ut-navigation-bar-view h1,html.fcpt-easkin .ut-navigation-bar-view .title{font-size:1.15em !important}
+      html.fcpt-easkin .ea-dialog-view--title,html.fcpt-easkin .ea-dialog-view h1{font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;text-transform:uppercase;letter-spacing:.04em;color:#f0bf2e !important}
+      html.fcpt-easkin input,html.fcpt-easkin select{accent-color:#f0bf2e}
       html.fcpt-easkin .fcpt-navbtn .fcpt-navic{clip-path:polygon(50% 0,100% 14%,100% 60%,50% 100%,0 60%,0 14%);border-radius:0;height:30px}
     `);
 
@@ -1138,7 +1151,104 @@
       lists.forEach((u) => { if (u.querySelector(':scope > .listFUTItem')) u.classList.add('fcpt-clubl'); });
     }
     setInterval(() => { try { markClubList(); } catch (e) { /* */ } }, 800);
-    function applyEaSkin() { document.documentElement.classList.toggle('fcpt-easkin', settings.ufm !== false && settings.eaSkin !== false); }
+    // ---------- EA-Farben umschreiben: liest EAs eigene Stylesheets und ersetzt Blautöne durch Schwarz/Gold,
+    // verkleinert Schriftgrößen. Zustände (Hover, Ausgewählt) bleiben erhalten, weil die Regeln selbst angepasst werden.
+    if (settings.eaFont === undefined) settings.eaFont = 0.9;
+    const EASK = (() => {
+      const changed = [];            // [style, prop, alterWert, Priorität]
+      let done = new WeakSet();
+      const SKIP = /rare|rarity|item-?view|ut-item|\.item\b|card|pack|player-?pic|playeroverview|special|badge|crest|flag|fcpt|evolution|chemistry/i;
+      const CRX = /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/gi;
+      const COLP = /^(background|background-color|background-image|border(-top|-right|-bottom|-left)?-color|outline-color|box-shadow|color|--.*)$/;
+      function rgba(c) {
+        c = c.trim().toLowerCase();
+        if (c[0] === '#') {
+          let h = c.slice(1);
+          if (h.length === 3 || h.length === 4) h = h.split('').map((x) => x + x).join('');
+          if (h.length !== 6 && h.length !== 8) return null;
+          return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1];
+        }
+        const n = c.match(/[\d.]+%?/g);
+        if (!n || n.length < 3) return null;
+        const v = n.map((x) => parseFloat(x));
+        if (c.startsWith('hsl')) {
+          const h = v[0] / 360, sat = v[1] / 100, l = v[2] / 100;
+          const q = l < 0.5 ? l * (1 + sat) : l + sat - l * sat, pp = 2 * l - q;
+          const f = (t) => { t = (t + 1) % 1; return t < 1 / 6 ? pp + (q - pp) * 6 * t : t < 0.5 ? q : t < 2 / 3 ? pp + (q - pp) * (2 / 3 - t) * 6 : pp; };
+          return [f(h + 1 / 3) * 255, f(h) * 255, f(h - 1 / 3) * 255, n[3] != null ? (n[3].endsWith('%') ? v[3] / 100 : v[3]) : 1];
+        }
+        return [v[0], v[1], v[2], n[3] != null ? (n[3].endsWith('%') ? v[3] / 100 : v[3]) : 1];
+      }
+      function hsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+        if (!d) return [0, 0, l];
+        const sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+        let h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+        return [h * 60, sat, l];
+      }
+      const out = (h, sat, l, a) => `hsla(${Math.round(h)}, ${Math.round(sat * 100)}%, ${Math.round(l * 1000) / 10}%, ${Math.round(a * 1000) / 1000})`;
+      function mapColor(c, textProp) {
+        const v = rgba(c); if (!v) return null;
+        const [h, sat, l] = hsl(v[0], v[1], v[2]);
+        const blue = h >= 185 && h <= 268 && sat >= 0.12, teal = h >= 140 && h < 185 && sat >= 0.35 && l >= 0.3;
+        if (!blue && !teal) return null;
+        const accent = sat >= 0.5 && l >= 0.4 && l <= 0.8;
+        if (textProp) return sat >= 0.6 && l >= 0.4 && l <= 0.7 ? out(44, 0.86, 0.56, v[3]) : blue && l >= 0.55 ? out(42, 0.08, Math.max(l, 0.72), v[3]) : null;
+        if (accent) return out(44, 0.86, 0.56, v[3]);
+        if (!blue) return null;
+        if (l < 0.6) return out(40, 0.07, l * 0.6, v[3]);
+        return out(42, 0.1, l, v[3]);
+      }
+      function fixRule(rule) {
+        const st = rule.style; if (!st) return;
+        const sel = rule.selectorText || '';
+        if (SKIP.test(sel)) return;
+        for (let i = 0; i < st.length; i++) {
+          const prop = st[i];
+          const val = st.getPropertyValue(prop); if (!val) continue;
+          const prio = st.getPropertyPriority(prop);
+          let nv = null;
+          if (COLP.test(prop)) {
+            let hit = false;
+            const r = val.replace(CRX, (m) => { const x = mapColor(m, prop === 'color'); if (x) { hit = true; return x; } return m; });
+            if (hit) nv = r;
+          } else if (prop === 'font-size' && settings.eaFont !== 1) {
+            const m = val.trim().match(/^([\d.]+)(px|rem)$/);
+            if (m) nv = `${Math.round(parseFloat(m[1]) * settings.eaFont * 100) / 100}${m[2]}`;
+          }
+          if (nv && nv !== val) { changed.push([st, prop, val, prio]); st.setProperty(prop, nv, prio); }
+        }
+      }
+      function walk(list) {
+        for (const rule of list) {
+          try {
+            if (rule.cssRules && !rule.style) walk(rule.cssRules);     // @media / @supports
+            else if (rule.style && rule.type !== 7) fixRule(rule);       // keine @keyframes
+          } catch (e) { /* */ }
+        }
+      }
+      function scan() {
+        if (!document.documentElement.classList.contains('fcpt-easkin')) return;
+        for (const sh of document.styleSheets) {
+          if (done.has(sh)) continue;
+          done.add(sh);
+          try {
+            const own = sh.ownerNode;
+            if (own && (own.id || '').startsWith('fcpt')) continue;
+            if (own && own.textContent && own.textContent.includes('fcpt-')) continue;   // eigene Styles
+            walk(sh.cssRules);
+          } catch (e) { /* fremde Domain – nicht lesbar */ }
+        }
+      }
+      function reset() {
+        for (let i = changed.length - 1; i >= 0; i--) { const [st, p, v, pr] = changed[i]; try { st.setProperty(p, v, pr); } catch (e) { /* */ } }
+        changed.length = 0; done = new WeakSet();
+      }
+      setInterval(() => { try { scan(); } catch (e) { /* */ } }, 2000);
+      return { scan, reset, count: () => changed.length };
+    })();
+    function applyEaSkin() { document.documentElement.classList.toggle('fcpt-easkin', settings.ufm !== false && settings.eaSkin !== false); try { EASK.reset(); EASK.scan(); } catch (e) { /* */ } }
     applyEaSkin();
     let fill = false, navBtn = null;
     const eaNav = () => document.querySelector('.ut-tab-bar') || document.querySelector('nav[class*="tab-bar"]');
