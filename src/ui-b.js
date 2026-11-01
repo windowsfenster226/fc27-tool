@@ -769,7 +769,7 @@
           ${hero('buy', 'buy', 'buy', 'Spieler<br>kaufen', `${fmt(dl.s || 0)} Suchen heute${dl.sp ? ` · ${fmt(dl.sp)} ausgegeben` : ''}`, `<span title="heute gekauft">${fmt(dl.b || 0)}</span>${tg && tg.loaded && tg.outbid ? `<span class="r" title="überboten">${tg.outbid}</span>` : ''}`)}
           ${hero('sell', 'list', 'list', 'Spieler<br>verkaufen', `${nExp} abgelaufen · ${sold.length} verkauft${sold.length ? ` (${signed(soldP)})` : ''}`, `<span title="Belegung">${items.length}/100</span>${nAct ? `<span class="g">${nAct} AKTIV</span>` : ''}`)}
           ${hero('club', 'trade:verein', 'club', 'Verein &amp;<br>Futter', un ? 'Neue Items jetzt sortieren' : 'Alles sortiert', un ? `<span>${fmt(un)}</span>` : '')}
-          ${hero('mkt', 'trade:markt', 'market', 'Markt &amp;<br>Icons', esc(TIMING.info().title || 'Marktlage'), '')}
+          ${hero('mkt', 'trade:markt', 'market', 'Markt &amp;<br>Index', (() => { const m = typeof MX !== 'undefined' ? MX.summary() : null; return m ? `Index ${fmt(Math.round(m.v))}${m.d24 != null ? ` · 24 Std. ${m.d24 >= 0 ? '▲' : '▼'} ${Math.abs(m.d24).toFixed(1).replace('.', ',')} %` : ''}` : esc(TIMING.info().title || 'Marktlage'); })(), '')}
           ${hero('sbc', 'sbc', 'sbc', 'SBC<br>lösen', 'SBC in der Web App öffnen – Solver startet hier', '')}
           ${hero('hist', 'hist', 'hist', 'Historie &amp;<br>Statistik', `Heute ${signed(today.profit)} · 7 Tage ${signed(wk)}`, '')}
         </div>`;
@@ -1157,6 +1157,9 @@
         html.fcpt-easkin .fcpt-navbtn .fcpt-navl{margin-top:4px}
         html.fcpt-easkin .ut-tab-bar-item.selected,html.fcpt-easkin .ut-tab-bar-item.fcpt-on{border-radius:10px 10px 0 0}
       }
+      /* Suchergebnisse & Vereinsliste: eigene, abgesetzte Fläche (dunkler eingelassen, goldene Oberkante) */
+      html.fcpt-easkin .paginated-item-list,html.fcpt-easkin .fcpt-clubl:not(.paginated-item-list .fcpt-clubl){background:linear-gradient(180deg,rgba(0,0,0,.42),rgba(0,0,0,.28)) !important;border:1px solid var(--tb,#3a3420) !important;border-top:2px solid #b8963a !important;border-radius:14px !important;padding:10px !important;box-shadow:inset 0 3px 14px rgba(0,0,0,.45) !important}
+      html.fcpt-easkin .paginated-item-list ul,html.fcpt-easkin .paginated-item-list .itemList{background:transparent !important}
       /* Transfermarkt / Listen: Karte + Preiszeile als EIN Kasten, ruhiger und kompakter */
       html.fcpt-easkin .listFUTItem.fcpt-has-inline{background:var(--t2,#202226) !important;border:1px solid var(--tb,#3a3420) !important;border-radius:10px !important;padding:0 !important;margin:0 0 8px !important;box-shadow:0 4px 14px rgba(0,0,0,.25) !important;transition:border-color .12s}
       html.fcpt-easkin .listFUTItem.fcpt-has-inline:hover{border-color:#7a6424 !important}
@@ -1341,6 +1344,15 @@
         return [h * 60, sat, l];
       }
       const out = (h, sat, l, a) => `hsla(${Math.round(h)}, ${Math.round(sat * 100)}%, ${Math.round(l * 1000) / 10}%, ${Math.round(a * 1000) / 1000})`;
+      const toneL = (l) => (settings.uiTone === 'light' ? 0.17 + l * 0.55 : settings.uiTone === 'mid' ? 0.1 + l * 0.55 : l * 0.6);
+      // Tool-eigene Styles: nur dunkle Blau-Flächen/Rahmen -> Graphit (Akzentfarben mit Bedeutung bleiben)
+      function mapTool(c, textProp) {
+        if (textProp) return null;
+        const v = rgba(c); if (!v) return null;
+        const [h, sat, l] = hsl(v[0], v[1], v[2]);
+        if (!(h >= 195 && h <= 260 && sat >= 0.1 && l < 0.36)) return null;
+        return out(225, 0.06, Math.min(0.42, toneL(l) + (l > 0.16 ? 0.04 : 0)), v[3]);
+      }
       function mapColor(c, textProp) {
         const v = rgba(c); if (!v) return null;
         const [h, sat, l] = hsl(v[0], v[1], v[2]);
@@ -1350,13 +1362,15 @@
         if (textProp) return sat >= 0.6 && l >= 0.4 && l <= 0.7 ? out(44, 0.86, 0.56, v[3]) : blue && l >= 0.55 ? out(220, 0.08, Math.max(l, 0.72), v[3]) : null;
         if (accent) return out(44, 0.86, 0.56, v[3]);
         if (!blue) return null;
-        if (l < 0.6) return out(225, 0.07, settings.uiTone === 'light' ? 0.17 + l * 0.55 : settings.uiTone === 'mid' ? 0.1 + l * 0.55 : l * 0.6, v[3]);
+        if (l < 0.6) return out(225, 0.07, toneL(l), v[3]);
         return out(220, 0.08, l, v[3]);
       }
+      const TOOL_SKIP = /ovr|c-badge|\.ih-o|rare|gold|silver|bronze|kc-r|fcpt-tone|ufm|easkin|fcpt-fill \.d-t\.|\.d-t\.(gold|pink|violet|teal|orange|purple|blue|green)/i;
+      let toolMode = false;
       function fixRule(rule) {
         const st = rule.style; if (!st) return;
         const sel = rule.selectorText || '';
-        if (SKIP.test(sel)) return;
+        if (toolMode ? TOOL_SKIP.test(sel) : SKIP.test(sel)) return;
         for (let i = 0; i < st.length; i++) {
           const prop = st[i];
           const val = st.getPropertyValue(prop); if (!val) continue;
@@ -1364,9 +1378,9 @@
           let nv = null;
           if (COLP.test(prop)) {
             let hit = false;
-            const r = val.replace(CRX, (m) => { const x = mapColor(m, prop === 'color'); if (x) { hit = true; return x; } return m; });
+            const r = val.replace(CRX, (m) => { const x = (toolMode ? mapTool : mapColor)(m, prop === 'color'); if (x) { hit = true; return x; } return m; });
             if (hit) nv = r;
-          } else if (prop === 'font-size' && settings.eaFont !== 1) {
+          } else if (!toolMode && prop === 'font-size' && settings.eaFont !== 1) {
             const m = val.trim().match(/^([\d.]+)(px|rem)$/);
             if (m) nv = `${Math.round(parseFloat(m[1]) * settings.eaFont * 100) / 100}${m[2]}`;
           }
@@ -1382,16 +1396,17 @@
         }
       }
       function scan() {
-        if (!document.documentElement.classList.contains('fcpt-easkin')) return;
+        const eaOn = document.documentElement.classList.contains('fcpt-easkin'), toolOn = settings.ufm !== false;
         for (const sh of document.styleSheets) {
           if (done.has(sh)) continue;
           done.add(sh);
           try {
             const own = sh.ownerNode;
-            if (own && (own.id || '').startsWith('fcpt')) continue;
-            if (own && own.textContent && own.textContent.includes('fcpt-')) continue;   // eigene Styles
+            const mine = !!(own && (((own.id || '').startsWith('fcpt')) || (own.textContent && own.textContent.includes('fcpt-'))));
+            if (mine ? !toolOn : !eaOn) continue;
+            toolMode = mine;
             walk(sh.cssRules);
-          } catch (e) { /* fremde Domain – nicht lesbar */ }
+          } catch (e) { /* fremde Domain – nicht lesbar */ } finally { toolMode = false; }
         }
       }
       function reset() {

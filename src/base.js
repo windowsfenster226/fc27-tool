@@ -474,6 +474,10 @@
     .fcpt-inline .fcpt-chip.loss,.fcpt-card .fcpt-chip.loss{background:#3a1515;color:#fecaca}
     .fcpt-inline .fcpt-chip.warn,.fcpt-card .fcpt-chip.warn{background:#3a2a0e;color:#fde68a}
     .fcpt-inline .fcpt-chip.deal{background:#15803d;color:#fff;font-weight:600}
+    .fcpt-chip.live{background:#12301f;color:#bbf7d0}.fcpt-chip.live b{color:#4ade80}
+    button.fcpt-chip.fcpt-livebtn{cursor:pointer;font:inherit;border:1px solid rgba(240,191,46,.55) !important;border-radius:6px !important;padding:1px 8px !important;color:#f0bf2e !important;background:rgba(240,191,46,.08) !important;pointer-events:auto}
+    button.fcpt-chip.fcpt-livebtn:hover{background:rgba(240,191,46,.18) !important}
+    .fcpt-has-inline > .fcpt-inline .fcpt-chip.live b{color:#4ade80 !important}
     .fcpt-bargain{outline:3px solid #22c55e !important;outline-offset:-3px;border-radius:6px}
     .fcpt-head input[type=number]{width:80px;background:#1c2636;color:#e8ecf2;border:1px solid #33425a;border-radius:6px;padding:4px 6px;font:inherit}
     .fcpt-tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
@@ -674,7 +678,36 @@
 
   const setMsg = (m) => { listEl.innerHTML = `<div class="fcpt-msg">${esc(m)}</div>`; sumEl.textContent = ''; };
 
+  // Live-Preise vom EA-Markt (auf Knopfdruck ermittelt) – haben Vorrang, solange sie frisch sind
+  if (!settings.livePx || typeof settings.livePx !== 'object') settings.livePx = {};
+  const LIVE_MS = 30 * 60000;
+  for (const k of Object.keys(settings.livePx)) if (Date.now() - settings.livePx[k].t > 6 * 3600000) delete settings.livePx[k];
+  function liveGet(rid) { const e = settings.livePx[rid]; return e && Date.now() - e.t < LIVE_MS ? e : null; }
+  function setLive(rid, v, n, s) { settings.livePx[rid] = { v: v || 0, n: n || 0, s: s || 0, t: Date.now() }; saveSettings(); }
+  const agoMin = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'gerade' : `vor ${m} Min`; };
+  function liveChip(p) {
+    const e = liveGet(p.resourceId);
+    if (e) return `<span class="fcpt-chip live" title="Günstigster Sofortkauf dieser Karte auf dem EA-Markt (${e.n} Angebot${e.n === 1 ? '' : 'e'} gesehen, ${e.s} Suche${e.s === 1 ? '' : 'n'}) – ${agoMin(e.t)}">📡 Live <b>${e.v ? fmt(e.v) : 'kein Angebot'}</b></span>`;
+    return `<button type="button" class="fcpt-chip fcpt-livebtn" data-live="${esc(p.resourceId)}" title="Aktuellen Preis direkt auf dem EA-Transfermarkt prüfen (1–4 Suchen)">📡 Live-Preis</button>`;
+  }
+  // Quellen uneinig? (Futbin vs. EA-Ø mehr als 35 % auseinander)
+  function pricesDisagree(vals) { const v = vals.filter(Boolean); if (v.length < 2) return false; return Math.max(...v) / Math.min(...v) > 1.35; }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-live]');
+    if (!b) return;
+    e.stopPropagation(); e.preventDefault();
+    const p = b.__p || items.find((x) => String(x.resourceId) === b.dataset.live);
+    if (!p || typeof BUY === 'undefined' || !BUY.livePrice) return;
+    const ref = b.__ref || marketPrice(p.resourceId);
+    b.disabled = true; b.textContent = '📡 prüfe …';
+    BUY.livePrice(p, ref).then((r) => {
+      showToast(r.v ? `📡 ${p.name}: günstigster Sofortkauf ${fmt(r.v)} (${r.n} Angebot${r.n === 1 ? '' : 'e'})` : `📡 ${p.name}: gerade kein Angebot auf dem Markt`);
+    }).catch((err) => { showToast('📡 ' + err.message, true); b.disabled = false; b.textContent = '📡 Live-Preis'; })
+      .finally(() => { if (b.__redraw) b.__redraw(); try { if (panel.classList.contains('open')) render(); } catch (x) { /* */ } });
+  }, true);
+
   function marketPrice(rid) {
+    const lv = liveGet(rid); if (lv && lv.v) return lv.v;
     const ps = priceStore[rid] || {};
     if (settings.sources[settings.mainSource] && ps[settings.mainSource]?.v) return ps[settings.mainSource].v;
     for (const k of Object.keys(SOURCES)) if (settings.sources[k] && ps[k]?.v) return ps[k].v;
@@ -683,7 +716,9 @@
 
   function chipsHtml(rid) {
     const ps = priceStore[rid] || {};
-    return Object.entries(SOURCES)
+    const it = items.find((x) => String(x.resourceId) === String(rid));
+    const warn = !liveGet(rid) && pricesDisagree(Object.keys(SOURCES).map((k) => ps[k] && ps[k].v)) ? '<span class="fcpt-chip warn" title="Futbin und EA-Durchschnitt liegen weit auseinander – Live-Preis prüfen">⚠ Preise uneinig</span>' : '';
+    return (it ? liveChip(it) : '') + warn + Object.entries(SOURCES)
       .filter(([k]) => settings.sources[k])
       .map(([k, s]) => {
         const e = ps[k] || {};
@@ -1065,10 +1100,11 @@
       const keys = enabledSources();
       // Verbrauchsobjekte (Chemie-Styles): Preis aus der Futbin-Consumables-Liste
       const consV = !p.isPlayer && typeof CONS !== 'undefined' ? CONS.price(p) : null;
-      const main = p.isPlayer ? ((prices[settings.mainSource] && prices[settings.mainSource].v) ||
+      const lv = p.isPlayer ? liveGet(p.resourceId) : null;
+      const main = p.isPlayer ? ((lv && lv.v) || (prices[settings.mainSource] && prices[settings.mainSource].v) ||
         keys.map((k) => prices[k] && prices[k].v).find(Boolean) || null) : consV;
       // Nur mit echtem Futbin-Preis (bzw. Chemie-Style-Preis) als Schnäppchen markieren – EA-Schätzung ist dafür zu ungenau
-      const reliable = !p.isPlayer || !!(prices.futbin && prices.futbin.v);
+      const reliable = !p.isPlayer || !!(lv && lv.v) || !!(prices.futbin && prices.futbin.v);
       let profitHtml = '';
       if (isMarket) {
         root.classList.remove('fcpt-bargain');
@@ -1113,6 +1149,9 @@
       const srcTip = keys.map((k) => `${SOURCES[k].label}: ${prices[k] ? (prices[k].err ? '✕' : fmt(prices[k].v)) : '…'}`).join(' · ');
       box.innerHTML = (p.isPlayer ? `<span class="fcpt-chip main" title="${esc(srcTip)}">Markt <b>${fmt(main)}</b></span>` : consV ? `<span class="fcpt-chip main" title="Futbin – Chemie-Style">🧪 Markt: <b>${fmt(consV)}</b></span>` : '') + chips + profitHtml +
         (!isMarket ? listingWarn(p, main) : '') + (isMarket && p.active ? bidChip(p) : '');
+      if (p.isPlayer) box.insertAdjacentHTML('beforeend', lv ? liveChip(p) : `${!isMarket && pricesDisagree(keys.map((k) => prices[k] && prices[k].v)) ? '<span class="fcpt-chip warn">⚠ Preise uneinig</span>' : ''}${liveChip(p)}`);
+      const lb = box.querySelector('[data-live]');
+      if (lb) { lb.__p = p; lb.__ref = main; lb.__redraw = draw; }
     };
 
     draw();

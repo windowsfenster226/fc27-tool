@@ -307,7 +307,7 @@
       const SUBS = [['markt', '📈 Markt'], ['verein', '💼 Verein'], ['futter', '📊 Futter']];
       if (!SUBS.some((x) => x[0] === settings.tradeSub)) settings.tradeSub = 'markt';
       root.innerHTML = '<div class="fcpt-subtabs">' + SUBS.map(([k, l]) => `<button data-sub="${k}">${l}</button>`).join('') + '</div>' +
-        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="ihm"></div><div data-el="guard"></div>' + html() + '</div>' +
+        '<div class="fcpt-subpane" data-pane="markt"><div data-el="timing"></div><div data-el="mx"></div><div data-el="ihm"></div><div data-el="guard"></div>' + html() + '</div>' +
         '<div class="fcpt-subpane" data-pane="verein"><div data-el="newitems"></div><div data-el="fav"></div><div data-el="evo"></div><div data-el="packs"></div>' + clubValueHtml() + '<div data-el="points"></div><div data-el="sell"></div><div data-el="sellalert"></div></div>' +
         '<div class="fcpt-subpane" data-pane="futter"><div data-el="ratings"></div><div data-el="cons"></div></div>';
       const showSub = () => {
@@ -330,6 +330,7 @@
       SELL.mount(root.querySelector('[data-el="sell"]'));
       RATINGS.mount(root.querySelector('[data-el="ratings"]'));
       IHM.mount(root.querySelector('[data-el="ihm"]'));
+      MX.mount(root.querySelector('[data-el="mx"]'));
       root.querySelector('[data-act="clubValue"]').addEventListener('click', (e) => { e.stopPropagation(); runClubValue(root); });
       root.querySelectorAll('[data-t]').forEach((i) => {
         i.value = settings[i.dataset.t];

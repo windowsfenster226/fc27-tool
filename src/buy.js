@@ -1353,5 +1353,51 @@
     }, true);
     function mount(el) { box = el; render(); }
     const diag = () => ({ hooked: TC.hooked, crit: !!TC.crit, keys: TC.keys, critVals: TC.crit ? Object.fromEntries(TC.keys.filter((k) => typeof TC.crit[k] !== 'object' && typeof TC.crit[k] !== 'function').slice(0, 30).map((k) => [k, TC.crit[k]])) : null, lastMs: st.lastMs, stats: st.stats });
-    return { mount, search, render, diag, addList: (o) => { const ok = lstAdd(o); render(); return ok; } };
+    // ---------- Live-Preis direkt vom EA-Transfermarkt (nur auf Knopfdruck, 1–4 Suchen) ----------
+    // Sucht genau diese Karte (gleiche Version) und tastet sich zum günstigsten Sofortkauf herunter.
+    let liveBusy = false;
+    async function livePrice(p, ref) {
+      if (liveBusy) throw new Error('Läuft schon – kurz warten');
+      const S = W.services && W.services.Item;
+      if (!S || typeof S.searchTransferMarket !== 'function') throw new Error('EA-Suche nicht bereit – Web App neu laden');
+      const w = paceLocked(); if (w > 0) throw new Error(`Such-Pause läuft noch ${Math.ceil(w / 1000)} s`);
+      let C = null;
+      try { C = new W.UTSearchCriteriaDTO(); } catch (e) { /* */ }
+      if (!C) { try { const VM = W.UTBucketedItemSearchViewModel; if (VM) C = new VM().searchCriteria; } catch (e) { /* */ } }
+      if (!C) throw new Error('EA-Suchkriterien nicht verfügbar');
+      const keyOf = (re, def) => Object.keys(C).find((x) => re.test(x)) || def;
+      try { if (W.SearchType && W.SearchType.PLAYER) C.type = W.SearchType.PLAYER; else C.type = 'player'; } catch (e) { C.type = 'player'; }
+      const kDef = keyOf(/^masked_?def_?id$/i, 'maskedDefId'), kMax = keyOf(/^max_?(buy|bin|buynow)$/i, 'maxBuy'), kMin = keyOf(/^min_?(buy|bin|buynow)$/i, 'minBuy');
+      C[kDef] = Number(p.resourceId) % 16777216;
+      liveBusy = true;
+      let hi = ref ? roundPrice(ref * 1.2) : 0, best = null, n = 0, searches = 0, full = false;
+      try {
+        for (let i = 0; i < 4; i++) {
+          C[kMax] = hi || 0; C[kMin] = 0;
+          noteSearch(); searches++;
+          const ev = await obs(S.searchTransferMarket(C, 1), 8000);
+          if (ev && ev.success === false) { cooldown(ev.status); throw new Error(`${ERR[ev.status] || 'EA lehnt ab'} (Code ${ev.status || '?'})`); }
+          const raw = ((ev && (ev.response || ev.data)) || {}).items || [];
+          const got = raw.map((r) => mapItem(r)).filter((x) => x && String(x.resourceId) === String(p.resourceId) && x.active && x.buyNow);
+          full = raw.length >= 20;
+          if (got.length) {
+            const m = Math.min(...got.map((x) => x.buyNow));
+            best = best == null ? m : Math.min(best, m);
+            n = Math.max(n, got.length);
+            if (!full) break;                       // komplette Liste unter „hi“ gesehen -> Minimum stimmt
+            const lower = best - stepFor(best);     // gibt es noch günstigere? darunter weitersuchen
+            if (lower < 200) break;
+            hi = lower;
+          } else {
+            if (best != null) break;                // darunter nichts mehr -> best ist der günstigste
+            if (!hi) break;                          // ohne Grenze nichts gefunden -> kein Angebot
+            hi = i >= 1 ? 0 : roundPrice(hi * 1.8);  // höher suchen, zuletzt ohne Grenze
+          }
+          await sleep(700 + Math.random() * 500);
+        }
+      } finally { liveBusy = false; }
+      setLive(p.resourceId, best, n, searches);
+      return { v: best, n, searches };
+    }
+    return { mount, search, render, diag, livePrice, addList: (o) => { const ok = lstAdd(o); render(); return ok; } };
   })();
