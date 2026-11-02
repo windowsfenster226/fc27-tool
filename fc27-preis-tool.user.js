@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.73.1
+// @version      2.73.2
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -8902,7 +8902,7 @@ const SBC = (function () {
       /* Knöpfe: Hauptaktion in Gold */
       html.fcpt-easkin .btn-standard.call-to-action,html.fcpt-easkin .btn-standard.primary{background:linear-gradient(180deg,#ffd75e,#e0a800) !important;color:#141006 !important;border-color:#e0a800 !important;font-family:'Barlow Condensed','IBM Plex Sans',sans-serif !important;font-weight:800 !important;text-transform:uppercase;letter-spacing:.06em}
       html.fcpt-easkin .btn-standard.call-to-action:disabled,html.fcpt-easkin .btn-standard.call-to-action.disabled{opacity:.45}
-      html.fcpt-easkin body,html.fcpt-easkin .ut-root-view{font-family:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif !important;-webkit-font-smoothing:antialiased}
+      html.fcpt-easkin body{-webkit-font-smoothing:antialiased}
       html.fcpt-easkin .ut-root-view ::-webkit-scrollbar{width:8px;height:8px}html.fcpt-easkin .ut-root-view ::-webkit-scrollbar-thumb{background:#3a3420;border-radius:4px}html.fcpt-easkin .ut-root-view ::-webkit-scrollbar-track{background:transparent}
       html.fcpt-easkin .listFUTItem .name{font-weight:700 !important;letter-spacing:.01em}
       html.fcpt-easkin .ut-navigation-bar-view h1,html.fcpt-easkin .ut-navigation-bar-view .title{font-size:1.15em !important}
