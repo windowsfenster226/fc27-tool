@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.72.2
+// @version      2.72.3
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -8763,6 +8763,13 @@ const SBC = (function () {
       const sc = sRow.querySelector('input');
       sc.checked = settings.eaSkin !== false;
       sc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaSkin = sc.checked; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
+      const kRow = document.createElement('div');
+      kRow.className = 'fcpt-set';
+      kRow.innerHTML = '<span>Kleine Knöpfe<small>FC-Knopf, Snipe-Knopf und Tool-Knöpfe kleiner – mehr Platz auf dem Bildschirm</small></span><input type="checkbox" class="fcpt-sw" data-uib="btnsm">';
+      grp.appendChild(kRow);
+      const kc = kRow.querySelector('input');
+      kc.checked = settings.btnSmall !== false;
+      kc.addEventListener('change', (e) => { e.stopPropagation(); settings.btnSmall = kc.checked; saveSettings(); applyBtn(); });
       const tRow = document.createElement('div');
       tRow.className = 'fcpt-set';
       tRow.innerHTML = '<span>Helligkeit des Designs<small>Für Tool und EAs Web App. Dunkel = Schwarz, Mittel = Graphit, Hell = helles Grau</small></span><select data-uib="tone"><option value="dark">Dunkel</option><option value="mid">Mittel</option><option value="light">Hell</option></select>';
@@ -9207,6 +9214,22 @@ const SBC = (function () {
       html[class*="fcpt-tone-"].fcpt-clubc .fcpt-clubl>.listFUTItem:nth-child(even){background-color:var(--t3) !important}
       html[class*="fcpt-tone-"].fcpt-clubc .fcpt-clubl>.listFUTItem.selected{background-color:#4a4330 !important}
     `);
+    if (settings.btnSmall === undefined) settings.btnSmall = true;
+    GM_addStyle(`
+      html.fcpt-btnsm #fcpt-btn{width:30px !important;height:40px !important;font-size:10px !important;border-radius:10px 0 0 10px !important;opacity:.88;padding:0 !important}
+      html.fcpt-btnsm #fcpt-snipebtn button{height:36px !important;min-width:64px !important;padding:0 12px !important;font-size:13px !important;border-radius:18px !important}
+      html.fcpt-btnsm #fcpt-snipebtn button small{font-size:10.5px !important}
+      html.fcpt-btnsm #fcpt-snipebtn .rb,html.fcpt-btnsm #fcpt-snipebtn .sb-st{font-size:11px !important}
+      html.fcpt-btnsm #fcpt-panel .fcpt-bigbtn{min-height:36px !important;font-size:13.5px !important;padding:6px 14px !important;border-radius:9px !important}
+      html.fcpt-btnsm #fcpt-panel .fcpt-smallbtn{font-size:11.5px !important;padding:3px 8px !important}
+      html.fcpt-btnsm #fcpt-panel .h-btns button{min-height:36px !important;font-size:13.5px !important}
+      html.fcpt-btnsm #fcpt-panel .by-a button{min-height:34px !important;font-size:13px !important;padding:4px 10px !important}
+      html.fcpt-btnsm #fcpt-panel .fcpt-buy>.by-bar button,html.fcpt-btnsm #fcpt-panel .by-bar button{min-height:40px !important;font-size:15px !important}
+      html.fcpt-btnsm.fcpt-easkin .btn-standard{min-height:0 !important}
+      html.fcpt-btnsm.fcpt-easkin .btn-standard.call-to-action{font-size:.92em !important}
+    `);
+    function applyBtn() { document.documentElement.classList.toggle('fcpt-btnsm', settings.btnSmall !== false); }
+    applyBtn();
     function applyTone() { const de = document.documentElement; de.classList.remove('fcpt-tone-mid', 'fcpt-tone-light'); if (settings.uiTone === 'mid' || settings.uiTone === 'light') de.classList.add('fcpt-tone-' + settings.uiTone); }
     applyTone();
     function applyEaSkin() { document.documentElement.classList.toggle('fcpt-easkin', settings.ufm !== false && settings.eaSkin !== false); try { EASK.reset(); EASK.scan(); } catch (e) { /* */ } }
