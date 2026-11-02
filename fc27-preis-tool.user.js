@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.72.1
+// @version      2.72.2
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -8749,6 +8749,13 @@ const SBC = (function () {
       const lc = lRow.querySelector('input');
       lc.checked = settings.eaLayout !== false;
       lc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaLayout = lc.checked; saveSettings(); try { layoutEa(); } catch (x) { /* */ } });
+      const mRow = document.createElement('div');
+      mRow.className = 'fcpt-set';
+      mRow.innerHTML = '<span>Handy: EA-Menü links<small>Aus = EAs Menü bleibt unten (mehr Platz für den Inhalt)</small></span><input type="checkbox" class="fcpt-sw" data-uib="earail">';
+      grp.appendChild(mRow);
+      const mc = mRow.querySelector('input');
+      mc.checked = settings.eaRailMobile !== false;
+      mc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaRailMobile = mc.checked; saveSettings(); try { unshift(); document.documentElement.classList.remove('fcpt-vrail'); layoutEa(); } catch (x) { /* */ } });
       const sRow = document.createElement('div');
       sRow.className = 'fcpt-set';
       sRow.innerHTML = '<span>„Stadion“ auch für EAs Web App<small>Färbt EAs Menü, Kopfzeile, Kacheln, Listen und Hauptknöpfe schwarz/gold. Nur Optik – Bedienung bleibt gleich</small></span><input type="checkbox" class="fcpt-sw" data-uib="easkin">';
@@ -8972,7 +8979,8 @@ const SBC = (function () {
     // ---------- EA-Layout „Manager“: wie Manager-Spiele – Menü links mit großen Symbolen, goldene Rahmen,
     // Wappen + Belegungsbalken in der Kopfzeile, Hintergrund mit Goldschlieren. Nur Optik/Anordnung.
     if (settings.eaLayout === undefined) settings.eaLayout = true;
-    const RAILW = 82;
+    const RAILW = 66;
+    if (settings.eaRailMobile === undefined) settings.eaRailMobile = true;
     GM_addStyle(`
       html:root.fcpt-ufmx.fcpt-easkin,html:root.fcpt-ufmx.fcpt-easkin body{background:linear-gradient(118deg,transparent 0 34%,rgba(212,165,33,.10) 36%,transparent 41%,transparent 63%,rgba(212,165,33,.07) 65%,transparent 69%),radial-gradient(1100px 600px at 25% -5%,rgba(255,255,255,.07),transparent 60%),linear-gradient(180deg,#1d1e21,#0a0a0b) fixed !important}
       html:root.fcpt-ufmx.fcpt-easkin .ut-root-view,html:root.fcpt-ufmx.fcpt-easkin .ut-content,html:root.fcpt-ufmx.fcpt-easkin .ut-content-container,html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-container-view,html:root.fcpt-ufmx.fcpt-easkin .ut-split-view{background:transparent !important}
@@ -8984,10 +8992,11 @@ const SBC = (function () {
       html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item.selected::before,html:root.fcpt-ufmx.fcpt-easkin .ut-tab-bar-item.fcpt-on::before{color:#f0bf2e !important;filter:drop-shadow(0 0 10px rgba(240,191,46,.45)) drop-shadow(0 3px 0 rgba(0,0,0,.55))}
       /* Menü links am Handy */
       html.fcpt-vrail .ut-tab-bar{position:fixed !important;left:0 !important;right:auto !important;top:var(--fcpt-rt,0px) !important;bottom:0 !important;width:${RAILW}px !important;height:auto !important;flex-direction:column !important;justify-content:flex-start !important;align-items:stretch !important;overflow-y:auto !important;overflow-x:hidden !important;z-index:60 !important;padding:6px 0 calc(env(safe-area-inset-bottom,0px) + 6px) !important}
-      html.fcpt-vrail .ut-tab-bar-item{flex:none !important;width:100% !important;max-width:none !important;min-width:0 !important;min-height:84px !important;display:flex !important;flex-direction:column !important;align-items:center !important;justify-content:center !important;gap:6px;font-size:10.5px !important;letter-spacing:.01em !important;padding:6px 1px !important;white-space:normal !important;word-break:break-word;text-align:center;border-bottom:1px solid rgba(255,255,255,.04) !important}
-      html.fcpt-vrail .ut-tab-bar-item::before{font-size:34px !important;line-height:1 !important;margin:0 !important}
-      html.fcpt-vrail .ut-tab-bar-item *{font-size:inherit !important;overflow:visible !important}
-      html.fcpt-vrail .fcpt-navbtn .fcpt-navic{width:36px;height:42px;font-size:13px}
+      html.fcpt-vrail .ut-tab-bar-item{flex:none !important;width:100% !important;max-width:none !important;min-width:0 !important;min-height:66px !important;display:flex !important;flex-direction:column !important;align-items:center !important;justify-content:center !important;gap:4px;font-size:8.5px !important;letter-spacing:0 !important;padding:6px 2px !important;white-space:nowrap !important;overflow:hidden !important;text-overflow:ellipsis !important;text-align:center;border-bottom:1px solid rgba(255,255,255,.04) !important}
+      html.fcpt-vrail .ut-tab-bar-item::before{font-size:25px !important;line-height:1 !important;margin:0 !important}
+      html.fcpt-vrail .ut-tab-bar-item *{font-size:inherit !important;max-width:100% !important;overflow:hidden !important;text-overflow:ellipsis !important;white-space:nowrap !important}
+      html.fcpt-vrail .ut-tab-bar-item svg,html.fcpt-vrail .ut-tab-bar-item img{width:26px !important;height:26px !important}
+      html.fcpt-vrail .fcpt-navbtn .fcpt-navic{width:28px;height:33px;font-size:10px}
       html.fcpt-vrail .fcpt-navbtn .fcpt-nl-l{display:none}
       /* Kopfzeile: Wappen vor dem Titel, Münzen als Kästen, Belegungsbalken */
       html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view{background:linear-gradient(180deg,rgba(40,40,44,.92),rgba(14,14,16,.92)) !important;border-bottom:1px solid #3a3420 !important;position:relative;padding-bottom:12px !important;box-sizing:content-box}
@@ -9001,9 +9010,19 @@ const SBC = (function () {
       html:root.fcpt-ufmx.fcpt-easkin .tile,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view{background-color:#141416 !important;border:2px solid #a8873a !important;border-radius:3px !important;box-shadow:inset 0 0 0 1px rgba(0,0,0,.7),0 0 0 1px #2c2717,0 14px 30px rgba(0,0,0,.55) !important}
       html:root.fcpt-ufmx.fcpt-easkin .tile::after,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view::after{border-radius:0;background:linear-gradient(118deg,transparent 30%,rgba(255,240,200,.10) 38%,transparent 46%),radial-gradient(90% 60% at 80% 10%,rgba(212,165,33,.20),transparent 60%),linear-gradient(0deg,rgba(0,0,0,.55),transparent 45%)}
       html:root.fcpt-ufmx.fcpt-easkin .tile header,html:root.fcpt-ufmx.fcpt-easkin .tile .tileHeader,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view h1{position:relative;z-index:2}
-      html:root.fcpt-ufmx.fcpt-easkin .tile .tileHeader,html:root.fcpt-ufmx.fcpt-easkin .tile header h1,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view h1{font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-style:normal !important;font-weight:800 !important;letter-spacing:.02em !important;color:#f6f4ee !important;font-size:1.6em !important;text-shadow:0 3px 0 rgba(0,0,0,.55),0 0 18px rgba(0,0,0,.6) !important}
+      html:root.fcpt-ufmx.fcpt-easkin .tile .tileHeader,html:root.fcpt-ufmx.fcpt-easkin .tile header h1,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view h1{font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-style:normal !important;font-weight:800 !important;letter-spacing:.01em !important;color:#f6f4ee !important;font-size:1.35em !important;line-height:1.08 !important;overflow-wrap:normal !important;word-break:normal !important;hyphens:none !important;text-shadow:0 3px 0 rgba(0,0,0,.55),0 0 18px rgba(0,0,0,.6) !important}
       html:root.fcpt-ufmx.fcpt-easkin .tile img,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view img,html:root.fcpt-ufmx.fcpt-easkin .tile svg{filter:drop-shadow(0 8px 0 rgba(0,0,0,.35)) drop-shadow(0 0 22px rgba(240,191,46,.25))}
       html:root.fcpt-ufmx.fcpt-easkin .listFUTItem{border-radius:3px !important}
+      /* Handy: Platz sparen – kein Balken unter dem Titel, kleineres Wappen, Kacheltitel kleiner */
+      @media (max-width:700px){
+        html:root.fcpt-ufmx.fcpt-easkin .fcpt-hud{display:none !important}
+        html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view{padding-bottom:0 !important}
+        html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view h1::before,html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view .title::before{width:22px;height:26px}
+        html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view h1,html:root.fcpt-ufmx.fcpt-easkin .ut-navigation-bar-view .title{gap:6px;font-size:1em !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        html:root.fcpt-ufmx.fcpt-easkin .tile .tileHeader,html:root.fcpt-ufmx.fcpt-easkin .tile header h1,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view h1{font-size:1.05em !important;line-height:1.1 !important}
+        html:root.fcpt-ufmx.fcpt-easkin .tile,html:root.fcpt-ufmx.fcpt-easkin .ut-tile-view{border-width:1px !important}
+        html:root.fcpt-ufmx.fcpt-easkin .view-navbar-currency>*,html:root.fcpt-ufmx.fcpt-easkin .view-navbar-currency-coins,html:root.fcpt-ufmx.fcpt-easkin .view-navbar-currency-points{padding:1px 6px !important}
+      }
       html:root.fcpt-ufmx.fcpt-easkin .ut-section-header-view,html:root.fcpt-ufmx.fcpt-easkin .section-header{font-family:'Barlow Condensed','Arial Narrow',sans-serif !important;font-style:normal !important;background:linear-gradient(90deg,rgba(212,165,33,.16),transparent 70%) !important;border-left:3px solid #f0bf2e !important}
     `.replace('__SHIELD__', "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 40'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffe58a'/%3E%3Cstop offset='.5' stop-color='%23f0bf2e'/%3E%3Cstop offset='1' stop-color='%239a6a00'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M17 1l15 5v13c0 10-7 17-15 20C9 36 2 29 2 19V6z' fill='url(%23g)'/%3E%3Cpath d='M17 5l11 3.6V19c0 7.6-5 13-11 15.6C11 32 6 26.6 6 19V8.6z' fill='%230b0b0c'/%3E%3Ctext x='17' y='24' text-anchor='middle' font-family='Arial' font-weight='800' font-style='italic' font-size='13' fill='%23f0bf2e'%3E27%3C/text%3E%3C/svg%3E"));
     const shifted = new Map();   // Element -> ursprüngliche Inline-Styles
@@ -9014,7 +9033,7 @@ const SBC = (function () {
       de.classList.toggle('fcpt-ufmx', on);
       const n = eaNav && eaNav();
       const mobile = W.innerWidth < 1024;
-      let wantRail = on && mobile && !!n;
+      let wantRail = on && mobile && !!n && settings.eaRailMobile !== false;
       if (wantRail && !de.classList.contains('fcpt-vrail')) {
         // nur wenn die Leiste wirklich unten liegt (sonst ist sie schon links)
         const r = n.getBoundingClientRect();
@@ -9023,8 +9042,9 @@ const SBC = (function () {
       de.classList.toggle('fcpt-vrail', wantRail);
       if (!wantRail) { if (shifted.size) unshift(); }
       else {
+        const nbv = document.querySelector('.ut-navigation-bar-view');
         const hd = document.querySelector('.ut-fifa-header-view');
-        const rt = hd ? Math.max(0, Math.round(hd.getBoundingClientRect().bottom)) : 0;
+        const rt = nbv ? Math.max(0, Math.round(nbv.getBoundingClientRect().top)) : hd ? Math.max(0, Math.round(hd.getBoundingClientRect().bottom)) : 0;
         de.style.setProperty('--fcpt-rt', rt + 'px');
         const host = n.parentElement;
         if (host) for (const el of host.children) {
