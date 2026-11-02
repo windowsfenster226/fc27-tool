@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.72.3
+// @version      2.73.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -8763,6 +8763,13 @@ const SBC = (function () {
       const sc = sRow.querySelector('input');
       sc.checked = settings.eaSkin !== false;
       sc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaSkin = sc.checked; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
+      const qRow = document.createElement('div');
+      qRow.className = 'fcpt-set';
+      qRow.innerHTML = '<span>Kompakte SBC-Übersicht<small>SBC-Kacheln kleiner, am PC mehrere nebeneinander</small></span><input type="checkbox" class="fcpt-sw" data-uib="sbcc">';
+      grp.appendChild(qRow);
+      const qc = qRow.querySelector('input');
+      qc.checked = settings.sbcCompact !== false;
+      qc.addEventListener('change', (e) => { e.stopPropagation(); settings.sbcCompact = qc.checked; saveSettings(); try { markSbc(); } catch (x) { /* */ } });
       const kRow = document.createElement('div');
       kRow.className = 'fcpt-set';
       kRow.innerHTML = '<span>Kleine Knöpfe<small>FC-Knopf, Snipe-Knopf und Tool-Knöpfe kleiner – mehr Platz auf dem Bildschirm</small></span><input type="checkbox" class="fcpt-sw" data-uib="btnsm">';
@@ -8982,6 +8989,45 @@ const SBC = (function () {
       lists.forEach((u) => { if (u.querySelector(':scope > .listFUTItem')) u.classList.add('fcpt-clubl'); });
     }
     setInterval(() => { try { markClubList(); } catch (e) { /* */ } }, 800);
+    // ---------- SBC-Übersicht kompakt: kleinere Kacheln, am PC mehrere Spalten (nur Optik) ----------
+    if (settings.sbcCompact === undefined) settings.sbcCompact = true;
+    GM_addStyle(`
+      html.fcpt-sbcc .fcpt-sbcg{display:grid !important;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px !important;align-items:start;align-content:start}
+      html.fcpt-sbcc .fcpt-sbct{zoom:.78;margin:0 !important;width:auto !important;max-width:none !important}
+      @media (max-width:700px){
+        html.fcpt-sbcc .fcpt-sbcg{grid-template-columns:1fr;gap:6px !important}
+        html.fcpt-sbcc .fcpt-sbct{zoom:.66}
+      }
+    `);
+    function markSbc() {
+      const de = document.documentElement;
+      de.classList.toggle('fcpt-sbcc', settings.sbcCompact !== false);
+      const old = [...document.querySelectorAll('.fcpt-sbct')];
+      if (settings.sbcCompact === false) return;
+      let tiles = [...document.querySelectorAll('[class*="sbc-set-tile"],[class*="sbc-challenge-tile"],[class*="SBCSet"],[class*="sbcSet"]')].filter((el) => !el.closest('#fcpt-panel'));
+      tiles = tiles.filter((el) => !tiles.some((o) => o !== el && o.contains(el)));
+      if (tiles.length < 2) {
+        // Rückfall: Kacheln an „Ablauf in“ / „wiederholbar“ erkennen
+        const t = document.querySelector('.ut-navigation-bar-view h1, .ut-navigation-bar-view .title, h1.title');
+        if (!t || !/sbc|aufgaben|challenge/i.test(t.textContent || '')) { old.forEach((x) => x.classList.remove('fcpt-sbct')); return; }
+        const marks = [...document.querySelectorAll('.ut-root-view *')].filter((el) => !el.children.length && /Ablauf in|wiederholbar|Expires in|repeatable/i.test(el.textContent || ''));
+        const cnt = new Map();
+        for (const m of marks) {
+          let a = m;
+          while (a && a.parentElement && a.parentElement !== document.body) {
+            const par = a.parentElement;
+            const sib = [...par.children].filter((c) => marks.some((x) => c.contains(x)));
+            if (sib.length >= 3) { cnt.set(a, par); break; }
+            a = par;
+          }
+        }
+        tiles = [...cnt.keys()];
+      }
+      old.forEach((x) => { if (!tiles.includes(x)) x.classList.remove('fcpt-sbct'); });
+      document.querySelectorAll('.fcpt-sbcg').forEach((g) => { if (!tiles.some((x) => x.parentElement === g)) g.classList.remove('fcpt-sbcg'); });
+      tiles.forEach((x) => { x.classList.add('fcpt-sbct'); if (x.parentElement) x.parentElement.classList.add('fcpt-sbcg'); });
+    }
+    setInterval(() => { try { markSbc(); } catch (e) { /* */ } }, 1000);
 
     // ---------- EA-Layout „Manager“: wie Manager-Spiele – Menü links mit großen Symbolen, goldene Rahmen,
     // Wappen + Belegungsbalken in der Kopfzeile, Hintergrund mit Goldschlieren. Nur Optik/Anordnung.
