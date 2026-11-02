@@ -1020,11 +1020,14 @@
       sc.addEventListener('change', (e) => { e.stopPropagation(); settings.eaSkin = sc.checked; saveSettings(); try { applyEaSkin(); } catch (x) { /* */ } });
       const qRow = document.createElement('div');
       qRow.className = 'fcpt-set';
-      qRow.innerHTML = '<span>Kompakte SBC-Übersicht<small>SBC-Kacheln kleiner, am PC mehrere nebeneinander</small></span><input type="checkbox" class="fcpt-sw" data-uib="sbcc">';
+      qRow.innerHTML = '<span>Kompakte SBC-Übersicht<small>SBC-Kacheln kleiner, am PC mehrere nebeneinander</small></span><select data-uib="sbcsz" style="margin-right:8px"><option value="m">Kompakt</option><option value="s">Klein</option><option value="xs">Sehr klein</option></select><input type="checkbox" class="fcpt-sw" data-uib="sbcc">';
       grp.appendChild(qRow);
       const qc = qRow.querySelector('input');
       qc.checked = settings.sbcCompact !== false;
       qc.addEventListener('change', (e) => { e.stopPropagation(); settings.sbcCompact = qc.checked; saveSettings(); try { markSbc(); } catch (x) { /* */ } });
+      const qs2 = qRow.querySelector('select');
+      qs2.value = settings.sbcSize;
+      qs2.addEventListener('change', (e) => { e.stopPropagation(); settings.sbcSize = qs2.value; saveSettings(); try { markSbc(); } catch (x) { /* */ } });
       const kRow = document.createElement('div');
       kRow.className = 'fcpt-set';
       kRow.innerHTML = '<span>Kleine Knöpfe<small>FC-Knopf, Snipe-Knopf und Tool-Knöpfe kleiner – mehr Platz auf dem Bildschirm</small></span><input type="checkbox" class="fcpt-sw" data-uib="btnsm">';
@@ -1246,17 +1249,21 @@
     setInterval(() => { try { markClubList(); } catch (e) { /* */ } }, 800);
     // ---------- SBC-Übersicht kompakt: kleinere Kacheln, am PC mehrere Spalten (nur Optik) ----------
     if (settings.sbcCompact === undefined) settings.sbcCompact = true;
+    if (settings.sbcSize === undefined) settings.sbcSize = 'xs';   // m | s | xs
+    const SBCZ = { m: [0.78, 0.66], s: [0.68, 0.56], xs: [0.58, 0.47] };
     GM_addStyle(`
-      html.fcpt-sbcc .fcpt-sbcg{display:grid !important;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px !important;align-items:start;align-content:start}
-      html.fcpt-sbcc .fcpt-sbct{zoom:.78;margin:0 !important;width:auto !important;max-width:none !important}
+      html.fcpt-sbcc .fcpt-sbcg{display:grid !important;grid-template-columns:repeat(auto-fill,minmax(var(--fcpt-sbcw,330px),1fr));gap:10px !important;align-items:start;align-content:start}
+      html.fcpt-sbcc .fcpt-sbct{zoom:var(--fcpt-sbcz,.78);margin:0 !important;width:auto !important;max-width:none !important}
       @media (max-width:700px){
         html.fcpt-sbcc .fcpt-sbcg{grid-template-columns:1fr;gap:6px !important}
-        html.fcpt-sbcc .fcpt-sbct{zoom:.66}
+        html.fcpt-sbcc .fcpt-sbct{zoom:var(--fcpt-sbczm,.66)}
       }
     `);
     function markSbc() {
       const de = document.documentElement;
       de.classList.toggle('fcpt-sbcc', settings.sbcCompact !== false);
+      const z = SBCZ[settings.sbcSize] || SBCZ.s;
+      de.style.setProperty('--fcpt-sbcz', z[0]); de.style.setProperty('--fcpt-sbczm', z[1]); de.style.setProperty('--fcpt-sbcw', Math.round(420 * z[0]) + 'px');
       const old = [...document.querySelectorAll('.fcpt-sbct')];
       if (settings.sbcCompact === false) return;
       let tiles = [...document.querySelectorAll('[class*="sbc-set-tile"],[class*="sbc-challenge-tile"],[class*="SBCSet"],[class*="sbcSet"]')].filter((el) => !el.closest('#fcpt-panel'));
