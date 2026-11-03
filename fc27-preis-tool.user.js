@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC27 Transferliste – Preis- & Profit-Tool
 // @namespace    fc27-preis-tool
-// @version      2.73.2
+// @version      2.74.0
 // @description  SBC-Solver, Trading-Finder, Snipe-Tastenkürzel und Preis-/Profit-Anzeige. Zeigt für deine Transferliste Startpreis, Sofortkauf, Verkaufspreis, Netto-Profit (nach 5 % EA-Steuer) und Futbin-Marktpreise.
 // @match        https://www.ea.com/*ultimate-team/web-app*
 // @match        https://ea.com/*ultimate-team/web-app*
@@ -8213,6 +8213,7 @@ const SBC = (function () {
       #fcpt-panel .fcpt-sgroup h4{font-size:10.5px;letter-spacing:.08em;color:var(--ink3)}
       #fcpt-panel .fcpt-overview .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
       .ev{border:1px solid var(--line,#334);border-radius:10px;margin:6px 0;overflow:hidden}.ev-h{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;cursor:pointer}.ev-h small{color:var(--ink2)}.ev.open .ev-h{background:rgba(255,255,255,.04)}.ev-b{padding:6px 10px 10px}.ev-req,.ev-ups{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px}.ev-req span,.ev-ups span{font-size:11px;padding:2px 6px;border-radius:6px;background:rgba(255,255,255,.06)}.ev-ups span{color:#4ade80}.rl-box{display:flex;flex-direction:column;gap:4px;width:100%}.rl-r{display:flex;justify-content:space-between;gap:8px;font-size:12px}.rl-r small{color:var(--ink2)}.fcpt-listall button.rl{background:transparent;border:1px solid var(--line,#445);color:inherit}.tr-cons{margin:6px 0;font-size:12px;color:var(--ink2)}.tr-cons button{margin-left:6px;padding:4px 8px;border-radius:8px;border:1px solid var(--line,#334);background:transparent;color:inherit}.tr-fix{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:10px;background:#0f1420;border:1px solid var(--line)}
+      .tr-lad input[type=text]{width:220px;max-width:100%;text-align:left}
       .tr-fix .lb{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
       .tr-fix input{width:96px;background:var(--bg3);color:var(--ink);border:1px solid #2a3652;border-radius:8px;padding:6px 8px;font:13px 'JetBrains Mono',ui-monospace,monospace;text-align:right}
       .tr-fix button{height:32px;padding:0 10px;border-radius:8px;border:1px solid #2a3652;background:var(--bg3);color:var(--ink);font:600 12.5px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer}
@@ -9375,6 +9376,55 @@ const SBC = (function () {
       if (settings.relistCut === undefined) settings.relistCut = 1;            // Preisstufen günstiger
       if (settings.relistFloor === undefined) settings.relistFloor = true;     // nie unter „ohne Verlust“
       if (settings.relistUsePreset === undefined) settings.relistUsePreset = true;
+      // Preisstaffel: mehrere gleiche Karten zu unterschiedlichen Preisen einstellen
+      if (settings.ladderMode === undefined) settings.ladderMode = 'auto';   // 'auto' | 'off'
+      if (!Array.isArray(settings.ladderTiers)) settings.ladderTiers = [[10, 30], [25, 20]];   // [+%, Anteil %]
+      function parseTiers(txt) {
+        const out = [];
+        for (const tok of String(txt || '').split(/[;\n]|,(?=\s*\d+\s*[x×*])/)) {
+          const m = tok.trim().match(/^(\d+)\s*[x×*]\s*([\d.,]+)\s*(k)?$/i);
+          if (!m) continue;
+          const price = m[3] ? parseFloat(m[2].replace(',', '.')) * 1000 : parseInt(m[2].replace(/[.,]/g, ''), 10);
+          if (+m[1] > 0 && price >= 200) out.push([+m[1], roundPrice(price)]);
+        }
+        return out;
+      }
+      const tiersText = (t) => (t || []).map(([n, v]) => `${n}×${v}`).join(', ');
+      // Preise für n gleiche Karten ab Grundpreis „base“ – günstigste zuerst
+      function ladder(rid, n, base) {
+        const ps = settings.listPresets[rid];
+        if (ps && Array.isArray(ps.tiers) && ps.tiers.length) {
+          const L = [];
+          [...ps.tiers].sort((a, b) => a[1] - b[1]).forEach(([c, v]) => { for (let i = 0; i < c && L.length < n; i++) L.push(v); });
+          while (L.length < n) L.push(L.length ? L[L.length - 1] : base);
+          return L;
+        }
+        if (settings.ladderMode !== 'auto' || n < 2 || !base) return Array(n).fill(base);
+        const T = settings.ladderTiers.filter(([u, sh]) => u > 0 && sh > 0);
+        const cnt = T.map(([, sh]) => Math.round((n * sh) / 100));
+        // jede Stufe mindestens 1 Karte, solange genug Karten da sind; Grundpreis behält den Rest (mind. 1)
+        for (let i = 0; i < cnt.length; i++) if (!cnt[i] && n - cnt.reduce((a, b) => a + b, 0) > 1) cnt[i] = 1;
+        while (cnt.reduce((a, b) => a + b, 0) > n - 1) { const i = cnt.lastIndexOf(Math.max(...cnt)); cnt[i]--; }
+        const L = Array(n - cnt.reduce((a, b) => a + b, 0)).fill(base);
+        let prev = base;
+        T.forEach(([u], i) => { let v = roundPrice(base * (1 + u / 100)); if (v <= prev) v = prev + stepFor(prev); prev = v; for (let k = 0; k < cnt[i]; k++) L.push(v); });
+        return L;
+      }
+      const ladderSummary = (L) => { const m = new Map(); L.forEach((v) => m.set(v, (m.get(v) || 0) + 1)); return [...m.entries()].map(([v, c]) => `${c}× ${fmt(v)}`).join(' · '); };
+      function applyLadder(out) {
+        const byRid = new Map();
+        out.forEach((c) => { const k = String(c.p.resourceId); if (!byRid.has(k)) byRid.set(k, []); byRid.get(k).push(c); });
+        for (const [k, arr] of byRid) {
+          if (arr.length < 2) continue;
+          const base = Math.min(...arr.map((c) => c.pr.bin));
+          const L = ladder(k, arr.length, base);
+          if (L.every((v) => v === base)) continue;
+          // Karten mit höherem Mindestpreis (ohne Verlust) bekommen die teureren Plätze
+          arr.sort((a, b) => (a.minBin || 0) - (b.minBin || 0));
+          arr.forEach((c, i) => { const v = Math.max(L[i], c.minBin || 0); if (v !== c.pr.bin) { c.pr = { ...c.pr, bin: v, start: lowerStep(v), src: `${c.pr.src} · Staffel` }; c.lad = true; } });
+        }
+        return out;
+      }
       const DUR = [[3600, '1 Std.'], [10800, '3 Std.'], [21600, '6 Std.'], [43200, '12 Std.'], [86400, '1 Tag'], [259200, '3 Tage']];
       let running = false, stop = false, confirmN = 0;
       let group = null;   // resourceId der gewählten Kartenversion (nur gleiche Karten einstellen) oder 'all'
@@ -9399,11 +9449,11 @@ const SBC = (function () {
           if (!pr) continue;
           if (p.bought && pr.bin < breakEven(p.bought)) {
             if (settings.listLossMode === 'skip') { skipped.push(p); continue; }
-            if (settings.listLossMode === 'be') { const be = breakEven(p.bought); out.push({ p, pr: { bin: be, start: lowerStep(be), src: 'ohne Verlust' }, raised: true }); continue; }
+            if (settings.listLossMode === 'be') { const be = breakEven(p.bought); out.push({ p, pr: { bin: be, start: lowerStep(be), src: 'ohne Verlust' }, raised: true, minBin: be }); continue; }
           }
-          out.push({ p, pr });
+          out.push({ p, pr, minBin: settings.listLossMode === 'be' && p.bought ? breakEven(p.bought) : 0 });
         }
-        return { out, skipped };
+        return { out: applyLadder(out), skipped };
       }
       // ---------- Abgelaufene neu einstellen (mit Preisanpassung) ----------
       let relistAsk = false;
@@ -9430,9 +9480,9 @@ const SBC = (function () {
         for (const p of items) {
           if (!p.expired || p.sold || !p.__raw || FAV.has(p.itemId, p.resourceId)) continue;
           const pr = relistPrice(p);
-          if (pr) out.push({ p, pr }); else none.push(p);
+          if (pr) out.push({ p, pr, minBin: settings.relistFloor && p.bought ? breakEven(p.bought) : 0 }); else none.push(p);
         }
-        return { out, none };
+        return { out: applyLadder(out), none };
       }
 
       function fixHtml(p) {
@@ -9446,7 +9496,19 @@ const SBC = (function () {
           <button data-fixsave="${p.resourceId}">${ps ? 'Ändern' : 'Festlegen'}</button>
           ${ps ? `<button data-fixdel="${p.resourceId}" aria-label="Festpreis entfernen">✕</button>` : ''}
           ${ps && candidates(p.resourceId).out.length ? `<button data-fixlist="${p.resourceId}" class="go">▶ Alle gleichen einstellen (${candidates(p.resourceId).out.length})</button>` : ''}
-          <small>${ps ? `Start ${fmt(ps.start)} · gilt für alle Karten dieser Version` : 'Wird bei „Einstellen“ verwendet'}</small></div>`;
+          <small>${ps ? `Start ${fmt(ps.start)} · gilt für alle Karten dieser Version` : 'Wird bei „Einstellen“ verwendet'}</small></div>${ladHtml(p)}`;
+      }
+      function ladHtml(p) {
+        const same = items.filter((x) => String(x.resourceId) === String(p.resourceId) && !x.sold && !x.active);
+        if (same.length < 2) return '';
+        const ps = preset(p);
+        const c = [...candidates(p.resourceId).out, ...relistCandidates().out.filter((x) => String(x.p.resourceId) === String(p.resourceId))];
+        const prev = c.length >= 2 ? ladderSummary(c.map((x) => x.pr.bin).sort((a, b) => a - b)) : '';
+        const own = ps && ps.tiers && ps.tiers.length;
+        return `<div class="tr-fix tr-lad"><span class="lb">Staffel</span>
+          <input type="text" data-ladin="${p.resourceId}" value="${own ? esc(tiersText(ps.tiers)) : ''}" placeholder="${settings.ladderMode === 'auto' ? 'leer = automatisch' : 'z. B. 5×10000, 2×11000, 3×12500'}" aria-label="Eigene Preisstaffel">
+          <button data-ladsave="${p.resourceId}">Speichern</button>${own ? `<button data-laddel="${p.resourceId}" aria-label="Eigene Staffel löschen">✕</button>` : ''}
+          <small>${same.length} gleiche Karten${prev ? ` → ${esc(prev)}` : ps || settings.listFallback ? '' : ' · erst Festpreis festlegen'}${own ? ' (eigene Staffel)' : settings.ladderMode === 'auto' ? ' (automatisch)' : ''}</small></div>`;
       }
       const bar = document.createElement('div');
       bar.className = 'fcpt-listall';
@@ -9458,8 +9520,8 @@ const SBC = (function () {
         for (const c of candidates('all').out) {
           const k = String(c.p.resourceId);
           const ps = preset(c.p);
-          const g = G.get(k) || { k, name: c.p.name, rating: c.p.rating, bin: ps ? ps.bin : c.pr.bin, n: 0, raised: 0 };
-          g.n++; if (c.raised) g.raised++; G.set(k, g);
+          const g = G.get(k) || { k, name: c.p.name, rating: c.p.rating, bin: ps ? ps.bin : c.pr.bin, n: 0, raised: 0, lo: Infinity, hi: 0 };
+          g.n++; if (c.raised) g.raised++; g.lo = Math.min(g.lo, c.pr.bin); g.hi = Math.max(g.hi, c.pr.bin); G.set(k, g);
         }
         return [...G.values()].sort((a, b) => b.n - a.n || String(a.name).localeCompare(String(b.name), 'de'));
       }
@@ -9480,10 +9542,11 @@ const SBC = (function () {
         }
         if (confirmN) {
           const nr = out.filter((c) => c.raised).length;
-          bar.innerHTML = `<span class="st">${confirmN}× ${esc(gName)} für ${esc(DUR.find((d) => d[0] === settings.listDuration)?.[1] || '')} einstellen?${nr ? ` (${nr}× zum Ohne-Verlust-Preis, weil teurer gekauft)` : ''}</span><button data-la="yes" class="go">Ja, einstellen</button><button data-la="no">Nein</button>`;
+          const ls = out.some((c) => c.lad) ? ` Preise: ${ladderSummary(out.map((c) => c.pr.bin).sort((a, b) => a - b))}.` : '';
+          bar.innerHTML = `<span class="st">${confirmN}× ${esc(gName)} für ${esc(DUR.find((d) => d[0] === settings.listDuration)?.[1] || '')} einstellen?${ls}${nr ? ` (${nr}× zum Ohne-Verlust-Preis, weil teurer gekauft)` : ''}</span><button data-la="yes" class="go">Ja, einstellen</button><button data-la="no">Nein</button>`;
           return;
         }
-        const sel = G.length ? `<select data-la="grp" aria-label="Welche Karten einstellen">${G.map((g) => `<option value="${g.k}" ${String(group) === g.k ? 'selected' : ''}>${g.n}× ${esc(g.rating ?? '')} ${esc(g.name)} · ${fmt(g.bin)}${g.raised ? ` (${g.raised}× höher, ohne Verlust)` : ''}</option>`).join('')}${G.length > 1 ? `<option value="all" ${group === 'all' ? 'selected' : ''}>Alle mit Festpreis (${G.reduce((a, g) => a + g.n, 0)})</option>` : ''}</select>` : '';
+        const sel = G.length ? `<select data-la="grp" aria-label="Welche Karten einstellen">${G.map((g) => `<option value="${g.k}" ${String(group) === g.k ? 'selected' : ''}>${g.n}× ${esc(g.rating ?? '')} ${esc(g.name)} · ${g.hi > g.lo ? `${fmt(g.lo)}–${fmt(g.hi)}` : fmt(g.bin)}${g.raised ? ` (${g.raised}× höher, ohne Verlust)` : ''}</option>`).join('')}${G.length > 1 ? `<option value="all" ${group === 'all' ? 'selected' : ''}>Alle mit Festpreis (${G.reduce((a, g) => a + g.n, 0)})</option>` : ''}</select>` : '';
         const rlBtn = RL.out.length ? `<button data-la="rl" class="rl" title="Abgelaufene Karten mit angepasstem Preis neu einstellen">↻ Abgelaufene (${RL.out.length})</button>` : '';
         bar.innerHTML = `${sel}${rlBtn}<button data-la="ask" class="go" ${out.length ? '' : 'disabled'} title="${skipped.length ? `${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“` : 'Stellt die gewählten gleichen Karten nacheinander ein'}">▶ Einstellen (${out.length})</button>${msg ? `<span class="st">${esc(msg)}</span>` : skipped.length ? `<span class="st">${skipped.length} Karte(n) übersprungen: Festpreis unter „ohne Verlust“ – in den Einstellungen änderbar</span>` : (G.length ? '' : '<span class="st">Festpreis in einer Zeile festlegen, dann hier einstellen</span>')}`;
       }
@@ -9544,6 +9607,21 @@ const SBC = (function () {
             .catch((er) => { showToast('Futbin: ' + er.message, true); render(); });
           return;
         }
+        const ls = e.target.closest && e.target.closest('[data-ladsave]');
+        const ld = e.target.closest && e.target.closest('[data-laddel]');
+        if (ls || ld) {
+          e.stopPropagation();
+          const rid = (ls || ld).dataset[ls ? 'ladsave' : 'laddel'];
+          const ps = settings.listPresets[rid];
+          if (ld) { if (ps) delete ps.tiers; saveSettings(); showToast('Eigene Staffel gelöscht'); render(); return; }
+          const inp = (ls.closest('.tr-lad') || panel).querySelector('[data-ladin]');
+          const T = parseTiers(inp && inp.value);
+          if (!inp || !inp.value.trim()) { if (ps) delete ps.tiers; saveSettings(); showToast(settings.ladderMode === 'auto' ? 'Staffel: automatisch' : 'Staffel aus'); render(); return; }
+          if (!T.length) { showToast('Format: Anzahl×Preis, z. B. 5×10000, 2×11000, 3×12500', true); return; }
+          const lo = Math.min(...T.map((t) => t[1]));
+          settings.listPresets[rid] = Object.assign({ bin: lo, start: lowerStep(lo) }, ps || {}, { tiers: T });
+          saveSettings(); showToast(`📊 Staffel gespeichert: ${T.map(([n, v]) => `${n}× ${fmt(v)}`).join(' · ')}`); render(); return;
+        }
         const sv = e.target.closest && e.target.closest('[data-fixsave]');
         const dl = e.target.closest && e.target.closest('[data-fixdel]');
         if (!sv && !dl) return;
@@ -9555,12 +9633,13 @@ const SBC = (function () {
         let v = parseInt(inp && (inp.value || inp.placeholder.replace(/\D/g, '')), 10) || 0;
         if (v < 200) { showToast('Bitte einen Preis ab 200 eingeben', true); return; }
         v = roundPrice(v);
-        settings.listPresets[rid] = { bin: v, start: lowerStep(v) };
+        settings.listPresets[rid] = Object.assign({}, settings.listPresets[rid] || {}, { bin: v, start: lowerStep(v) });
         saveSettings(); showToast(`📌 Festpreis ${fmt(v)} gespeichert`); render();
       });
       // Eingabe im Festpreis-Feld darf nicht den allgemeinen „Einstellung geändert → neu laden“-Code auslösen
-      panel.addEventListener('change', (e) => { if (e.target.dataset && e.target.dataset.fixin) e.stopPropagation(); }, true);
+      panel.addEventListener('change', (e) => { if (e.target.dataset && (e.target.dataset.fixin || e.target.dataset.ladin)) e.stopPropagation(); }, true);
       panel.addEventListener('keydown', (e) => {
+        if (e.target.dataset && e.target.dataset.ladin && e.key === 'Enter') { e.stopPropagation(); const b3 = e.target.closest('.tr-lad') && e.target.closest('.tr-lad').querySelector('[data-ladsave]'); if (b3) b3.click(); return; }
         if (e.target.dataset && e.target.dataset.fixin && e.key === 'Enter') { e.stopPropagation(); const b2 = e.target.closest('.tr-fix') && e.target.closest('.tr-fix').querySelector('[data-fixsave]'); if (b2) b2.click(); }
       });
       // Einstellungen: Dauer, Fallback, Verlustschutz
@@ -9573,6 +9652,9 @@ const SBC = (function () {
           <div class="fcpt-set"><span>Angebotsdauer</span><select data-lo="dur">${DUR.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
           <div class="fcpt-set"><span>Ohne Festpreis: Futbin-Vorschlag nehmen<small>Aus = nur Karten mit Festpreis werden eingestellt</small></span><input type="checkbox" class="fcpt-sw" data-lo="fb"></div>
           <div class="fcpt-set"><span>Festpreis unter „ohne Verlust“<small>Wenn eine Karte teurer gekauft wurde als der Festpreis zurückbringt</small></span><select data-lo="loss"><option value="be">zum Ohne-Verlust-Preis einstellen</option><option value="skip">überspringen</option><option value="allow">trotzdem zum Festpreis</option></select></div>
+          <div class="fcpt-set"><span>Preisstaffel bei mehreren gleichen Karten<small>Automatisch = ein Teil zum Grundpreis, ein Teil etwas teurer (unten einstellbar). Eigene Staffel je Karte unter dem Festpreis</small></span><select data-lo="lad"><option value="auto">automatisch</option><option value="off">aus (alle gleicher Preis)</option></select></div>
+          <div class="fcpt-set"><span>Stufe 2<small>Aufschlag % · Anteil der Karten %</small></span><span><input type="number" min="1" max="200" data-lo="l1u" style="width:60px"> % · <input type="number" min="0" max="90" data-lo="l1s" style="width:60px"> %</span></div>
+          <div class="fcpt-set"><span>Stufe 3<small>Aufschlag % · Anteil der Karten % (0 = keine 3. Stufe)</small></span><span><input type="number" min="1" max="300" data-lo="l2u" style="width:60px"> % · <input type="number" min="0" max="90" data-lo="l2s" style="width:60px"> %</span></div>
           <h4>↻ Abgelaufene neu einstellen</h4>
           <div class="fcpt-set"><span>Neuer Preis<small>Für Karten ohne Festpreis</small></span><select data-lo="rlm"><option value="market">aktueller Marktpreis (Futbin)</option><option value="cut">letzter Preis, etwas günstiger</option><option value="same">letzter Preis</option></select></div>
           <div class="fcpt-set"><span>Wie viel günstiger<small>In Preisstufen (z. B. 1 = 2.600 → 2.500)</small></span><input type="number" min="1" max="10" data-lo="rlc"></div>
@@ -9583,10 +9665,17 @@ const SBC = (function () {
         d.value = String(settings.listDuration); f.checked = !!settings.listFallback; l.value = settings.listLossMode;
         const rm = box.querySelector('[data-lo="rlm"]'), rc = box.querySelector('[data-lo="rlc"]'), rp = box.querySelector('[data-lo="rlp"]'), rf = box.querySelector('[data-lo="rlf"]');
         rm.value = settings.relistMode; rc.value = settings.relistCut; rp.checked = !!settings.relistUsePreset; rf.checked = !!settings.relistFloor;
+        const lm = box.querySelector('[data-lo="lad"]'), lu1 = box.querySelector('[data-lo="l1u"]'), ls1 = box.querySelector('[data-lo="l1s"]'), lu2 = box.querySelector('[data-lo="l2u"]'), ls2 = box.querySelector('[data-lo="l2s"]');
+        lm.value = settings.ladderMode;
+        [lu1.value, ls1.value] = settings.ladderTiers[0] || [10, 30]; [lu2.value, ls2.value] = settings.ladderTiers[1] || [25, 0];
         box.addEventListener('change', (e) => {
           e.stopPropagation();
           settings.listDuration = parseInt(d.value, 10) || 3600; settings.listFallback = f.checked; settings.listLossMode = l.value;
           settings.relistMode = rm.value; settings.relistCut = Math.max(1, Math.min(10, parseInt(rc.value, 10) || 1)); settings.relistUsePreset = rp.checked; settings.relistFloor = rf.checked;
+          settings.ladderMode = lm.value;
+          const n0 = (x, lo, hi) => Math.max(lo, Math.min(hi, parseInt(x.value, 10) || 0));
+          settings.ladderTiers = [[n0(lu1, 1, 200), n0(ls1, 0, 90)], [n0(lu2, 1, 300), n0(ls2, 0, 90)]];
+          if (settings.ladderTiers[0][1] + settings.ladderTiers[1][1] > 90) settings.ladderTiers[1][1] = Math.max(0, 90 - settings.ladderTiers[0][1]);
           saveSettings(); drawBar();
         });
       }
