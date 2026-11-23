@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.5.4
+// @version      3.5.5
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1527,6 +1527,7 @@
     #qb-panel .qb-dc .qb-check{padding:0}
     #qb-panel .qb-dcok{color:#3ddc7a;font-size:11px}
     #qb-panel .qb-hint{font-size:11px;color:#8b8e99}
+    #qb-panel .qb-ver{font-size:10px;color:#6b6e78}
     #qb-panel .qb-name > span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis}
     #qb-panel .qb-bought{margin-left:auto;flex:none;font-size:10px;font-weight:700;color:#3ddc7a;background:rgba(61,220,122,.12);border-radius:999px;padding:1px 7px}
   `;
@@ -1574,7 +1575,7 @@
 
     p.innerHTML = `
       <div class="qb-head">
-        <span class="qb-title">🛒 QuickBuy</span><span class="qb-shop">${SHOP.name}</span>
+        <span class="qb-title">🛒 QuickBuy</span><span class="qb-shop">${SHOP.name}</span><span class="qb-ver">v${(typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '?'}</span>
         <span class="qb-pill ${running ? 'on' : 'off'}">${running ? `● Läuft · ${idx + 1}/${n}` : 'Gestoppt'}</span>
         <button class="qb-icon" id="qb-dashbtn" title="Dashboard (alle Shops)">📊</button>
         <button class="qb-icon" id="qb-min" title="Ein-/Ausklappen">${p.classList.contains('min') ? '▴' : '▾'}</button>
