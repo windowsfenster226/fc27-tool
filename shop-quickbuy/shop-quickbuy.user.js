@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.9.0
+// @version      3.9.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -63,6 +63,8 @@
   const SHOPS = {
     otto: {
       name: 'OTTO',
+      declineWarranty: true,   // Garantie-Angebot nach "In den Warenkorb" ablehnen
+      cartUncheck: /garantie|versicherung|schutz|absicherung|service|aufbau|montage|einrichtung/i,
       defaultPay: 'prepay',
       host: /(^|\.)otto\.de$/,
       productUrl: /^https:\/\/www\.otto\.de\/p\//,
@@ -269,6 +271,7 @@
       buyFilter: notInCarousel, useBoundary: true,
       ldStock: true, bgCheck: true,
       stopAfterAdd: true, minInterval: 20, beta: true,
+      declineWarranty: true, cartUncheck: /garantie|versicherung|geräteschutz|absicherung|ersteinrichtung|hausbesuch/i,
     }, extra || {});
   }
   Object.assign(SHOPS, {
@@ -958,9 +961,30 @@
 
   /* ---------- Geräteschutz / Garantie-Angebote immer ablehnen ---------- */
   const DECLINE_RE = /ich\s+verzichte|kein(en)?\s+(zusätzlichen\s+)?schutz|ohne\s+(zusätzlichen\s+)?(schutz|garantie|versicherung)|nein,?\s+danke/i;
+  // Angehakte Garantie-/Service-Kästchen auf der aktuellen Seite abwählen
+  async function uncheckAddons(where) {
+    if (!SHOP.cartUncheck) return 0;
+    let n = 0;
+    for (const cb of deepAll().filter((e) => e.tagName === 'INPUT' && e.type === 'checkbox' && e.checked && !e.closest('#qb-panel'))) {
+      const t = radioLabel(cb);
+      if (SHOP.cartUncheck.test(t) && !DECLINE_RE.test(t) && !/newsletter|e-mail|agb|datenschutz/i.test(t)) {
+        clickEl((cb.labels && cb.labels[0]) || cb);
+        if (cb.checked) cb.click();
+        n++; log(`${where}: Zusatzleistung abgewählt – ${t.slice(0, 50)}`, 'info');
+        await sleep(1000);
+      }
+    }
+    return n;
+  }
   async function declineWarranty() {
-    const opt = await waitFor(() => deepAll().find((e) => /^(LABEL|INPUT|DIV|SPAN|BUTTON|P)$/.test(e.tagName) && visible(e) &&
-      elText(e).length < 90 && DECLINE_RE.test(elText(e)) && !/plusgarantie|\+\s*\d/i.test(elText(e))), 6000, 250);
+    const BAD = /mit\s+garantie|plusgarantie|\+\s*\d|\d+,\d{2}\s*€|hinzufügen/i;
+    const opt = await waitFor(() => {
+      const c = deepAll().filter((e) => /^(LABEL|INPUT|DIV|SPAN|BUTTON|A|P)$/.test(e.tagName) && visible(e) && !e.closest('#qb-panel') &&
+        elText(e).length < 90 && DECLINE_RE.test(elText(e)) && !BAD.test(elText(e)));
+      // Buttons/Labels bevorzugen, dann das Element mit dem kürzesten Text (= am genauesten)
+      c.sort((a, b) => (/^(BUTTON|LABEL|A|INPUT)$/.test(b.tagName) - /^(BUTTON|LABEL|A|INPUT)$/.test(a.tagName)) || elText(a).length - elText(b).length);
+      return c[0] || null;
+    }, 4500, 250);
     if (!opt) return false;
     const target = opt.closest('label') || opt;
     clickEl(target);
@@ -973,9 +997,22 @@
     const box = opt.closest('[role="dialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="layer" i], [class*="overlay" i]') || document;
     const next = [...box.querySelectorAll('button')].find((b) => /^(weiter|fortfahren|ok|übernehmen)$/i.test(elText(b)) && visible(b) && !isDisabled(b));
     if (next) { clickEl(next); await sleep(1200); }
-    log('Geräteschutz abgelehnt („Ich verzichte auf den zusätzlichen Schutz“)', 'info');
+    log(`Garantie/Geräteschutz abgelehnt („${elText(opt).slice(0, 45)}“)`, 'info');
     return true;
   }
+
+  /* ---------- Warenkorb-Zähler oben im Shop (allgemein) & Bestätigung "hinzugefügt" ---------- */
+  function cartCountAny() {
+    if (SHOP.cartCount) { const c = SHOP.cartCount(); if (c !== null) return c; }
+    const els = deepAll().filter((e) => /^(A|BUTTON|SPAN|DIV)$/.test(e.tagName) && !e.closest('#qb-panel') &&
+      (/warenkorb|basket|cart|einkaufswagen|panier/i.test(e.getAttribute('href') || '') || /warenkorb|einkaufswagen|panier/i.test(e.getAttribute('aria-label') || '') || /basket|cart/i.test(e.getAttribute('data-qa') || e.getAttribute('data-test') || '')));
+    for (const e of els) {
+      const m = ((e.getAttribute('aria-label') || '') + ' ' + (e.innerText || '')).match(/(\d{1,3})/);
+      if (m) return parseInt(m[1], 10);
+    }
+    return null;
+  }
+  const ADDED_RE = /(wurde|wurden|ist)\s+(erfolgreich\s+)?(in\s+den|zum|dem)\s+(warenkorb|einkaufswagen)|zum\s+warenkorb\s+hinzugefügt|in\s+den\s+warenkorb\s+gelegt|artikel\s+hinzugefügt|added\s+to\s+(cart|basket)|ajouté\s+au\s+panier/i;
 
   async function runProduct() {
     if (SHOP.shopify) return runShopify();
@@ -1051,6 +1088,7 @@
     S.set('curTitle', h1 ? norm(h1.innerText).slice(0, 40) : '');
     discord('available', 'Wird gerade in den Warenkorb gelegt …');
     S.set('stage', 'basket'); S.set('justAdded', true);
+    if (SHOP.declineWarranty) await uncheckAddons('Produktseite');
     const before = location.href;
     const cartBefore = SHOP.cartCount ? SHOP.cartCount() : null;
     if (SHOP.qtyInput) {
@@ -1064,10 +1102,22 @@
         await sleep(400);
       }
     }
+    const countBefore = cartCountAny();
     clickEl(btn);
 
     await sleep(1500);
     if (SHOP.declineWarranty) await declineWarranty();
+    // Warten, bis der Shop das Hinzufügen bestätigt (Zähler steigt oder Meldung) – sonst ist der Warenkorb evtl. noch leer
+    if (!SHOP.psFlow) {
+      const ok = await waitFor(() => {
+        const c = cartCountAny();
+        if (countBefore !== null && c !== null && c > countBefore) return `Zähler ${countBefore} → ${c}`;
+        if (ADDED_RE.test(document.body.innerText || '')) return 'Bestätigung angezeigt';
+        return null;
+      }, 10000, 300);
+      if (ok) log(`Hinzufügen bestätigt (${ok})`, 'ok');
+      else { log('Keine Bestätigung vom Shop gesehen – warte zur Sicherheit noch 3 s', 'warn'); await sleep(3000); }
+    }
     if (SHOP.dismiss) {
       const d = findClickable(SHOP.dismiss);
       if (d) { clickEl(d); log('Zusatzangebot abgelehnt'); await sleep(800); }
@@ -1138,6 +1188,15 @@
   }
 
   function wrongItemStop() {
+    // Erster Fehlversuch: Shop war evtl. nur zu langsam → einmal erneut versuchen
+    if (!S.get('addRetry')) {
+      S.set('addRetry', 1); setInCart(false);
+      log('Produkt noch nicht im Warenkorb – Shop war evtl. zu langsam, versuche es einmal erneut', 'warn');
+      S.set('stage', 'product');
+      later(2500, () => { if (S.get('running')) { S.set('navAt', Date.now()); location.href = cur().url; } });
+      return;
+    }
+    S.set('addRetry', 0);
     notify(`QuickBuy ${SHOP.name}`, 'Gesuchtes Produkt NICHT im Warenkorb – gestoppt, bitte prüfen');
     discord('error', 'Gesuchtes Produkt ist **nicht im Warenkorb** – Script gestoppt. Bitte Warenkorb prüfen.');
     return stop('Zielprodukt nicht im Warenkorb gefunden (evtl. falscher Artikel hinzugefügt) – bitte Warenkorb prüfen');
@@ -1166,19 +1225,10 @@
         setInCart(false);                       // wurde extern entfernt → beim nächsten Mal wieder hinzufügen
         return restartLoop('Produkt nicht mehr im Warenkorb', false);
       }
-      setInCart(true);
+      setInCart(true); S.set('addRetry', 0);
 
       // Bezahlte Zusatzleistungen (PlusGarantie, Einrichtung …) abwählen
-      if (SHOP.cartUncheck) {
-        for (const cb of deepAll().filter((e) => e.tagName === 'INPUT' && /checkbox|radio/.test(e.type) && e.checked)) {
-          const t = radioLabel(cb);
-          if (SHOP.cartUncheck.test(t) && !DECLINE_RE.test(t)) {
-            clickEl((cb.labels && cb.labels[0]) || cb);
-            log(`Zusatzleistung abgewählt: ${t.slice(0, 50)}`, 'info');
-            await sleep(1500);
-          }
-        }
-      }
+      await uncheckAddons('Warenkorb');
 
       // Menge auf 1 korrigieren
       if (item.qty > 1 && item.minus) {
@@ -1222,12 +1272,13 @@
         return restartLoop(`Im Warenkorb noch „${t.match(hit)[0]}“`, false);
       }
     } else {
+      await uncheckAddons('Warenkorb');
       if (!targetInCartGeneric()) {
         if (justAdded) return wrongItemStop();
         setInCart(false);
         return restartLoop('Produkt nicht mehr im Warenkorb', false);
       }
-      setInCart(true);
+      setInCart(true); S.set('addRetry', 0);
       const oos = cartOosText();
       if (oos) return restartLoop(`Warenkorb meldet „${oos}“`, true);
     }
@@ -1254,7 +1305,7 @@
     location.href = SHOP.basketUrl;
   }
 
-  const NEXT_STEP = [/^weiter$/i, /^weiter\s+zur\s+(zahlung|zahlungsart|übersicht|bestellübersicht|prüfung)$/i,
+  const NEXT_STEP = [/^(zahlungsart|auswahl|lieferart)\s+übernehmen$/i, /^übernehmen$/i, /^weiter$/i, /^weiter\s+zur\s+(zahlung|zahlungsart|übersicht|bestellübersicht|prüfung)$/i,
     /^zur\s+(bestellübersicht|übersicht|zahlung)$/i, /^weiter\s+zum\s+(bezahlen|nächsten\s+schritt)$/i, /^bestellung\s+prüfen$/i];
 
   let checkoutRunning = false;
@@ -1444,7 +1495,12 @@
     const radios = payRadios();
     if (radios.length) return radios.some((r) => isChecked(r) && want.re.test(radioLabel(r)));
     const pb = payBox();
-    if (pb && ANY_PAY.test(pb.text)) return want.re.test(pb.text);
+    if (pb && ANY_PAY.test(pb.text)) {
+      // Stehen mehrere Zahlungsarten im Bereich (Auswahlliste ohne erkennbare Markierung), ist unklar, welche gewählt ist
+      const kinds = Object.values(PAY).filter((v) => v.re && v.re.test(pb.text)).length;
+      if (kinds > 1) return null;
+      return want.re.test(pb.text);
+    }
     return null;
   }
   const NEW_PAY = /\b(neue|neuen|new)\b|hinzufügen|ajouter|eingeben/i;   // "Neue Kreditkarte verwenden" → würde Kartendaten verlangen
@@ -1993,7 +2049,7 @@
       S.set('dryRun', false); busy = true;
       // PlayStation: Einkaufswagen kann nicht geprüft werden → jeder Start beginnt frisch
       if (SHOP.stopAfterAdd || SHOP.psFlow) S.set('inCart', {});
-      S.set('loginWait', 0); S.set('loginAlerted', false);
+      S.set('loginWait', 0); S.set('loginAlerted', false); S.set('addRetry', 0);
       S.set('attempts', 0); S.set('stage', 'product'); S.set('running', true);
       log(`Gestartet mit ${products.length} Produkt(en)${S.get('autoOrder') ? ' – AUTO-BESTELLUNG AN' : ''}`);
       if (stripUrl(location.href) !== products[0].url) { S.set('navAt', Date.now()); location.href = products[0].url; } else { renderPanel(); main(); }
