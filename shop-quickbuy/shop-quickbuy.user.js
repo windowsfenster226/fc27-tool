@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.4.0
+// @version      3.5.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -96,7 +96,10 @@
             /benachrichtigen,?\s+(sobald|wenn)/i],
       toCheckout: [/^zur\s+kasse$/i, /^zur\s+kasse\s+gehen$/i, /weiter\s+zur\s+kasse/i],
       checkoutSelector: '[data-test="checkout-continue-button"]',
-      finalOrder: [/zahlungspflichtig\s+bestellen/i, /^jetzt\s+kaufen$/i, /^kaufen$/i],
+      // Zahlungsarten auf /checkout/payment (gesehen): Radio-Werte statt Texte
+      payValue: { card: 'CRECA', paypal: 'PAYPAL', invoice: 'KLARNA' },
+      // Letzter Schritt auf /checkout/summary (gesehen): "Fortfahren und bezahlen"
+      finalOrder: [/^fortfahren\s+und\s+bezahlen$/i, /zahlungspflichtig\s+bestellen/i, /^jetzt\s+kaufen$/i, /^kaufen$/i],
       // Overlay nach "In den Warenkorb" (Versicherungsangebot etc.) wegklicken
       dismiss: [/^nein,?\s+danke$/i, /ohne\s+(versicherung|schutz|garantie)/i, /^weiter\s+ohne/i],
     },
@@ -1090,10 +1093,16 @@
       log(total ? `Gesamtsumme ${total.toFixed(2)} € ok` : 'Gesamtsumme nicht erkannt – Artikelpreis wurde bereits geprüft');
     }
 
-    log('Auto-Bestellung: klicke "Zahlungspflichtig bestellen"');
+    log(`Auto-Bestellung: klicke „${elText(btn)}“`, 'buy');
     S.set('stage', 'done');
     clickEl(btn);
-    const result = await waitFor(() => (COMMON.success.test(pageText()) ? 'ok' : cartOosText() ? 'oos' : null), 15000);
+    setTimeout(() => {
+      if (S.get('stage') === 'done' && !COMMON.success.test(pageText())) {
+        notify(`QuickBuy ${SHOP.name}`, 'Bitte Zahlung bestätigen (Banking-App / Prüfnummer)');
+        discord('checkout', '**Zahlung bestätigen!** Bestellung ist abgeschickt – bitte in der Banking-App bzw. auf der Seite bestätigen.');
+      }
+    }, 12000);
+    const result = await waitFor(() => (COMMON.success.test(pageText()) ? 'ok' : cartOosText() ? 'oos' : null), 120000, 500);
     if (result === 'oos') return backToBasket(`Bestellung abgelehnt („${cartOosText()}“)`);
     if (result === 'ok') { notify(`QuickBuy ${SHOP.name}`, '✅ Bestellung erfolgreich!'); await discord('success', 'Bestellung wurde aufgegeben 🎉'); return finishSuccess('Bestellung erfolgreich'); }
     notify(`QuickBuy ${SHOP.name}`, 'Bestellung abgeschickt – Ergebnis unklar, bitte prüfen');
@@ -1124,7 +1133,7 @@
   /* ---------- Zahlungsmethode wählen + prüfen ---------- */
   const PAY = {
     default:  { label: 'Wie im Konto (Standard)' },
-    card:     { label: 'Kreditkarte', re: /\b(visa|mastercard|master\s*card|amex|american\s+express|kreditkarte)\b|\*{2,}\s*\d{4}/i },
+    card:     { label: 'Kreditkarte', re: /\b(visa|mastercard|master\s*card|amex|american\s+express|kreditkarte|kartenzahlung|click\s+to\s+pay)\b|[*•·]{2,}\s*\d{4}/i },
     invoice:  { label: 'Rechnung (Klarna)', re: /rechnung|klarna/i },
     prepay:   { label: 'Vorkasse / Überweisung', re: /vorkasse|überweisung/i },
     paypal:   { label: 'PayPal', re: /paypal/i },
@@ -1155,18 +1164,34 @@
   }
   // Ist die gewünschte Zahlungsart ausgewählt? true/false, null = keine Zahlungsauswahl auf dieser Seite
   function paySelected(want) {
+    if (SHOP.payValue) {
+      const v = SHOP.payValue[S.get('payMethod')];
+      const radios = deepAll().filter((e) => e.tagName === 'INPUT' && e.type === 'radio' && Object.values(SHOP.payValue).concat(['APPLEPAY', 'AMAZONPAY', 'OPAY']).includes(e.value));
+      if (radios.length) {
+        if (!v) return false;                                   // gewünschte Zahlungsart gibt es hier nicht
+        const r = radios.find((x) => x.value === v);
+        return !!(r && r.checked);
+      }
+    }
     const radios = payRadios();
     if (radios.length) return radios.some((r) => isChecked(r) && want.re.test(radioLabel(r)));
     const pb = payBox();
     if (pb && ANY_PAY.test(pb.text)) return want.re.test(pb.text);
     return null;
   }
+  const NEW_PAY = /\b(neue|neuen|new)\b|hinzufügen|ajouter|eingeben/i;   // "Neue Kreditkarte verwenden" → würde Kartendaten verlangen
+  function payRadioByValue() {
+    const v = SHOP.payValue && SHOP.payValue[S.get('payMethod')];
+    return v ? deepAll().find((e) => e.tagName === 'INPUT' && e.type === 'radio' && e.value === v) : null;
+  }
   function findPayOption(want, exclude) {
-    const r = payRadios().find((x) => want.re.test(radioLabel(x)));
+    const rv = payRadioByValue();
+    if (rv) return (rv.labels && rv.labels[0]) || rv.closest('label') || rv;
+    const r = payRadios().find((x) => want.re.test(radioLabel(x)) && !NEW_PAY.test(radioLabel(x)));
     if (r) return (r.labels && r.labels[0]) || r.closest('label') || r;
     return deepAll().find((e) => visible(e) && e !== exclude && !(exclude && exclude.contains(e)) && !e.closest('#qb-panel') &&
       (['option', 'radio', 'menuitem', 'menuitemradio'].includes(e.getAttribute('role')) || ['LI', 'LABEL'].includes(e.tagName) || isClickableEl(e)) &&
-      elText(e).length < 120 && want.re.test(elText(e))) || null;
+      elText(e).length < 120 && want.re.test(elText(e)) && !NEW_PAY.test(elText(e))) || null;
   }
   async function ensurePayment() {
     const want = PAY[S.get('payMethod')];
@@ -1177,7 +1202,8 @@
 
     log(`Wähle Zahlungsart „${want.label}“ …`, 'buy');
     let opener = null;
-    let opt = payRadios().length ? findPayOption(want) : null;
+    if (SHOP.payValue && !SHOP.payValue[S.get('payMethod')]) return { ok: false, msg: `„${want.label}“ wird von ${SHOP.name} nicht angeboten` };
+    let opt = payRadioByValue() || (payRadios().length ? findPayOption(want) : null);
     if (!opt) {
       const pb = payBox();
       if (!pb) return { ok: false, msg: 'Zahlungsauswahl nicht gefunden' };
