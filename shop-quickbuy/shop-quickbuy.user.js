@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.3.2
+// @version      3.4.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -189,15 +189,20 @@
   SHOPS.fnacpro = {
     name: 'FNAC Pro',
     host: /(^|\.)fnacpro\.com$/,
-    productUrl: /^https:\/\/(www\.)?fnacpro\.com\/(?!$|\?|#)[^?#]+/i,
-    productHint: 'https://www.fnacpro.com/…',
+    productUrl: /^https:\/\/(www\.)?fnacpro\.com\/(?:[^?#]*\/)?(?:a|mp)\d{5,}/i,
+    productHint: 'https://www.fnacpro.com/…/a12345678/…',
     productKey: (u) => { const m = u.match(/\/(a|mp)(\d{5,})/i); return m ? m[2] : stripUrl(u).replace(/^https:\/\/(www\.)?fnacpro\.com\//i, '').replace(/\/+$/, '').toLowerCase(); },
     basketUrl: '', isBasket: (p) => /panier|basket|cart|warenkorb/i.test(p), isCheckout: (p) => /commande|checkout|kasse|paiement/i.test(p),
-    addToCart: [/^ajouter\s+au\s+panier$/i, /^in\s+den\s+warenkorb$/i, /^acheter$/i, /^ajouter$/i, /^commander$/i, /^add\s+to\s+(cart|basket)$/i],
+    addToCart: [/^ajouter\s+au\s+panier$/i],
+    // Mengenfeld der Produktseite (gesehen: name="products[<Artikelnr>].Quantity")
+    qtyInput: () => document.querySelector('input[name^="products["][name$="].Quantity"]'),
+    // Warenkorb-Zähler oben ("Mon panier 0 articles dans Mon panier")
+    cartCount: () => { const a = [...document.querySelectorAll('a')].find((x) => /mon\s+panier/i.test(x.innerText || '')); const m = a && (a.innerText || '').match(/(\d+)\s+articles?/i); return m ? parseInt(m[1], 10) : null; },
+    signInButton: () => [...document.querySelectorAll('a, button')].find((e) => /^me\s+connecter$/i.test(norm(e.innerText)) && visible(e)),
     oos: [/rupture\s+de\s+stock/i, /indisponible/i, /épuisé/i, /plus\s+disponible/i, /ausverkauft/i, /nicht\s+verfügbar/i, /out\s+of\s+stock/i],
     hardOos: [/rupture\s+de\s+stock/i, /article\s+indisponible/i, /produit\s+indisponible/i, /stock\s+en\s+ligne\s+épuisé/i],
     toCheckout: [], finalOrder: [],
-    alertOnly: true,
+    stopAfterAdd: true,    // in den Warenkorb + Alarm (Kasse folgt, sobald Warenkorb/Kasse analysiert sind)
     minInterval: 30,
     beta: true,
   };
@@ -242,6 +247,7 @@
   const shortName = (u) => {
     const parts = stripUrl(u || '').split('/').filter(Boolean);
     let slug = parts.pop() || '';
+    while (/^(w-\d+|a\d{5,}|mp\d{5,})$/i.test(slug) && parts.length > 2) slug = parts.pop();   // FNAC: /<Name>/a12345678/w-4
     if (/^[a-z0-9]{10,14}$/i.test(slug) && parts.length) {   // Microsoft: /d/<name>/<id> · Amazon: /<name>/dp/<ASIN>
       const id = slug; slug = parts.pop();
       if (/^(dp|product)$/i.test(slug)) { if (parts[parts.length - 1] === 'gp') parts.pop(); slug = parts.length > 2 ? parts.pop() : `Amazon ${id}`; }
@@ -835,6 +841,18 @@
     discord('available', 'Wird gerade in den Warenkorb gelegt …');
     S.set('stage', 'basket'); S.set('justAdded', true);
     const before = location.href;
+    const cartBefore = SHOP.cartCount ? SHOP.cartCount() : null;
+    if (SHOP.qtyInput) {
+      const q = Number(cur().qty === undefined ? 1 : cur().qty);
+      const inp = SHOP.qtyInput();
+      if (inp && q > 1) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, String(q));
+        inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true }));
+        log(`Menge auf ${q} gesetzt`, 'buy');
+        await sleep(400);
+      }
+    }
     clickEl(btn);
 
     await sleep(1500);
@@ -851,6 +869,14 @@
     if (SHOP.stopAfterAdd) {
       setInCart(true);
       await sleep(2500);
+      if (SHOP.cartCount && cartBefore !== null) {
+        const after = await waitFor(() => { const c = SHOP.cartCount(); return c !== null && c > cartBefore ? c : null; }, 6000);
+        if (!after) {
+          discord('error', `Klick auf „In den Warenkorb“ bei ${SHOP.name}, aber der Warenkorb-Zähler hat sich nicht erhöht – bitte prüfen.`);
+          return stop('Warenkorb-Zähler unverändert – Hinzufügen nicht bestätigt, bitte prüfen');
+        }
+        log(`Warenkorb bestätigt (${cartBefore} → ${after} Artikel)`, 'ok');
+      }
       notify(`QuickBuy ${SHOP.name}`, 'Im Einkaufswagen – jetzt selbst zur Kasse!');
       await discord('added', 'Liegt im Einkaufswagen – **jetzt selbst zur Kasse gehen** (Login / Warteschlange beachten).');
       window.scrollTo(0, 0);
@@ -1703,6 +1729,7 @@
       const raw = findClickable(SHOP.addToCart);
       const btn = findBuyButton();
       if (raw && raw !== btn) log('Test: Zubehör-/Empfehlungs-Button erkannt und ignoriert ✔');
+      if (SHOP.signInButton && !SHOP.buyFilter) log(`Test: Bei ${SHOP.name} ${SHOP.signInButton() ? 'NICHT angemeldet („Me connecter“ sichtbar)' : 'angemeldet ✔'}`, SHOP.signInButton() ? 'warn' : 'ok');
       if (SHOP.buyFilter) {
         const cta = deepAll().find((e) => SHOP.buyFilter(e) && visible(e));
         if (SHOP.signInButton) log(`Test: Bei ${SHOP.name} ${SHOP.signInButton() ? 'NICHT angemeldet („Anmelden“ oben sichtbar)' : 'angemeldet ✔'}`, SHOP.signInButton() ? 'warn' : 'ok');
