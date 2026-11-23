@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.5.2
+// @version      3.5.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -935,6 +935,7 @@
   }
 
   async function runBasket() {
+    log(`Warenkorb geladen (${location.pathname})`, 'info');
     const justAdded = S.get('justAdded');
     S.set('justAdded', false);
 
@@ -1048,7 +1049,9 @@
 
     // Mehrstufige Kasse: Zahlungsart wählen, "Weiter" klicken, bis der Bestell-Button da ist
     let btn = null;
-    const deadline = Date.now() + 45000;
+    const deadline = Date.now() + 90000;
+    log(`Kasse: Seite ${location.pathname}`, 'info');
+    let lastPathSeen = location.pathname;
     let lastNext = null;
     while (Date.now() < deadline) {
       if (cartOosText()) return backToBasket(`Kasse meldet „${cartOosText()}“`);
@@ -1061,6 +1064,7 @@
         }
         if (pay.msg && !pay.none) { if (!S.get('payOk')) log(pay.msg, 'info'); S.set('payOk', true); }
       }
+      if (location.pathname !== lastPathSeen) { lastPathSeen = location.pathname; log(`Kasse: Seite ${lastPathSeen}`, 'info'); }
       const f = findClickable(SHOP.finalOrder);
       if (f && !isDisabled(f)) { btn = f; break; }
       const n = findClickable(NEXT_STEP);
@@ -1383,7 +1387,11 @@
         && !(SHOP.needLogin && S.get('loginWait'))) {
       return scheduleReload(`Produktseite nicht gefunden (weitergeleitet auf ${path}) – Original-URL wird weiter aufgerufen`);
     }
-    if (SHOP.isBasket(path)) return runBasket();
+    if (stage === 'checkout' && SHOP.isCheckout(path)) return runCheckout();
+    if (SHOP.isBasket(path)) {
+      if (stage === 'checkout') log(`Shop hat von der Kasse zurück zum Warenkorb geleitet (${path})`, 'warn');
+      return runBasket();
+    }
     if (SHOP.isCheckout(path) || stage === 'checkout') return runCheckout();
     // Nach dem Sony-Login auf einer anderen Seite gelandet → zurück zum Produkt
     if (SHOP.needLogin && S.get('loginWait')) {
