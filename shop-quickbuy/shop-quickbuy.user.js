@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.9.4
+// @version      3.10.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -417,7 +417,20 @@
     return [...(el.classList || [])].some((c) => /(^|[-_])disabled$/i.test(c));
   }
 
+  // Kurzzeit-Cache: viele Prüfungen pro Durchlauf laufen über denselben DOM-Stand.
+  // Nach jedem Klick wird der Cache verworfen, damit nie mit veraltetem DOM gearbeitet wird.
+  let deepCache = null, deepAt = 0;
+  const DEEP_TTL = 250;
   function deepAll(root = document) {
+    if (root === document) {
+      const now = performance.now();
+      if (deepCache && now - deepAt < DEEP_TTL) return deepCache;
+      deepCache = deepWalk(document); deepAt = performance.now();
+      return deepCache;
+    }
+    return deepWalk(root);
+  }
+  function deepWalk(root) {
     const out = [];
     const walk = (node) => {
       for (const el of node.querySelectorAll('*')) { out.push(el); if (el.shadowRoot) walk(el.shadowRoot); }
@@ -445,6 +458,7 @@
   }
 
   function clickEl(el) {
+    deepCache = null;
     const inner = el.shadowRoot && el.shadowRoot.querySelector('button, a');
     (inner || el).click();
   }
@@ -1103,8 +1117,15 @@
         await sleep(400);
       }
     }
+    // Button direkt vor dem Klick neu suchen (SPA kann ihn inzwischen neu gerendert haben)
+    deepCache = null;
+    const btnNow = findBuyButton() || btn;
+    if (!btnNow || isDisabled(btnNow) || !btnNow.isConnected) {
+      S.set('stage', 'product'); S.set('justAdded', false);
+      return scheduleReload('Warenkorb-Button ist gerade verschwunden – neuer Versuch');
+    }
     const countBefore = cartCountAny();
-    clickEl(btn);
+    clickEl(btnNow);
 
     await sleep(1500);
     if (SHOP.declineWarranty) await declineWarranty();
@@ -2287,7 +2308,6 @@
     #qb-dash .ck{font-size:12px;display:flex;gap:5px;align-items:center;cursor:pointer}
   `;
   const DICON = { ok: '✅', err: '⛔', warn: '⚠️', oos: '💤', buy: '🛒', info: 'ℹ️' };
-  let dashTimer = null;
   function dashToast(msg) {
     const d = document.getElementById('qb-dash'); if (!d) return;
     const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; d.appendChild(t);
@@ -2310,7 +2330,8 @@
     }
     const d = document.createElement('div'); d.id = 'qb-dash'; d.className = 'page'; document.body.appendChild(d);
     renderDash(true);
-    dashTimer = setInterval(() => renderDash(false), 1500);
+    setInterval(() => { if (!document.hidden) renderDash(false); }, 1500);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) renderDash(false); });
   }
   function closeDashboard() { if (STANDALONE) window.close(); }
 
