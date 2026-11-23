@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.6.0
-// @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
+// @version      3.7.0
+// @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
 // @match        https://www.saturn.de/*
@@ -12,6 +12,24 @@
 // @match        https://www.microsoft.com/de-de/*
 // @match        https://www.playstation.com/de-de/*
 // @match        https://checkout.playstation.com/*
+// @match        https://www.alternate.de/*
+// @match        https://www.cyberport.de/*
+// @match        https://www.notebooksbilliger.de/*
+// @match        https://www.galaxus.de/*
+// @match        https://www.proshop.de/*
+// @match        https://www.euronics.de/*
+// @match        https://www.expert.de/*
+// @match        https://www.mueller.de/*
+// @match        https://www.smythstoys.com/*
+// @match        https://www.kaufland.de/*
+// @match        https://www.lidl.de/*
+// @match        https://www.gamestop.de/*
+// @match        https://www.zalando.de/*
+// @match        https://www.nike.com/*
+// @match        https://www.snipes.com/*
+// @match        https://www.solebox.com/*
+// @match        *://*/products/*
+// @match        *://*/*/products/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_notification
@@ -224,6 +242,69 @@
     beta: true,
   };
 
+  /* ================================================================== *
+   *  WEITERE SHOPS (Beta) – Universal-Erkennung
+   *  Lagerstatus aus dem Seitencode (JSON-LD): meldet die Seite "ausverkauft",
+   *  wird NIE etwas in den Warenkorb gelegt (verhindert Zubehör-Fehlkäufe).
+   * ================================================================== */
+  const BUY_TEXTS = [/^in\s+den\s+warenkorb(\s+legen)?$/i, /^in\s+den\s+einkaufswagen$/i, /^zum\s+warenkorb\s+hinzufügen$/i, /^jetzt\s+kaufen$/i, /^warenkorb$/i, /^vorbestellen$/i];
+  const OOS_TEXTS = [new RegExp(NOT_FAST + 'ausverkauft', 'i'), /nicht\s+(mehr\s+)?(lieferbar|verfügbar|vorrätig)/i, /derzeit\s+nicht/i, /benachrichtig(en|ung)/i, /out\s+of\s+stock/i];
+  // Button nicht in Empfehlungs-/Zubehör-Leisten
+  const notInCarousel = (el) => !el.closest('[class*="carousel" i], [class*="slider" i], [class*="recommend" i], [class*="reco-" i], [class*="teaser" i], [class*="cross-sell" i], [class*="crosssell" i], [class*="accessor" i]');
+  function std(id, name, domain, extra) {
+    const esc2 = domain.replace(/\./g, '\\.');
+    return Object.assign({
+      name,
+      host: new RegExp(`(^|\\.)${esc2}$`),
+      productUrl: new RegExp(`^https:\\/\\/(www\\.)?${esc2}\\/.+`, 'i'),
+      productHint: `https://www.${domain}/…`,
+      basketUrl: '', isBasket: () => false, isCheckout: () => false,
+      addToCart: BUY_TEXTS, oos: OOS_TEXTS, toCheckout: [], finalOrder: [],
+      buyFilter: notInCarousel, useBoundary: true,
+      ldStock: true, bgCheck: true,
+      stopAfterAdd: true, minInterval: 20, beta: true,
+    }, extra || {});
+  }
+  Object.assign(SHOPS, {
+    alternate: std('alternate', 'Alternate', 'alternate.de', {
+      productUrl: /^https:\/\/www\.alternate\.de\/.+\/html\/product\/\d+/i,
+      productHint: 'https://www.alternate.de/…/html/product/123456',
+      productKey: (u) => { const m = u.match(/\/product\/(\d+)/); return m ? m[1] : stripUrl(u); },
+      // live geprüft: Button "In den Warenkorb" im Formular add-to-cart-form
+      buyFilter: (el) => /add-to-cart-form/.test(el.id || '') || /add-to-cart/.test(String(el.className || '')),
+      ownSeller: /alternate/i,
+    }),
+    cyberport: std('cyberport', 'Cyberport', 'cyberport.de'),
+    notebooksbilliger: std('notebooksbilliger', 'notebooksbilliger', 'notebooksbilliger.de'),
+    galaxus: std('galaxus', 'Galaxus', 'galaxus.de', { minInterval: 30 }),
+    proshop: std('proshop', 'Proshop', 'proshop.de'),
+    euronics: std('euronics', 'Euronics', 'euronics.de'),
+    expert: std('expert', 'expert', 'expert.de'),
+    mueller: std('mueller', 'Müller', 'mueller.de'),
+    smyths: std('smyths', 'Smyths Toys', 'smythstoys.com', { productUrl: /^https:\/\/www\.smythstoys\.com\/de\/.+/i, productHint: 'https://www.smythstoys.com/de/de-de/…' }),
+    kaufland: std('kaufland', 'Kaufland', 'kaufland.de', { productUrl: /^https:\/\/www\.kaufland\.de\/product\/\d+/i, productHint: 'https://www.kaufland.de/product/123456/' }),
+    lidl: std('lidl', 'Lidl', 'lidl.de'),
+    gamestop: std('gamestop', 'GameStop', 'gamestop.de'),
+    // Sneaker/Mode: Raffles & starker Bot-Schutz → nur Alarm
+    zalando: std('zalando', 'Zalando', 'zalando.de', { alertOnly: true, stopAfterAdd: false, minInterval: 30, bgCheck: false }),
+    nike: std('nike', 'Nike', 'nike.com', { productUrl: /^https:\/\/www\.nike\.com\/de\/.+/i, productHint: 'https://www.nike.com/de/t/…', alertOnly: true, stopAfterAdd: false, minInterval: 30, bgCheck: false }),
+    snipes: std('snipes', 'Snipes', 'snipes.com', { alertOnly: true, stopAfterAdd: false, minInterval: 30, bgCheck: false }),
+    solebox: std('solebox', 'Solebox', 'solebox.com', { alertOnly: true, stopAfterAdd: false, minInterval: 30, bgCheck: false }),
+  });
+
+  /* ---------- Shopify (ein Modul für alle Shopify-Shops) ---------- */
+  SHOPS.shopify = {
+    name: 'Shopify',
+    host: /^$/,              // wird über den Seitenaufbau erkannt, nicht über die Domain
+    productUrl: /^https?:\/\/[^/]+\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:collections\/[^/]+\/)?products\/[^/?#]+/i,
+    productHint: 'https://shop.de/products/…',
+    productKey: (u) => { const m = u.match(/^https?:\/\/([^/]+)\/.*products\/([^/?#]+)/i); return m ? `${m[1]}/${m[2]}`.toLowerCase() : stripUrl(u); },
+    basketUrl: '', isBasket: (p) => /^\/cart\/?$/.test(p), isCheckout: () => false,
+    addToCart: BUY_TEXTS, oos: OOS_TEXTS, toCheckout: [], finalOrder: [],
+    shopify: true, bgCheck: true, stopAfterAdd: true, minInterval: 15, beta: true,
+  };
+  const isShopifyPage = () => !!document.querySelector('link[href*="cdn.shopify.com"], script[src*="cdn.shopify.com"], meta[name="shopify-checkout-api-token"], meta[name="shopify-digital-wallet"]');
+
   // Gemeinsame Texte für alle Shops
   const COMMON = {
     cartOos: [new RegExp(NOT_FAST + 'ausverkauft', 'i'), /nicht\s+(mehr\s+)?lieferbar/i, /nicht\s+(mehr\s+)?verfügbar/i,
@@ -234,9 +315,10 @@
     variantOpener: [/größe\s+wählen/i, /variante\s+wählen/i, /bitte\s+wählen/i],
   };
 
-  const SHOP_ID = Object.keys(SHOPS).find((id) => SHOPS[id].host.test(location.hostname));
+  const SHOP_ID = Object.keys(SHOPS).find((id) => SHOPS[id].host.test(location.hostname)) || (isShopifyPage() ? 'shopify' : null);
   if (!SHOP_ID) return;
   const SHOP = SHOPS[SHOP_ID];
+  if (SHOP_ID === 'shopify') SHOP.name = `Shopify · ${location.hostname.replace(/^www\./, '')}`;
 
   /* ================================================================== *
    *  Zustand – getrennt pro Shop, damit Otto + MediaMarkt parallel laufen
@@ -474,13 +556,32 @@
     return null;
   }
 
+  // Lagerstatus aus dem JSON-LD der aktuellen Seite: 'in' | 'out' | null
+  function pageLdAvailability() {
+    for (const sc of document.querySelectorAll('script[type="application/ld+json"]')) {
+      let d; try { d = JSON.parse(sc.textContent); } catch (e) { continue; }
+      for (const it of [].concat(d, (d && d['@graph']) || [])) {
+        if (!it || !/product/i.test([].concat(it['@type']).join())) continue;
+        const offers = [].concat(it.offers || []).flatMap((o) => [o].concat((o && o.offers) || []));
+        const av = offers.map((o) => String((o && o.availability) || '')).join(' ');
+        if (/InStock|PreOrder|LimitedAvailability|OnlineOnly/i.test(av)) return 'in';
+        if (/OutOfStock|SoldOut|Discontinued/i.test(av)) return 'out';
+      }
+    }
+    return null;
+  }
   function isOOS() {
     if (SHOP.availableFn) return !SHOP.availableFn();
+    if (SHOP.ldStock) {
+      const av = pageLdAvailability();
+      if (av === 'out') return true;                 // Seite meldet ausverkauft → niemals kaufen
+      if (av === 'in' && SHOP.alertOnly) return false;
+    }
     if (SHOP.hardOos && matchText(SHOP.hardOos)) return true;
     const btn = findBuyButton();
     return !(btn && !isDisabled(btn));
   }
-  const oosReason = () => (SHOP.hardOos && matchText(SHOP.hardOos)) || matchText(SHOP.oos) || 'kein aktiver Warenkorb-Button';
+  const oosReason = () => (SHOP.ldStock && pageLdAvailability() === 'out' && 'Seite meldet „ausverkauft“') || (SHOP.hardOos && matchText(SHOP.hardOos)) || matchText(SHOP.oos) || 'kein aktiver Warenkorb-Button';
   const cartOosText = () => matchText(COMMON.cartOos);
 
   /* ---------- Discord-Webhook (gilt für alle Shops) ---------- */
@@ -598,6 +699,14 @@
 
   /* ---------- Hintergrund-Prüfung (ohne Neuladen) ---------- */
   async function bgStatus(url) {
+    if (SHOP.shopify) {
+      try {
+        const p = await shopifyInfo(url); if (!p) return 'err';
+        const item = S.get('products').find((x) => x.url === url) || {};
+        const v = shopifyPickVariant(p, item.variant);
+        return v && v.available ? 'in' : 'out';
+      } catch (e) { return 'err'; }
+    }
     try {
       const r = await fetch(url, { credentials: 'include', cache: 'no-store' });
       if (!r.ok) return 'err';
@@ -784,7 +893,60 @@
   /* ================================================================== *
    *  Ablauf
    * ================================================================== */
+  /* ---------- Shopify: Produktdaten über die offizielle Schnittstelle (/products/<handle>.js) ---------- */
+  function shopifyJsUrl(url) {
+    const u = new URL(stripUrl(url));
+    const m = u.pathname.match(/^(.*\/products\/[^/]+)/);
+    return m ? `${u.origin}${m[1].replace(/^\/collections\/[^/]+/, '')}.js` : null;
+  }
+  async function shopifyInfo(url) {
+    const j = shopifyJsUrl(url); if (!j) return null;
+    const r = await fetch(j, { credentials: 'include', cache: 'no-store' });
+    if (!r.ok) return null;
+    return r.json();
+  }
+  function shopifyPickVariant(p, wanted) {
+    const vs = p.variants || [];
+    if (wanted) {
+      const w = norm(wanted).toLowerCase();
+      return vs.find((v) => [v.title, v.option1, v.option2, v.option3].filter(Boolean).some((o) => norm(String(o)).toLowerCase() === w)) || null;
+    }
+    return vs.find((v) => v.available) || vs[0] || null;
+  }
+  async function runShopify() {
+    await sleep(800);
+    let p;
+    try { p = await shopifyInfo(cur().url); } catch (e) { p = null; }
+    if (!p) return scheduleReload('Shopify-Produktdaten nicht abrufbar');
+    S.set('curTitle', String(p.title || '').slice(0, 60));
+    const v = shopifyPickVariant(p, cur().variant);
+    if (cur().variant && !v) return scheduleReload(`Variante „${cur().variant}“ gibt es nicht`);
+    if (!v || !v.available) return scheduleReload(`OOS${v ? ` (${v.title})` : ''}`);
+    const price = (Number(v.price) || 0) / 100;
+    S.set('curPrice', price);
+    const max = Number(cur().maxPrice) || 0;
+    if (max && price > max) return scheduleReload(`Preis ${fmtEur(price)} € > Max ${fmtEur(max)} €`);
+    const q = Number(cur().qty === undefined ? 1 : cur().qty) || 1;
+    log(`Verfügbar! ${v.title !== 'Default Title' ? `Variante „${v.title}“, ` : ''}${fmtEur(price)} € → in den Warenkorb (${q} Stk.)`, 'ok');
+    if (S.get('dryRun')) log('🧪 Probelauf: lege trotzdem in den Warenkorb (Kasse wird bei Shopify nie automatisch bezahlt)', 'buy');
+    const origin = new URL(cur().url).origin;
+    const r = await fetch(`${origin}/cart/add.js`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ items: [{ id: v.id, quantity: q }] }),
+    }).catch(() => null);
+    if (!r || !r.ok) {
+      discord('error', `Shopify: In den Warenkorb legen fehlgeschlagen (${r ? r.status : 'Netzwerk'}) – bitte manuell versuchen.`);
+      return stop(`In den Warenkorb fehlgeschlagen (${r ? r.status : 'Netzwerk'}) – bitte manuell versuchen`);
+    }
+    notify(`QuickBuy ${new URL(origin).hostname}`, 'Im Warenkorb – jetzt selbst zur Kasse!');
+    await discord('added', `Liegt im Warenkorb bei **${new URL(origin).hostname}** – **jetzt zur Kasse:** ${origin}/checkout`);
+    stop('Im Warenkorb – öffne Kasse, bitte selbst bezahlen');
+    location.href = `${origin}/checkout`;
+  }
+
   async function runProduct() {
+    if (SHOP.shopify) return runShopify();
     await sleep(1500);
     if (cur().variant && !(await selectVariant())) return scheduleReload(`Variante „${cur().variant}“ nicht wählbar`);
     if (SHOP.needLogin) {
@@ -2094,7 +2256,7 @@
       ${att.length ? `<div class="att"><div class="atth">⚠️ Braucht dich <button class="lnk" data-g="dismiss">alles erledigt</button></div>
         ${att.map((e) => `<div class="atti t-${e.type}"><b>${esc(SHOPS[e.id].name)}</b> ${esc(e.msg)} <span class="muted">${esc(e.ts)}</span></div>`).join('')}</div>` : ''}
       <div class="add">
-        <input type="text" id="d-url" placeholder="➕ Produkt-URL einfügen – Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon oder FNAC Pro">
+        <input type="text" id="d-url" placeholder="➕ Produkt-URL einfügen – Shop wird automatisch erkannt (23 Shops + alle Shopify-Shops)">
         <input type="text" id="d-max" placeholder="Max. €" style="width:90px;flex:none">
         <input type="text" id="d-qty" placeholder="Stk." title="Stückzahl (∞ = so viele wie möglich)" style="width:60px;flex:none">
         <button class="go" data-g="add">Hinzufügen</button>
@@ -2127,7 +2289,9 @@
           <td class="r">${h.price ? fmtEur(h.price) + ' €' : '–'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty big">Noch keine Käufe</div>'}`;
 
     // ---------- Einstellungen ----------
-    const setRows = ids.map((id) => {
+    const CORE = ['otto', 'mediamarkt', 'saturn', 'microsoft', 'playstation', 'amazon', 'fnacpro'];
+    const setIds = ids.filter((id) => CORE.includes(id) || used.includes(id));
+    const setRows = setIds.map((id) => {
       const sh = SHOPS[id];
       const canAuto = !sh.alertOnly && !sh.stopAfterAdd;
       const canPay = sh.finalOrder && sh.finalOrder.length || sh.psFlow;
@@ -2143,7 +2307,7 @@
       </tr>`;
     }).join('');
     const setTab = `
-      <h3>Shops</h3>
+      <h3>Shops <span class="muted" style="font-weight:400;font-size:12px">– weitere Shops erscheinen hier, sobald du dort ein Produkt einträgst</span></h3>
       <table class="pt set"><thead><tr><th>Shop</th><th>Auto-Bestellung</th><th>Zahlungsart</th><th class="c">Pause (s)</th><th>⏰ Drop-Zeit</th><th class="c">Nur Shop selbst</th><th class="c">Nach Kauf weiter</th></tr></thead><tbody>${setRows}</tbody></table>
       <h3>🔔 Discord</h3>
       <div class="dcg">
