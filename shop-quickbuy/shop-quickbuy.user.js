@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.12.0
+// @version      3.13.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2393,7 +2393,7 @@
   /* ---------- Export / Import ---------- */
   function exportAll() {
     const data = {};
-    for (const k of GM_listValues()) if (!/:heartbeat$/.test(k)) data[k] = GM_getValue(k);
+    for (const k of GM_listValues()) if (!/:heartbeat$|^global:botToken$/.test(k)) data[k] = GM_getValue(k);
     const json = JSON.stringify({ app: 'shop-quickbuy', version: GM_info && GM_info.script ? GM_info.script.version : '', exportedAt: new Date().toISOString(), data }, null, 1);
     try { GM_setClipboard(json, 'text'); } catch (e) {}
     const a = document.createElement('a');
@@ -2463,7 +2463,7 @@
     #qb-dash button.lnk{background:none;border:0;padding:0 4px;color:var(--ac);font-weight:600}
     #qb-dash button.x2{background:none;border-color:transparent;color:#8a90a2;padding:4px 8px}
     #qb-dash button.x2:hover{color:#ff7a90;background:rgba(244,63,94,.1)}
-    #qb-dash input[type=text],#qb-dash input[type=time],#qb-dash input[type=datetime-local],#qb-dash select{background:#0d0f14;border:1px solid var(--bd2);color:#fff;border-radius:9px;padding:8px 10px;font:12.5px Inter,system-ui,sans-serif;outline:none;color-scheme:dark;min-width:0}
+    #qb-dash input[type=text],#qb-dash input[type=password],#qb-dash input[type=time],#qb-dash input[type=datetime-local],#qb-dash select{background:#0d0f14;border:1px solid var(--bd2);color:#fff;border-radius:9px;padding:8px 10px;font:12.5px Inter,system-ui,sans-serif;outline:none;color-scheme:dark;min-width:0}
     #qb-dash input:focus,#qb-dash select:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(109,139,255,.18)}
     #qb-dash input.cell{width:84px;padding:5px 8px;text-align:right;background:transparent;border-color:transparent}
     #qb-dash input.cell:hover{border-color:var(--bd2)}#qb-dash input.cell:focus{background:#0d0f14}
@@ -2541,6 +2541,11 @@
     #qb-dash .set select{max-width:200px}
     #qb-dash .scroll{overflow-x:auto;border-radius:14px}
     #qb-dash .cols > *{min-width:0}
+    #qb-dash .howto{margin-top:8px;font-size:12.5px;color:#c3c7d3;background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:10px 14px}
+    #qb-dash .howto summary{cursor:pointer;font-weight:700;color:#fff}
+    #qb-dash .howto ol{margin:8px 0 2px 18px;padding:0;line-height:1.75}
+    #qb-dash .howto code,#qb-dash .cmds code{background:#0d0f14;border:1px solid var(--bd);border-radius:5px;padding:0 5px;font-size:11.5px}
+    #qb-dash .cmds{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 16px;font-size:12px;color:#aeb3c2;margin-top:8px}
     #qb-dash .d-body > h3:first-child{margin-top:0}
     /* Leisten, Chips, leere Zustände */
     #qb-dash .bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
@@ -2841,6 +2846,327 @@
       </tbody></table>` : '<div class="empty">Noch keine neuen Produkte gefunden.</div>'}`;
   }
 
+  /* ================================================================== *
+   *  Discord-Befehle: ein eigener Discord-Bot liest einen Kanal mit,
+   *  das Dashboard führt die Befehle aus und antwortet dort.
+   * ================================================================== */
+  const BOT_API = 'https://discord.com/api/v10';
+  let botState = { ok: null, msg: 'aus', at: 0 };
+  let botBackoff = 0; let botBusy = false; let botPending = null;
+  function botReq(method, path, body) {
+    const token = String(G.get('botToken', '')).trim();
+    return new Promise((res) => {
+      try {
+        GM_xmlhttpRequest({
+          method, url: BOT_API + path, timeout: 15000,
+          headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+          data: body ? JSON.stringify(body) : undefined,
+          onload: (r) => { let j = null; try { j = JSON.parse(r.responseText); } catch (e) {} res({ status: r.status, json: j }); },
+          onerror: () => res({ status: 0, json: null }),
+          ontimeout: () => res({ status: 0, json: null }),
+        });
+      } catch (e) { res({ status: 0, json: null }); }
+    });
+  }
+  function botErr(r) {
+    if (r.status === 401) return 'Bot-Token ungültig';
+    if (r.status === 403) return 'Bot darf den Kanal nicht lesen/schreiben (Rechte prüfen)';
+    if (r.status === 404) return 'Kanal nicht gefunden (Kanal-ID prüfen, Bot auf dem Server?)';
+    if (r.status === 0) return 'Discord nicht erreichbar (Tampermonkey-Erlaubnis?)';
+    return `Discord-Fehler HTTP ${r.status}`;
+  }
+  async function botSend(text, replyTo) {
+    const ch = String(G.get('botChannel', '')).trim();
+    const parts = []; let cur2 = '';
+    for (const line of String(text).split('\n')) {
+      if ((cur2 + '\n' + line).length > 1900) { parts.push(cur2); cur2 = line; } else cur2 = cur2 ? cur2 + '\n' + line : line;
+    }
+    if (cur2) parts.push(cur2);
+    for (let i = 0; i < parts.length; i++) {
+      const body = { content: parts[i], allowed_mentions: { parse: [] } };
+      if (replyTo && i === 0) body.message_reference = { message_id: replyTo, fail_if_not_exists: false };
+      const r = await botReq('POST', `/channels/${ch}/messages`, body);
+      if (r.status === 429) { await sleep(((r.json && r.json.retry_after) || 1) * 1000 + 200); i--; continue; }
+      if (r.status >= 300) { botState = { ok: false, msg: botErr(r), at: Date.now() }; return false; }
+    }
+    return true;
+  }
+  const idCmp = (a, b) => (a.length - b.length) || (a < b ? -1 : a > b ? 1 : 0);
+  async function botPoll() {
+    if (!G.get('botOn', false) || botBusy || Date.now() < botBackoff) return;
+    const ch = String(G.get('botChannel', '')).trim();
+    if (!String(G.get('botToken', '')).trim() || !/^\d{15,22}$/.test(ch)) { botState = { ok: false, msg: 'Token oder Kanal-ID fehlt', at: Date.now() }; return; }
+    botBusy = true;
+    try {
+      let last = G.get('botLast', '');
+      if (!last || G.get('botLastCh', '') !== ch) {
+        const r = await botReq('GET', `/channels/${ch}/messages?limit=1`);
+        if (r.status !== 200) { botState = { ok: false, msg: botErr(r), at: Date.now() }; botBackoff = Date.now() + 30000; return; }
+        last = (r.json[0] && r.json[0].id) || '0';
+        G.set('botLast', last); G.set('botLastCh', ch);
+        botState = { ok: true, msg: 'verbunden', at: Date.now() };
+        await botSend('⚡ **QuickBuy ist verbunden.** Schreib `!hilfe` für alle Befehle.');
+        return;
+      }
+      const r = await botReq('GET', `/channels/${ch}/messages?after=${last}&limit=20`);
+      if (r.status === 429) { botBackoff = Date.now() + ((r.json && r.json.retry_after) || 5) * 1000; return; }
+      if (r.status !== 200) { botState = { ok: false, msg: botErr(r), at: Date.now() }; botBackoff = Date.now() + 30000; return; }
+      botState = { ok: true, msg: 'verbunden', at: Date.now() };
+      const msgs = (r.json || []).slice().sort((a, b) => idCmp(a.id, b.id));
+      const allowed = String(G.get('botUsers', '')).split(/[\s,;]+/).filter(Boolean);
+      for (const m of msgs) {
+        G.set('botLast', m.id);
+        if (!m.author || m.author.bot) continue;
+        const text = String(m.content || '').trim();
+        if (!text && !(m.attachments || []).length && !(m.embeds || []).length && allowed.includes(m.author.id)) {
+          botState = { ok: false, msg: 'Nachrichten sind leer → im Discord-Entwicklerportal „Message Content Intent“ einschalten', at: Date.now() };
+          continue;
+        }
+        if (!/^[!?]/.test(text)) continue;
+        if (!allowed.includes(m.author.id)) { await botSend('⛔ Du darfst QuickBuy nicht steuern.', m.id); continue; }
+        let out;
+        try { out = await botCommand(text.slice(1).trim(), m); } catch (e) { out = `⚠️ Fehler: ${e && e.message}`; console.error('[QuickBuy] Befehl:', e); }
+        if (out) await botSend(out, m.id);
+        renderDash(true);
+      }
+    } finally { botBusy = false; }
+  }
+
+  // ---- Hilfsfunktionen für Befehle ----
+  const SHOP_ALIAS = { mm: 'mediamarkt', media: 'mediamarkt', ps: 'playstation', ps5: 'playstation', psdirect: 'playstation', sony: 'playstation',
+    ms: 'microsoft', xbox: 'microsoft', nbb: 'notebooksbilliger', fnac: 'fnacpro', amz: 'amazon', sat: 'saturn' };
+  function botShop(w) {
+    const k = String(w || '').toLowerCase().replace(/[^a-z0-9äöü]/g, '');
+    if (!k) return null;
+    if (SHOP_ALIAS[k] && SHOPS[SHOP_ALIAS[k]]) return SHOP_ALIAS[k];
+    return SHOP_IDS().find((id) => id === k) || SHOP_IDS().find((id) => SHOPS[id].name.toLowerCase().replace(/[^a-z0-9äöü]/g, '').startsWith(k)) || null;
+  }
+  const usedShops = () => SHOP_IDS().filter((id) => gv(id, 'products', []).length || gv(id, 'running', false));
+  function botShops(arg) {
+    if (/^(alle|all|\*)$/i.test(arg || '')) return usedShops();
+    const id = botShop(arg); return id ? [id] : [];
+  }
+  const autoOn = (id) => gv(id, 'autoOrder', false) && !SHOPS[id].alertOnly && !SHOPS[id].stopAfterAdd;
+  function shopStateOf(id) {
+    if (!gv(id, 'running', false)) return { k: 'off', t: 'Gestoppt' };
+    if (gv(id, 'captchaSince', 0)) return { k: 'warn', t: 'Captcha' };
+    if (gv(id, 'queueSince', 0)) return { k: 'queue', t: 'Warteschlange' };
+    if (!tabOpen(id)) return { k: 'warn', t: 'Kein Tab' };
+    const st = String(gv(id, 'stage', 'product'));
+    if (st === 'basket' || st === 'ps-cart') return { k: 'buy', t: 'Warenkorb' };
+    if (st !== 'product') return { k: 'buy', t: 'Kasse' };
+    return { k: 'on', t: 'Aktiv' };
+  }
+  function agoText(t) {
+    if (!t) return '';
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    return s < 60 ? `vor ${s} s` : s < 3600 ? `vor ${Math.round(s / 60)} Min.` : s < 86400 ? `vor ${Math.round(s / 3600)} Std.` : new Date(t).toLocaleDateString('de-DE');
+  }
+  const STATE_ICON = { on: '🟢', buy: '🛒', warn: '🟠', queue: '⏳', off: '⏸️' };
+  const dmd = (s) => String(s || '').replace(/([*_`~|>])/g, '\\$1');
+  function parseDrop(arg) {
+    const a = norm(arg).toLowerCase();
+    const tm = a.match(/(\d{1,2})[:.](\d{2})\s*(uhr)?$/);
+    if (!tm) return null;
+    const d = new Date(); d.setSeconds(0, 0);
+    if (/^morgen/.test(a)) d.setDate(d.getDate() + 1);
+    else if (!/^heute/.test(a)) {
+      const dm = a.match(/^(\d{1,2})\.(\d{1,2})\.?(\d{2,4})?/);
+      if (!dm) return null;
+      const y = dm[3] ? (dm[3].length === 2 ? 2000 + Number(dm[3]) : Number(dm[3])) : d.getFullYear();
+      d.setFullYear(y, Number(dm[2]) - 1, Number(dm[1]));
+    }
+    d.setHours(Number(tm[1]), Number(tm[2]));
+    if (isNaN(d)) return null;
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function needConfirm(m, text, fn) {
+    botPending = { user: m.author.id, until: Date.now() + 90000, fn, text };
+    return `${text}\n➡️ Bestätigen mit \`!ja\` (90 s gültig) – abbrechen mit \`!nein\``;
+  }
+  const BOT_HELP = [
+    '**QuickBuy-Befehle** (Shop: z. B. `otto`, `mm`, `saturn`, `ps`, `xbox`, `fnac` oder `alle`)',
+    '`!status` – Überblick aller Shops',
+    '`!start <shop|alle>` · `!stop <shop|alle>`',
+    '`!produkte [shop]` – überwachte Produkte mit Nummer',
+    '`!add <link> [max €] [stück]` – Produkt hinzufügen (Shop wird erkannt)',
+    '`!max <shop> <nr> <preis>` · `!entfernen <shop> <nr>`',
+    '`!auto <shop> an|aus` – Auto-Bestellung',
+    '`!zahlung <shop> karte|paypal|rechnung|vorkasse|standard`',
+    '`!drop <shop> <25.11. 10:00 | morgen 9:00 | aus>`',
+    '`!pause <shop> <sekunden>` – Prüfintervall',
+    '`!budget [betrag|aus]` – Tagesbudget',
+    '`!heute` – heutige Käufe · `!log [shop]` – letzte Meldungen',
+    '`!radar` · `!radar add <such-link> [stichwörter]`',
+    '`!selbsttest` · `!hilfe`',
+  ].join('\n');
+
+  async function botCommand(raw, m) {
+    const [cmd0, ...rest] = raw.split(/\s+/);
+    const cmd = (cmd0 || '').toLowerCase();
+    const args = rest;
+    const arg = rest.join(' ');
+    // Bestätigung
+    if (/^(ja|yes|ok|bestätigen)$/.test(cmd)) {
+      if (!botPending || botPending.user !== m.author.id || Date.now() > botPending.until) { botPending = null; return 'Nichts zu bestätigen.'; }
+      const p = botPending; botPending = null;
+      return p.fn();
+    }
+    if (/^(nein|no|abbrechen)$/.test(cmd)) { const had = !!botPending; botPending = null; return had ? '❎ Abgebrochen.' : 'Nichts offen.'; }
+
+    if (/^(hilfe|help|befehle|\?)$/.test(cmd) || cmd === '') return BOT_HELP;
+
+    if (/^(status|s)$/.test(cmd)) {
+      const ids = usedShops();
+      if (!ids.length) return 'Noch keine Shops mit Produkten. Füge eins hinzu mit `!add <link> <max €>`.';
+      const lines = ids.map((id) => {
+        const st = shopStateOf(id); const run = gv(id, 'running', false);
+        const n = gv(id, 'products', []).length;
+        const last = logFor(id)[0];
+        return `${STATE_ICON[st.k]} **${SHOPS[id].name}** – ${st.t}${run ? ` · Runde ${gv(id, 'attempts', 0) + 1}` : ''} · ${n} Produkt${n === 1 ? '' : 'e'}${autoOn(id) ? ' · 🔴 Auto' : ''}` +
+          (last ? `\n  └ ${DICON[last.type] || ''} ${dmd(last.msg).slice(0, 110)} _(${agoText(last.at)})_` : '');
+      });
+      const b = Number(G.get('budgetDay', 0)) || 0;
+      return `**📊 QuickBuy-Status** · ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}\n${lines.join('\n')}\n💶 Heute ${fmtEur(spentToday())} €${b ? ` von ${fmtEur(b)} € Budget` : ''}`;
+    }
+
+    if (/^(start|starten)$/.test(cmd)) {
+      const ids = botShops(arg).filter((id) => !gv(id, 'running', false));
+      if (!arg) return 'Welcher Shop? z. B. `!start otto` oder `!start alle`';
+      const withP = ids.filter((id) => gv(id, 'products', []).length);
+      if (!withP.length) return botShops(arg).length ? 'Läuft schon bzw. keine Produkte eingetragen.' : `Shop „${dmd(arg)}“ nicht erkannt.`;
+      const go = () => { withP.forEach((id) => dashStart(id)); return `▶️ Gestartet: ${withP.map((id) => SHOPS[id].name).join(', ')}`; };
+      const autos = withP.filter(autoOn);
+      if (autos.length) return needConfirm(m, `⚠️ **Auto-Bestellung ist AN** bei: ${autos.map((id) => SHOPS[id].name).join(', ')} – es wird verbindlich bestellt.`, go);
+      return go();
+    }
+    if (/^(stop|stopp|stoppen)$/.test(cmd)) {
+      if (!arg) return 'Welcher Shop? z. B. `!stop mm` oder `!stop alle`';
+      const ids = botShops(arg).filter((id) => gv(id, 'running', false));
+      if (!ids.length) return botShops(arg).length ? 'Läuft gerade nicht.' : `Shop „${dmd(arg)}“ nicht erkannt.`;
+      ids.forEach((id) => dashStop(id));
+      return `⏹️ Gestoppt: ${ids.map((id) => SHOPS[id].name).join(', ')}`;
+    }
+
+    if (/^(produkte|p|liste)$/.test(cmd)) {
+      const ids = arg ? botShops(arg) : usedShops();
+      if (!ids.length) return arg ? `Shop „${dmd(arg)}“ nicht erkannt.` : 'Keine Produkte eingetragen.';
+      return ids.map((id) => {
+        const l = gv(id, 'products', []);
+        return `**${SHOPS[id].name}**\n` + (l.length ? l.map((x, i) => `\`${i + 1}\` ${dmd(shortName(x.url)).slice(0, 70)} · max ${x.maxPrice ? fmtEur(x.maxPrice) + ' €' : '–'} · ${Number(x.qty) === 0 ? '∞' : (x.qty === undefined ? 1 : x.qty)} Stk.${x.bought ? ` · ✅ ${x.bought} gekauft` : ''}`).join('\n') : '_keine_');
+      }).join('\n');
+    }
+
+    if (/^(add|hinzufügen|neu)$/.test(cmd)) {
+      const u = stripUrl(String(args[0] || '').replace(/^<|>$/g, ''));
+      const id = shopOfUrl(u);
+      if (!id) return '✖ Das ist kein Produkt-Link eines unterstützten Shops.';
+      const l = gv(id, 'products', []);
+      if (l.some((x) => keyOf2(id, x.url) === keyOf2(id, u))) return `Schon bei ${SHOPS[id].name} eingetragen.`;
+      const max = parseEur(args[1] || '');
+      const qv = String(args[2] || '');
+      const qty = qv === '' ? 1 : /^(∞|0|alle)$/i.test(qv) ? 0 : Math.max(1, parseInt(qv, 10) || 1);
+      l.push({ url: u, variant: '', maxPrice: max, qty, bought: 0 });
+      sv(id, 'products', l); pushLog(id, `Produkt per Discord hinzugefügt: ${shortName(u)}`, 'info');
+      return `➕ Bei **${SHOPS[id].name}** hinzugefügt: ${dmd(shortName(u))} · max ${max ? fmtEur(max) + ' €' : '– (kein Limit!)'} · ${qty || '∞'} Stk.${gv(id, 'running', false) ? '' : `\nStarten mit \`!start ${id}\``}`;
+    }
+
+    if (/^(max|preis)$/.test(cmd) || /^(entfernen|del|löschen|rm)$/.test(cmd)) {
+      const id = botShop(args[0]); const i = parseInt(args[1], 10) - 1;
+      if (!id) return 'Shop nicht erkannt – z. B. `!max otto 1 499`';
+      const l = gv(id, 'products', []);
+      if (!l[i]) return `Nummer gibt es nicht – siehe \`!produkte ${id}\``;
+      if (/^(max|preis)$/.test(cmd)) {
+        const v = parseEur(args[2] || '');
+        l[i].maxPrice = v; sv(id, 'products', l);
+        return `✏️ ${SHOPS[id].name} #${i + 1}: Max. ${v ? fmtEur(v) + ' €' : 'aufgehoben'}`;
+      }
+      const [x] = l.splice(i, 1); sv(id, 'products', l);
+      pushLog(id, `Produkt per Discord entfernt: ${shortName(x.url)}`, 'info');
+      return `🗑️ Entfernt: ${dmd(shortName(x.url))}${!l.length && gv(id, 'running', false) ? ' (keine Produkte mehr – Shop stoppt)' : ''}`;
+    }
+
+    if (/^auto$/.test(cmd)) {
+      const id = botShop(args[0]); const v = String(args[1] || '').toLowerCase();
+      if (!id) return 'z. B. `!auto mm an`';
+      if (SHOPS[id].alertOnly || SHOPS[id].stopAfterAdd) return `${SHOPS[id].name} kann nicht automatisch bestellen.`;
+      if (/^(aus|off|0)$/.test(v)) { sv(id, 'autoOrder', false); pushLog(id, 'Auto-Bestellung aus (Discord)', 'info'); return `🟢 Auto-Bestellung bei ${SHOPS[id].name} **aus**.`; }
+      if (/^(an|on|1)$/.test(v)) return needConfirm(m, `⚠️ Auto-Bestellung bei **${SHOPS[id].name}** einschalten? Dann wird verbindlich bestellt.`, () => { sv(id, 'autoOrder', true); pushLog(id, 'Auto-Bestellung AN (Discord)', 'warn'); return `🔴 Auto-Bestellung bei ${SHOPS[id].name} **AN**.`; });
+      return `Auto-Bestellung bei ${SHOPS[id].name} ist ${autoOn(id) ? '**AN**' : 'aus'}. Ändern mit \`!auto ${id} an|aus\``;
+    }
+
+    if (/^(zahlung|zahlart|pay)$/.test(cmd)) {
+      const id = botShop(args[0]);
+      const map = { karte: 'card', kreditkarte: 'card', card: 'card', paypal: 'paypal', rechnung: 'invoice', klarna: 'invoice', vorkasse: 'prepay', überweisung: 'prepay', standard: 'default' };
+      const k = map[String(args[1] || '').toLowerCase()];
+      if (!id || !k) return 'z. B. `!zahlung mm karte` (karte, paypal, rechnung, vorkasse, standard)';
+      sv(id, 'payMethod', k); return `💳 ${SHOPS[id].name}: Zahlungsart **${PAY[k].label}**`;
+    }
+
+    if (/^drop$/.test(cmd)) {
+      const id = botShop(args[0]); const rest2 = args.slice(1).join(' ');
+      if (!id) return 'z. B. `!drop ps 25.11. 10:00` oder `!drop ps aus`';
+      if (/^(aus|off|weg)$/i.test(rest2)) { sv(id, 'dropAt', ''); return `⏰ Drop-Zeit bei ${SHOPS[id].name} entfernt.`; }
+      const v = parseDrop(rest2);
+      if (!v) return 'Zeit nicht verstanden – z. B. `25.11. 10:00`, `morgen 9:00`, `heute 18:30`';
+      sv(id, 'dropAt', v); sv(id, 'dropReloaded', false);
+      return `⏰ ${SHOPS[id].name}: Drop **${new Date(v).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}** – ab 3 Min. vorher wird schneller geprüft.`;
+    }
+
+    if (/^(pause|intervall)$/.test(cmd)) {
+      const id = botShop(args[0]); const n = parseInt(args[1], 10);
+      if (!id || !n) return 'z. B. `!pause otto 20`';
+      const v = Math.max(SHOPS[id].minInterval || 5, n); sv(id, 'intervalSec', v);
+      return `⏱️ ${SHOPS[id].name}: alle **${v} s**${v !== n ? ` (Minimum ${v} s)` : ''}`;
+    }
+
+    if (/^budget$/.test(cmd)) {
+      const old = Number(G.get('budgetDay', 0)) || 0;
+      if (!arg) return `💶 Tagesbudget: ${old ? fmtEur(old) + ' €' : 'aus'} · heute ausgegeben ${fmtEur(spentToday())} €`;
+      const v = /^(aus|off|0)$/i.test(arg) ? 0 : parseEur(arg);
+      if (!v && !/^(aus|off|0)$/i.test(arg)) return 'z. B. `!budget 1500` oder `!budget aus`';
+      const set = () => { G.set('budgetDay', v); return `💶 Tagesbudget: **${v ? fmtEur(v) + ' €' : 'aus'}**`; };
+      if (old && (!v || v > old)) return needConfirm(m, `⚠️ Tagesbudget von ${fmtEur(old)} € auf **${v ? fmtEur(v) + ' €' : 'aus'}** ${v ? 'erhöhen' : 'stellen'}?`, set);
+      return set();
+    }
+
+    if (/^(heute|käufe|kaeufe)$/.test(cmd)) {
+      const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+      const h = GM_getValue('global:history', []).filter((x) => x.ts >= d0.getTime());
+      if (!h.length) return 'Heute noch keine Käufe oder Alarme.';
+      return `**Heute**\n${h.map((x) => `${x.result === 'success' ? '✅' : x.result === 'alert' ? '🔔' : '❓'} ${new Date(x.ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} **${dmd(x.shop)}** ${dmd(x.title).slice(0, 60)} · ${fmtEur(x.total || x.price)} €${x.orderNo ? ` · Nr. ${dmd(x.orderNo)}` : ''}`).join('\n')}\n💶 Summe: ${fmtEur(spentToday())} €`;
+    }
+
+    if (/^(log|protokoll)$/.test(cmd)) {
+      const ids = arg ? botShops(arg) : usedShops();
+      const feed = ids.flatMap((id) => logFor(id).slice(0, 30).map((e) => ({ ...e, id }))).filter((e) => e.type !== 'oos')
+        .sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 12);
+      if (!feed.length) return 'Keine wichtigen Meldungen.';
+      return feed.map((e) => `\`${e.ts}\` **${SHOPS[e.id].name}** ${DICON[e.type] || ''} ${dmd(e.msg).slice(0, 140)}`).join('\n');
+    }
+
+    if (/^radar$/.test(cmd)) {
+      if (/^(add|neu)$/i.test(args[0] || '')) {
+        const u = String(args[1] || '').replace(/^<|>$/g, '');
+        let ok = false; try { ok = /^https?:$/.test(new URL(u).protocol); } catch (e) {}
+        if (!ok) return 'z. B. `!radar add https://www.otto.de/suche/ps5 ps5 pro`';
+        const l = G.get('radar', []);
+        const w = { id: Math.random().toString(36).slice(2, 9), url: u, kw: args.slice(2).join(' '), every: 5, shopId: radarShop(u), seen: [], seeded: false, lastAt: 0 };
+        l.push(w); G.set('radar', l);
+        radarTick(w.id);
+        return `📡 Radar überwacht jetzt ${dmd(u)}${w.kw ? ` (Stichwörter: ${dmd(w.kw)})` : ''} – alle 5 Min.`;
+      }
+      const l = G.get('radar', []); const hits = G.get('radarHits', []);
+      return `**📡 Radar** – ${l.length} Seite(n)\n${l.map((w) => `• ${dmd(w.url.replace(/^https?:\/\/(www\.)?/, '')).slice(0, 60)}${w.kw ? ` „${dmd(w.kw)}“` : ''} – ${w.err ? '✖ ' + dmd(w.err) : `${w.lastN || 0} Treffer`}`).join('\n') || '_keine_'}` +
+        (hits.length ? `\n**Letzte Funde**\n${hits.slice(0, 5).map((h) => `• ${dmd(h.title).slice(0, 60)} (${dmd(h.shop)}) <${h.url}>`).join('\n')}` : '');
+    }
+
+    if (/^(selbsttest|test|check)$/.test(cmd)) return `**🩺 Selbsttest**\n${selfTestText(selfTest())}`;
+
+    return `Unbekannter Befehl \`${dmd(cmd)}\` – \`!hilfe\` zeigt alle Befehle.`;
+  }
+
   function renderDash(force) {
     const d = document.getElementById('qb-dash'); if (!d) return;
     const ae = document.activeElement;
@@ -3011,6 +3337,23 @@
         <button class="sm" data-g="dctest">Test senden</button>
         ${[['dcSuccess', 'Kauf erfolgreich'], ['dcCheckout', 'Kasse erreicht / Alarm'], ['dcError', 'Probleme'], ['dcAvailable', 'Artikel verfügbar'], ['dcListing', 'Neu gelistet (Radar)'], ['dcReport', 'Täglicher Selbsttest'], ['dcPing', '@everyone']].map(([k, l]) => `<label class="ck"><input type="checkbox" data-dc="${k}" ${dc(k) ? 'checked' : ''}> ${l}</label>`).join('')}
       </div>
+      <h3>🤖 Steuerung per Discord</h3>
+      <div class="dcg">
+        <label class="ck"><input type="checkbox" id="b-on" ${G.get('botOn', false) ? 'checked' : ''}> Befehle aus Discord annehmen</label>
+        <input type="password" id="b-token" style="flex:1 1 240px" placeholder="${G.get('botToken', '') ? 'Bot-Token gespeichert ✔ (zum Ändern neu einfügen)' : 'Bot-Token'}" autocomplete="off">
+        <input type="text" id="b-ch" style="width:200px;flex:none" placeholder="Kanal-ID" value="${esc(G.get('botChannel', ''))}">
+        <input type="text" id="b-users" style="width:230px;flex:none" placeholder="Deine Discord-Nutzer-ID" value="${esc(G.get('botUsers', ''))}">
+        <button class="sm" data-g="bottest">Verbindung testen</button>
+        <span class="${botState.ok ? 'green' : botState.ok === false ? 'red' : 'muted'}" style="font-size:12px">● ${esc(G.get('botOn', false) ? botState.msg : 'aus')}</span>
+      </div>
+      <details class="howto"><summary>So richtest du den Bot ein (ca. 5 Minuten)</summary><ol>
+        <li><a href="https://discord.com/developers/applications" target="_blank">discord.com/developers/applications</a> → <b>New Application</b> → Name z. B. „QuickBuy“.</li>
+        <li>Links <b>Bot</b> → <b>Reset Token</b> → Token kopieren und oben einfügen. Darunter <b>Message Content Intent</b> einschalten → <b>Save Changes</b>.</li>
+        <li>Links <b>OAuth2 → URL Generator</b>: Haken bei <code>bot</code>, darunter <code>View Channels</code>, <code>Send Messages</code>, <code>Read Message History</code>. Link unten öffnen → deinen Server wählen → <b>Autorisieren</b>.</li>
+        <li>In Discord: <b>Einstellungen → Erweitert → Entwicklermodus</b> an. Dann Rechtsklick auf deinen Kanal → <b>Kanal-ID kopieren</b>, Rechtsklick auf deinen Namen → <b>Benutzer-ID kopieren</b> → oben eintragen.</li>
+        <li>Haken „Befehle aus Discord annehmen“ setzen → im Kanal erscheint „QuickBuy ist verbunden“. Dann <code>!hilfe</code> schreiben.</li>
+      </ol><div class="muted">Am besten einen eigenen, privaten Kanal nehmen. Nur die eingetragene Nutzer-ID darf Befehle geben. Der Token bleibt nur in deinem Browser und ist nicht im Backup enthalten. Befehle funktionieren, solange dieser Dashboard-Tab offen ist.</div>
+      <div class="cmds">${BOT_HELP.split('\n').slice(1).map((l) => `<div>${esc(l).replace(/`([^`]+)`/g, '<code>$1</code>')}</div>`).join('')}</div></details>
       <h3>💾 Sichern</h3>
       <div class="bar"><button class="sm" data-g="export">⬇ Backup herunterladen</button><button class="sm" data-g="import">⬆ Backup einspielen</button><span class="muted">Enthält Produkte, Einstellungen, Historie und die Discord-URL.</span></div>`;
 
@@ -3028,7 +3371,7 @@
         <div class="brand"><span class="lg">⚡</span><div><b>QuickBuy</b><small>Dashboard${ver ? ` · v${esc(ver)}` : ''}</small></div></div>
         ${tabs.map(([k, l, ic, nb]) => `<button class="tb ${dashTab === k ? 'act' : ''}" data-tab="${k}"><span class="ic">${ic}</span>${l}${nb !== '' ? `<span class="nb">${esc(nb)}</span>` : ''}</button>`).join('')}
         ${used.length ? `<div class="nav-sec">Shops</div><div class="mini">${used.map((id) => { const st = shopState(id); return `<div class="mi" data-tab="home" title="${esc(st.t)}"><span class="dot2" style="width:8px;height:8px;border-radius:50%;flex:none;background:${{ on: 'var(--gr)', buy: 'var(--ac)', warn: 'var(--am)', queue: 'var(--pu)', off: '#3a3f4f' }[st.k]}"></span>${esc(SHOPS[id].name)}<span class="mt">${esc(st.t)}</span></div>`; }).join('')}</div>` : ''}
-        <div class="nav-foot"><span class="live"><i></i>Live</span><span>· eigener Tab, lädt nie neu</span></div>
+        <div class="nav-foot" style="flex-direction:column;align-items:flex-start;gap:4px"><div><span class="live"><i></i>Live</span> · eigener Tab, lädt nie neu</div>${G.get('botOn', false) ? `<div title="${esc(botState.msg)}">🤖 Discord: <span class="${botState.ok ? 'green' : botState.ok === false ? 'red' : ''}">${botState.ok ? 'verbunden' : botState.ok === false ? 'Fehler' : 'verbinde …'}</span></div>` : ''}</div>
       </aside>
       <main class="mainc">
         <header class="hdr">
@@ -3096,6 +3439,16 @@
       if (g === 'clearlogs') { if (!confirm('Protokolle aller Shops leeren?')) return; ids.forEach((id) => sv(id, 'log', [])); }
       if (g === 'clearhist') { if (!confirm('Kaufhistorie wirklich leeren?')) return; GM_setValue('global:history', []); }
       if (g === 'csv') return exportCsv();
+      if (g === 'bottest') {
+        const ch = String(G.get('botChannel', '')).trim();
+        if (!G.get('botToken', '') || !ch) { alert('Bitte Bot-Token und Kanal-ID eintragen.'); return; }
+        Promise.all([botReq('GET', '/users/@me'), botReq('GET', `/channels/${ch}`)]).then(([u, c]) => {
+          if (u.status !== 200) return dashToast(`✖ ${botErr(u)}`);
+          if (c.status !== 200) return dashToast(`✖ Bot „${u.json.username}“ ok, aber Kanal: ${botErr(c)}`);
+          dashToast(`✔ Bot „${u.json.username}“ sieht den Kanal #${c.json.name}`);
+        });
+        return;
+      }
       if (g === 'selftest') {
         const r = selfTest();
         const box = document.createElement('div'); box.className = 'toast'; box.style.width = 'min(640px,92vw)';
@@ -3182,6 +3535,21 @@
     const rt = d.querySelector('#g-rtime');
     if (rt) rt.onchange = () => { G.set('reportTime', rt.value || '09:00'); };
     d.querySelectorAll('[data-gs]').forEach((c) => { c.onchange = () => G.set(c.dataset.gs, c.checked); });
+    // Discord-Bot
+    const bTok = d.querySelector('#b-token');
+    if (bTok) bTok.onchange = () => { const v = norm(bTok.value); if (v) { G.set('botToken', v); G.set('botLast', ''); bTok.value = ''; dashToast('Bot-Token gespeichert'); renderDash(true); } };
+    const bCh = d.querySelector('#b-ch');
+    if (bCh) bCh.onchange = () => { const v = norm(bCh.value); if (v && !/^\d{15,22}$/.test(v)) { alert('Die Kanal-ID besteht nur aus Ziffern (Rechtsklick auf den Kanal → Kanal-ID kopieren).'); return; } G.set('botChannel', v); G.set('botLast', ''); };
+    const bUs = d.querySelector('#b-users');
+    if (bUs) bUs.onchange = () => { const v = norm(bUs.value).replace(/[^\d,; ]/g, ''); G.set('botUsers', v); bUs.value = v; };
+    const bOn = d.querySelector('#b-on');
+    if (bOn) bOn.onchange = () => {
+      if (bOn.checked && (!G.get('botToken', '') || !/^\d{15,22}$/.test(String(G.get('botChannel', ''))) || !/\d{15,22}/.test(String(G.get('botUsers', ''))))) {
+        alert('Bitte zuerst Bot-Token, Kanal-ID und deine Nutzer-ID eintragen.'); bOn.checked = false; return;
+      }
+      G.set('botOn', bOn.checked); if (bOn.checked) { G.set('botLast', ''); botState = { ok: null, msg: 'verbinde …', at: Date.now() }; botPoll(); }
+      renderDash(true);
+    };
     const wh = d.querySelector('#d-wh');
     if (wh) wh.onchange = () => { const v = norm(wh.value); if (v && !WEBHOOK_RE.test(v)) { alert('Keine gültige Discord-Webhook-URL.'); return; } G.set('webhook', v); };
     d.querySelectorAll('[data-dc]').forEach((c) => { c.onchange = () => G.set(c.dataset.dc, c.checked); });
@@ -3249,7 +3617,9 @@
       try { reportTick(); } catch (e) { console.error('[QuickBuy] Selbsttest:', e); }
       radarTick().catch((e) => console.error('[QuickBuy] Radar:', e));
     };
-    setTimeout(chores, 5000); setInterval(chores, 20000);
+    const loop = (ms, fn) => { const tick = () => later(ms, () => { Promise.resolve().then(fn).catch((e) => console.error('[QuickBuy]', e)).finally(tick); }); tick(); };
+    setTimeout(chores, 5000); loop(20000, chores);
+    loop(4000, botPoll);
     console.log('[QuickBuy] Dashboard-Tab aktiv');
     return;
   }

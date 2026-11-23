@@ -22,3 +22,7 @@ Einstellungen, Produkte, Kaufhistorie und Discord-Webhook werden nur lokal im Br
 - **Radar:** überwacht Such-/Kategorieseiten auf neu gelistete Produkte.
 - **Statistik:** Restocks nach Wochentag und Uhrzeit.
 - **CSV-Export** der Bestellungen inkl. Bestellnummer.
+
+## Neu in 3.13.0 – Steuerung per Discord
+
+Eigener Discord-Bot, das Dashboard liest einen Kanal mit und führt Befehle aus (`!status`, `!start`, `!stop`, `!add`, `!max`, `!entfernen`, `!auto`, `!zahlung`, `!drop`, `!pause`, `!budget`, `!heute`, `!log`, `!radar`, `!selbsttest`, `!hilfe`). Kritische Änderungen (Auto-Bestellung an, Budget erhöhen, Start mit Auto-Bestellung) brauchen `!ja`. Nur eingetragene Nutzer-IDs dürfen steuern; der Bot-Token bleibt im Browser und ist nicht im Backup.
