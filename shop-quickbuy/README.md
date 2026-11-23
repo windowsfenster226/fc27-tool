@@ -10,3 +10,15 @@ Tampermonkey-Userscript: Restock-Überwachung und Schnell-Checkout für Otto, Me
 3. Updates holt Tampermonkey danach automatisch, sobald hier eine neue Version liegt.
 
 Einstellungen, Produkte, Kaufhistorie und Discord-Webhook werden nur lokal im Browser gespeichert, nicht in diesem Repository.
+
+## Neu in 3.11.0
+
+- **Warteschlange (Queue-it / Warteraum):** wird erkannt, die Seite wird nicht neu geladen, Discord-Meldung beim Eintritt und wenn du durch bist.
+- **Login-Prüfung:** warnt, wenn du in einem Shop vermutlich abgemeldet bist (pro Shop abschaltbar).
+- **Tagesbudget:** Obergrenze für alle automatischen Bestellungen zusammen pro Tag.
+- **Selbsttest:** meldet, wenn eine Produktseite nicht mehr erkannt wird; täglicher Bericht an Discord.
+- **Fremde Artikel im Warenkorb:** optional automatisch entfernen (MediaMarkt/Saturn), sonst Stopp bzw. Warnung.
+- **Tab-Wächter:** Das Dashboard öffnet Shop-Tabs neu, die 5 Min. nicht reagieren.
+- **Radar:** überwacht Such-/Kategorieseiten auf neu gelistete Produkte.
+- **Statistik:** Restocks nach Wochentag und Uhrzeit.
+- **CSV-Export** der Bestellungen inkl. Bestellnummer.

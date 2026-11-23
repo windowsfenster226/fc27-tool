@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.10.0
+// @version      3.11.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -32,6 +32,7 @@
 // @match        https://example.com/*
 // @match        https://www.example.com/*
 // @match        *://*/*/products/*
+// @match        https://*.queue-it.net/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_notification
@@ -45,6 +46,7 @@
 // @grant        GM_addStyle
 // @connect      discord.com
 // @connect      discordapp.com
+// @connect      *
 // @updateURL    https://raw.githubusercontent.com/windowsfenster226/fc27-tool/quickbuy/shop-quickbuy/shop-quickbuy.user.js
 // @downloadURL  https://raw.githubusercontent.com/windowsfenster226/fc27-tool/quickbuy/shop-quickbuy/shop-quickbuy.user.js
 // @homepageURL  https://github.com/windowsfenster226/fc27-tool/tree/quickbuy/shop-quickbuy
@@ -270,7 +272,7 @@
       addToCart: BUY_TEXTS, oos: OOS_TEXTS, toCheckout: [], finalOrder: [],
       buyFilter: notInCarousel, useBoundary: true,
       ldStock: true, bgCheck: true,
-      stopAfterAdd: true, minInterval: 20, beta: true,
+      stopAfterAdd: true, minInterval: 20, beta: true, genericUrl: true,
       declineWarranty: true, cartUncheck: /garantie|versicherung|geräteschutz|absicherung|ersteinrichtung|hausbesuch/i,
     }, extra || {});
   }
@@ -328,8 +330,10 @@
   const DASH_URL = 'https://example.com/?quickbuy';
   const STANDALONE = /^(www\.)?example\.com$/.test(location.hostname) && /quickbuy/i.test(location.search + location.hash);
   SHOPS.__dash = { name: 'Dashboard', internal: true, host: /^$/, productUrl: /^$/, productHint: '', basketUrl: '', isBasket: () => false, isCheckout: () => false, addToCart: [], oos: [], toCheckout: [], finalOrder: [] };
+  const QUEUE_HOST = /(^|\.)queue-it\.net$/i.test(location.hostname);
+  SHOPS.__queue = { ...SHOPS.__dash, name: 'Warteschlange' };
   const SHOP_IDS = () => Object.keys(SHOPS).filter((id) => !SHOPS[id].internal);
-  const SHOP_ID = STANDALONE ? '__dash' : (SHOP_IDS().find((id) => SHOPS[id].host.test(location.hostname)) || (isShopifyPage() ? 'shopify' : null));
+  const SHOP_ID = STANDALONE ? '__dash' : QUEUE_HOST ? '__queue' : (SHOP_IDS().find((id) => SHOPS[id].host.test(location.hostname)) || (isShopifyPage() ? 'shopify' : null));
   if (!SHOP_ID) return;
   const SHOP = SHOPS[SHOP_ID];
   if (SHOP_ID === 'shopify') SHOP.name = `Shopify · ${location.hostname.replace(/^www\./, '')}`;
@@ -341,7 +345,7 @@
     running: false, products: [], idx: 0, stepDelaySec: 3, continueAfterBuy: true,
     dryRun: false, dryProduct: null, dropAt: '', dropIntervalSec: 5, dropReloaded: false, heartbeat: 0,
     targetUrl: '', variant: '', intervalSec: 15, jitterSec: 5,
-    maxAttempts: 0, maxPrice: 0, autoOrder: false, autoLogin: true, loginWait: 0, onlyOwn: true, payMethod: SHOP.defaultPay || 'default', payOk: false, inCart: {}, justAdded: false, minimized: false, logOpen: false, curTitle: '', attempts: 0, stage: 'product', log: [],
+    maxAttempts: 0, maxPrice: 0, autoOrder: false, autoLogin: true, loginWait: 0, onlyOwn: true, payMethod: SHOP.defaultPay || 'default', payOk: false, inCart: {}, justAdded: false, loginCheck: true, removeOthers: false, curTotal: 0, minimized: false, logOpen: false, curTitle: '', attempts: 0, stage: 'product', log: [],
   };
   const S = {
     get: (k) => GM_getValue(`${SHOP_ID}:${k}`, DEFAULTS[k]),
@@ -617,7 +621,7 @@
     get: (k, d) => GM_getValue(`global:${k}`, d),
     set: (k, v) => GM_setValue(`global:${k}`, v),
   };
-  const DC_DEFAULTS = { webhook: '', dcSuccess: true, dcCheckout: true, dcAvailable: false, dcError: true, dcPing: false };
+  const DC_DEFAULTS = { webhook: '', dcSuccess: true, dcCheckout: true, dcAvailable: false, dcError: true, dcPing: false, dcListing: true, dcReport: true };
   const dc = (k) => G.get(k, DC_DEFAULTS[k]);
   const WEBHOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?(?:discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
 
@@ -630,15 +634,20 @@
     restock:   { flag: 'dcCheckout',  color: 0x3498db, title: '🔔 Verfügbar – jetzt selbst kaufen!' },
     error:     { flag: 'dcError',     color: 0xe74c3c, title: '⚠️ QuickBuy braucht dich' },
     test:      { flag: null,          color: 0x9b59b6, title: '🧪 Test-Nachricht von QuickBuy' },
+    queue:     { flag: 'dcCheckout',  color: 0x9b59b6, title: '⏳ Warteschlange' },
+    listing:   { flag: 'dcListing',   color: 0x1abc9c, title: '🆕 Neu gelistet' },
+    report:    { flag: 'dcReport',    color: 0x95a5a6, title: '🩺 QuickBuy Selbsttest' },
+    login:     { flag: 'dcError',     color: 0xe67e22, title: '🔑 Nicht angemeldet?' },
   };
 
-  function discord(kind, description) {
+  function discord(kind, description, o) {
+    o = o || {};
     const k = DC_KIND[kind];
     const url = dc('webhook');
     if (!k || !WEBHOOK_RE.test(url) || (k.flag && !dc(k.flag))) return Promise.resolve(false);
-    const p = cur();
-    const price = S.get('curPrice');
-    const fields = [{ name: 'Shop', value: SHOP.name, inline: true }];
+    const p = o.title !== undefined ? { url: o.url || '' } : cur();
+    const price = o.title !== undefined ? 0 : S.get('curPrice');
+    const fields = [{ name: 'Shop', value: o.shop || SHOP.name, inline: true }];
     if (price) fields.push({ name: 'Preis', value: `${fmtEur(price)} €`, inline: true });
     if (p.maxPrice) fields.push({ name: 'Höchstpreis', value: `${fmtEur(p.maxPrice)} €`, inline: true });
     if (p.variant) fields.push({ name: 'Variante', value: p.variant, inline: true });
@@ -651,10 +660,10 @@
         title: k.title,
         url: p.url || location.href,
         color: k.color,
-        description: `**${(S.get('curTitle') || shortName(p.url || location.href)).replace(/[*_`]/g, '')}**${description ? '\n' + description : ''}`,
+        description: `${o.title === '' ? '' : `**${(o.title || S.get('curTitle') || shortName(p.url || location.href)).replace(/[*_`]/g, '')}**`}${description ? (o.title === '' ? '' : '\n') + description : ''}`.slice(0, 4000),
         fields,
         timestamp: new Date().toISOString(),
-        footer: { text: `Shop QuickBuy · ${SHOP.name}` },
+        footer: { text: `Shop QuickBuy · ${o.shop || SHOP.name}` },
       }],
     };
     return new Promise((resolve) => {
@@ -678,6 +687,165 @@
         g.gain.value = 0.15; o.start(ctx.currentTime + d); o.stop(ctx.currentTime + d + 0.15);
       });
     } catch (e) {}
+  }
+
+
+  /* ================================================================== *
+   *  Warteschlange (Queue-it / Warteraum) – NIE neu laden, sonst ist der Platz weg
+   * ================================================================== */
+  const QUEUE_RE = /warteschlange|warteraum|waiting\s*room|you\s+are\s+(now\s+)?in\s+(the\s+)?(line|queue)|sie\s+sind\s+(jetzt\s+)?in\s+der\s+(schlange|warteschlange)|file\s+d['’]attente/i;
+  function queuePresent() {
+    if (QUEUE_HOST) return true;
+    if (document.querySelector('#MainPart_divProgressbar, #queue-it_log, #lbQueueNumber, #MainPart_lbQueueNumberText')) return true;
+    const head = norm(document.title + ' ' + [...document.querySelectorAll('h1, h2')].slice(0, 4).map((e) => e.innerText).join(' '));
+    return QUEUE_RE.test(head) && !findBuyButton();
+  }
+  function queueAlert(shopName, text) {
+    if (Date.now() - (GM_getValue('global:queueAlertAt', 0) || 0) < 30 * 60000) return;
+    GM_setValue('global:queueAlertAt', Date.now());
+    notify('QuickBuy – Warteschlange', text);
+    discord('queue', text, { title: shopName, shop: shopName });
+  }
+  let queueWatch = false;
+  function handleQueue() {
+    if (queueWatch) return; queueWatch = true;
+    busy = true;
+    if (!S.get('queueSince')) S.set('queueSince', Date.now());
+    log('Warteschlange erkannt – Seite wird NICHT neu geladen, damit dein Platz erhalten bleibt', 'warn');
+    queueAlert(SHOP.name, `Du bist bei **${SHOP.name}** in der Warteschlange. Tab offen lassen und **nicht neu laden** – danach geht es automatisch weiter.`);
+    const iv = setInterval(() => {
+      if (!S.get('running')) { clearInterval(iv); queueWatch = false; return; }
+      if (queuePresent()) return;
+      clearInterval(iv); queueWatch = false; busy = false;
+      queuePassed();
+      setTimeout(() => { if (S.get('running') && !busy) { busy = true; main(); } }, 1500);
+    }, 4000);
+  }
+  function queuePassed() {
+    const since = S.get('queueSince'); if (!since) return;
+    S.set('queueSince', 0);
+    const min = Math.round((Date.now() - since) / 60000);
+    log(`Warteschlange geschafft ✔ (${min} Min.) – weiter geht’s`, 'ok');
+    discord('queue', `Warteschlange bei **${SHOP.name}** geschafft (${min} Min.) – Script macht weiter.`);
+  }
+  // Läuft auf *.queue-it.net (eigene Seite des Warteschlangen-Anbieters)
+  function queueTargetShop() {
+    const hosts = [];
+    try { const q = new URLSearchParams(location.search); for (const k of ['t', 'target']) if (q.get(k)) hosts.push(new URL(q.get(k)).hostname); } catch (e) {}
+    try { if (document.referrer) hosts.push(new URL(document.referrer).hostname); } catch (e) {}
+    for (const h of hosts) { const id = SHOP_IDS().find((x) => SHOPS[x].host.test(h)); if (id) return id; }
+    // sonst: der laufende Shop, der zuletzt eine Seite aufgerufen hat
+    return SHOP_IDS().filter((x) => GM_getValue(`${x}:running`, false))
+      .sort((a, b) => (GM_getValue(`${b}:navAt`, 0) || 0) - (GM_getValue(`${a}:navAt`, 0) || 0))[0] || null;
+  }
+  function queuePage() {
+    if (window.top !== window) return;
+    const id = queueTargetShop();
+    const name = id ? SHOPS[id].name : 'Shop';
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#1d1f25;color:#fff;border:2px solid #9b59b6;border-radius:12px;padding:12px 16px;font:14px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)';
+    bar.innerHTML = `⏳ <b>QuickBuy:</b> Du bist in der Warteschlange${id ? ` von <b>${name}</b>` : ''}. Tab offen lassen, <b>nicht neu laden</b> – danach macht das Script automatisch weiter.`;
+    (document.body || document.documentElement).appendChild(bar);
+    if (!id) return;
+    if (!GM_getValue(`${id}:queueSince`, 0)) GM_setValue(`${id}:queueSince`, Date.now());
+    pushLog(id, 'Warteschlange (Queue-it) – warte, ohne neu zu laden', 'warn');
+    queueAlert(name, `Du bist bei **${name}** in der Warteschlange. Tab offen lassen und **nicht neu laden** – danach geht es automatisch weiter.`);
+    // Herzschlag für den Shop, damit das Dashboard den Tab nicht für abgestürzt hält
+    const beat = () => GM_setValue(`${id}:heartbeat`, Date.now());
+    beat(); setInterval(beat, 3000);
+  }
+
+  /* ---------- Anmeldung im Hintergrund prüfen ---------- */
+  const LOGIN_TXT = /^(anmelden|einloggen|login|log\s*in|sign\s*in|se\s+connecter|identifiez-vous|anmelden\s*(\/|oder)\s*registrieren)$/i;
+  function loggedOutHint() {
+    if (SHOP.loginState) return SHOP.loginState();
+    const zones = [...document.querySelectorAll('header, [role="banner"], nav')].slice(0, 8);
+    for (const z of zones) {
+      for (const el of z.querySelectorAll('a, button, [role="button"]')) {
+        const t = elText(el);
+        if (t.length < 40 && LOGIN_TXT.test(t) && visible(el)) return t;
+      }
+    }
+    return null;
+  }
+  function checkLogin() {
+    if (!S.get('loginCheck') || SHOP.needLogin || SHOP.alertOnly || SHOP.shopify || S.get('dryRun')) return;
+    if (Date.now() - (S.get('loginCheckedAt') || 0) < 5 * 60000) return;
+    S.set('loginCheckedAt', Date.now());
+    const t = loggedOutHint();
+    if (!t) {
+      if (S.get('loggedOut')) { S.set('loggedOut', 0); log('Anmeldung ok ✔', 'ok'); }
+      return;
+    }
+    const n = (S.get('loggedOut') || 0) + 1; S.set('loggedOut', n);
+    if (n < 2) return;                                   // zweimal hintereinander → kein Fehlalarm durch Ladezustände
+    log(`Vermutlich nicht angemeldet (oben steht „${t}“) – bitte bei ${SHOP.name} anmelden, sonst scheitert die Kasse`, 'warn');
+    if (Date.now() - (S.get('loginAlertAt') || 0) > 2 * 3600e3) {
+      S.set('loginAlertAt', Date.now());
+      notify(`QuickBuy ${SHOP.name}`, 'Vermutlich abgemeldet – bitte anmelden');
+      discord('login', `Bei **${SHOP.name}** steht oben „${t}“ – du bist vermutlich **abgemeldet**. Bitte im Tab anmelden, sonst scheitert die Kasse beim Restock.`);
+    }
+  }
+
+  /* ---------- Tagesbudget (alle Shops zusammen) ---------- */
+  function spentToday() {
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    return GM_getValue('global:history', []).filter((h) => h.result === 'success' && h.ts >= d0.getTime())
+      .reduce((a, h) => a + (Number(h.total) || Number(h.price) || 0), 0);
+  }
+  // null = ok, sonst Grund
+  function budgetBlock(amount) {
+    const b = Number(G.get('budgetDay', 0)) || 0;
+    if (!b) return null;
+    const spent = spentToday();
+    if (spent >= b) return `Tagesbudget ${fmtEur(b)} € erreicht (heute ${fmtEur(spent)} €)`;
+    if (!amount) return `Betrag nicht erkannt – Tagesbudget ${fmtEur(b)} € kann nicht geprüft werden`;
+    if (spent + amount > b) return `Tagesbudget ${fmtEur(b)} € würde überschritten (heute ${fmtEur(spent)} € + ${fmtEur(amount)} €)`;
+    return null;
+  }
+  function budgetStop(msg, btn) {
+    if (btn) { btn.style.outline = '4px solid #e60000'; btn.scrollIntoView({ block: 'center' }); }
+    notify(`QuickBuy ${SHOP.name}`, `${msg} – NICHT bestellt`);
+    discord('error', `**${msg}** – nicht bestellt. Budget in den Dashboard-Einstellungen anpassen.`);
+    return stop(`${msg} – nicht bestellt`);
+  }
+
+  /* ---------- Selbsttest: wird die Produktseite noch erkannt? ---------- */
+  function recordDiag() {
+    const h1 = document.querySelector('h1, #productTitle');
+    const d = {
+      t: Date.now(), url: cur().url,
+      title: !!(h1 && norm(h1.innerText)), price: !!getProductPrice(), btn: !!findBuyButton(),
+      oosText: !!(matchText(SHOP.oos) || (SHOP.hardOos && matchText(SHOP.hardOos))), ld: pageLdAvailability() || '',
+    };
+    S.set('diag', d);
+    const bad = !d.title && !d.btn && !d.price && !d.ld;
+    const n = bad ? (S.get('diagBad') || 0) + 1 : 0;
+    S.set('diagBad', n);
+    if (n === 10) {
+      log('Selbsttest: Produktseite wird seit 10 Prüfungen nicht erkannt (kein Titel, Preis, Button) – Layout geändert, gesperrt oder Fehlerseite?', 'err');
+      discord('error', `**Selbsttest:** Die Produktseite bei ${SHOP.name} wird seit 10 Prüfungen nicht mehr erkannt (kein Titel, Preis oder Button). Shop hat evtl. das Layout geändert oder blockiert – bitte Tab ansehen.`);
+    }
+  }
+
+  /* ---------- Restock-Statistik ---------- */
+  function recordRestock() {
+    const k = keyOf(cur().url);
+    const seen = S.get('restockSeen') || {};
+    const now = Date.now();
+    if (now - (seen[k] || 0) < 15 * 60000) return;
+    for (const x of Object.keys(seen)) if (now - seen[x] > 86400e3) delete seen[x];
+    seen[k] = now; S.set('restockSeen', seen);
+    const r = GM_getValue('global:restocks', []);
+    r.unshift({ t: now, shopId: SHOP_ID, title: S.get('curTitle') || shortName(cur().url), url: cur().url, price: Number(S.get('curPrice')) || 0 });
+    GM_setValue('global:restocks', r.slice(0, 1500));
+  }
+
+  /* ---------- Bestellnummer von der Bestätigungsseite ---------- */
+  const ORDER_RE = /(?:bestell(?:ungs)?(?:nummer|-?nr\.?)|auftrags(?:nummer|-?nr\.?)|order\s*(?:number|no\.?|#|id)|numéro\s+de\s+commande)\s*[:#]?\s*(?:lautet|ist|is)?\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{4,30})/gi;
+  function findOrderNo(text) {
+    for (const m of String(text || '').matchAll(ORDER_RE)) if (/\d{3,}/.test(m[1])) return m[1];
+    return '';
   }
 
   function stop(reason) {
@@ -823,17 +991,22 @@
   function setInCart(v) { const m = { ...S.get('inCart') }; if (v) m[inCartKey()] = true; else delete m[inCartKey()]; S.set('inCart', m); }
 
   /* ---------- Kaufhistorie (gilt für alle Shops) ---------- */
-  function recordHistory(result) {
+  function recordHistory(result, extra) {
     const h = GM_getValue('global:history', []);
     h.unshift({ ts: Date.now(), shop: SHOP.name, shopId: SHOP_ID, title: S.get('curTitle') || shortName(cur().url),
-      price: Number(S.get('curPrice')) || 0, url: cur().url, result });
+      price: Number(S.get('curPrice')) || 0, url: cur().url, result, ...(extra || {}) });
     GM_setValue('global:history', h.slice(0, 300));
   }
 
   // Nach erfolgreichem Kauf: gleiches Produkt erneut (bis Stückzahl), dann nächstes Produkt, sonst stoppen
   function finishSuccess(msg) {
     setInCart(false);
-    recordHistory('success');
+    let txt = ''; try { txt = SHOP.psFlow ? psText() : (document.body.innerText || ''); } catch (e) {}
+    const orderNo = findOrderNo(txt);
+    const pm = PAY[S.get('payMethod')];
+    recordHistory('success', { total: Number(S.get('curTotal')) || 0, orderNo, pay: pm && S.get('payMethod') !== 'default' ? pm.label : '' });
+    S.set('curTotal', 0);
+    if (orderNo) log(`Bestellnummer: ${orderNo}`, 'ok');
     const done = cur();
     const list = S.get('products');
     const k = S.get('idx') % Math.max(1, list.length);
@@ -1065,6 +1238,17 @@
       if (S.get('loginWait')) { S.set('loginWait', 0); S.set('loginAlerted', false); log('Angemeldet ✔ – weiter geht’s', 'ok'); }
     }
     if (captchaPresent()) return handleCaptcha();
+    if (queuePresent()) return handleQueue();
+    S.set('curTotal', 0);
+    recordDiag();
+    checkLogin();
+    if (S.get('autoOrder') && !SHOP.alertOnly && !S.get('dryRun')) {
+      const b = Number(G.get('budgetDay', 0)) || 0;
+      if (b && spentToday() >= b) {
+        discord('error', `**Tagesbudget ${fmtEur(b)} € erreicht** – ${SHOP.name} gestoppt.`);
+        return stop(`Tagesbudget ${fmtEur(b)} € erreicht (heute ${fmtEur(spentToday())} €) – keine weiteren Bestellungen`);
+      }
+    }
     if (isOOS()) return scheduleReload();
 
     if (SHOP.sellerOf && S.get('onlyOwn')) {
@@ -1078,6 +1262,7 @@
     const gp = getProductPrice();
     S.set('curPrice', gp ? gp.price : 0);
     { const h1 = document.querySelector('h1, #productTitle'); S.set('curTitle', h1 ? norm(h1.innerText).slice(0, 60) : ''); }
+    recordRestock();
 
     if (SHOP.alertOnly) {
       notify(`QuickBuy ${SHOP.name}`, 'Verfügbar – jetzt selbst kaufen!');
@@ -1275,8 +1460,24 @@
         return restartLoop('Preis im Warenkorb über Limit', true, item);
       }
 
-      // Weitere Artikel im Warenkorb? Bei Auto-Bestellung nicht riskieren
-      const others = SHOP.cartItems().filter((it) => it.box !== (item && item.box));
+      // Weitere Artikel im Warenkorb? Optional automatisch entfernen, sonst bei Auto-Bestellung nicht riskieren
+      let others = SHOP.cartItems().filter((it) => it.box !== (item && item.box));
+      if (others.length && S.get('removeOthers')) {
+        for (let round = 0; round < 6 && others.length; round++) {
+          const o = others[0];
+          if (!o.remove) break;
+          log(`Entferne fremden Artikel aus dem Warenkorb: ${o.title.slice(0, 50)}`, 'buy');
+          clickEl(o.remove);
+          await sleep(1500);
+          const c = findClickable(COMMON.confirmRemove);
+          if (c && c !== o.remove && !(item && item.box.contains(c))) { clickEl(c); await sleep(1500); }
+          await sleep(800);
+          item = findCartItem(SHOP.cartItems());
+          if (!item) return restartLoop('Zielprodukt nach dem Aufräumen nicht mehr im Warenkorb', false);
+          others = SHOP.cartItems().filter((it) => it.box !== item.box);
+        }
+        if (!others.length) log('Warenkorb aufgeräumt – nur noch das Zielprodukt drin ✔', 'ok');
+      }
       if (others.length) {
         const names = others.map((o) => o.title.slice(0, 40)).join(', ');
         if (S.get('autoOrder')) {
@@ -1301,6 +1502,17 @@
         return restartLoop('Produkt nicht mehr im Warenkorb', false);
       }
       setInCart(true); S.set('addRetry', 0);
+      {
+        const c = cartCountAny();
+        const want = SHOP.qtyInput ? Math.max(1, Number(cur().qty) || 1) : 1;
+        if (c !== null && c > want) {
+          log(`Warenkorb-Zähler zeigt ${c} Artikel – evtl. liegen fremde Artikel drin (Gesamtsummen-Prüfung schützt trotzdem)`, 'warn');
+          if (S.get('autoOrder') && Date.now() - (S.get('othersAlertAt') || 0) > 3600e3) {
+            S.set('othersAlertAt', Date.now());
+            discord('error', `Warenkorb bei ${SHOP.name} zeigt **${c} Artikel** – bitte prüfen, ob dort fremde Artikel liegen.`);
+          }
+        }
+      }
       const oos = cartOosText();
       if (oos) return restartLoop(`Warenkorb meldet „${oos}“`, true);
     }
@@ -1434,6 +1646,12 @@
       log(total ? `Gesamtsumme ${total.toFixed(2)} € ok` : 'Gesamtsumme nicht erkannt – Artikelpreis wurde bereits geprüft');
     }
 
+    {
+      const amount = getTotalPrice() || Number(S.get('curPrice')) || 0;
+      const bb = budgetBlock(amount);
+      if (bb) return budgetStop(bb, btn);
+      S.set('curTotal', amount);
+    }
     log(`Auto-Bestellung: klicke „${elText(btn)}“`, 'buy');
     S.set('stage', 'done');
     clickEl(btn);
@@ -1635,6 +1853,12 @@
             await discord('checkout', `Gesamt **${i.total ? fmtEur(i.total) + ' €' : '?'}** – jetzt nur noch **„Bestellen und bezahlen“** klicken!`);
             return stop('Kasse erreicht – bitte selbst „Bestellen und bezahlen“ klicken');
           }
+          {
+            const amount = i.total || Number(S.get('curPrice')) || 0;
+            const bb = budgetBlock(amount);
+            if (bb) return budgetStop(bb, b2);
+            S.set('curTotal', amount);
+          }
           log(`Auto-Bestellung: „Bestellen und bezahlen“ (Gesamt ${i.total ? fmtEur(i.total) + ' €' : '?'})`, 'buy');
           S.set('stage', 'ps-done');
           clickEl(b2);
@@ -1702,6 +1926,8 @@
     if (!S.get('running')) return;
     busy = true;
     if (captchaPresent()) return handleCaptcha();
+    if (queuePresent()) return handleQueue();
+    if (S.get('queueSince')) queuePassed();
     const path = location.pathname;
     const stage = S.get('stage');
 
@@ -2300,6 +2526,12 @@
     #qb-dash .empty.big{padding:40px 20px;font-size:13px}
     #qb-dash .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
     #qb-dash .feed{max-height:none;background:#181a1f;border:1px solid #2a2c33;border-radius:12px}
+    #qb-dash .hm{overflow:auto;background:#181a1f;border:1px solid #2a2c33;border-radius:12px;padding:10px;margin-bottom:6px}
+    #qb-dash .hm table{border-collapse:separate;border-spacing:3px;font-size:11px;width:auto}
+    #qb-dash .hm th:first-child{width:30px}
+    #qb-dash .hm th{color:#8b8e99;font-weight:600;padding:0 4px;text-align:center}
+    #qb-dash .hm td{width:26px;height:24px;border-radius:5px;text-align:center;color:#fff}
+    #qb-dash .stl{background:#181a1f;border:1px solid #2a2c33;border-radius:12px;padding:10px 14px;margin:8px 0;line-height:1.7}
     #qb-dash h3{all:unset;display:block;font-weight:800;font-size:14px;margin:18px 0 8px}
     #qb-dash h3:first-child{margin-top:0}
     #qb-dash .set select,#qb-dash .set input[type=datetime-local]{background:#0f1013;border:1px solid #2f323a;color:#fff;border-radius:7px;padding:5px 6px;font:12px system-ui,sans-serif;color-scheme:dark}
@@ -2352,6 +2584,221 @@
     return out.slice(0, 6);
   }
 
+  /* ---------- Selbsttest (Dashboard) ---------- */
+  function selfTest() {
+    const rows = [];
+    for (const id of SHOP_IDS()) {
+      const list = gv(id, 'products', []); const run = gv(id, 'running', false);
+      if (!list.length && !run) continue;
+      const p = [];
+      const dg = gv(id, 'diag', null);
+      if (run) {
+        if (Date.now() - (gv(id, 'heartbeat', 0) || 0) > 180000) p.push('Tab reagiert nicht');
+        if (gv(id, 'captchaSince', 0)) p.push('Captcha offen');
+        if (gv(id, 'queueSince', 0)) p.push('in der Warteschlange');
+        if (!dg) p.push('noch keine Produktprüfung');
+        else {
+          if (Date.now() - dg.t > 3600e3) p.push(`letzte Produktprüfung vor ${Math.round((Date.now() - dg.t) / 60000)} Min.`);
+          if ((gv(id, 'diagBad', 0) || 0) >= 3) p.push('Produktseite wird nicht erkannt');
+          else if (!dg.title) p.push('Produkttitel nicht erkannt');
+        }
+      }
+      if ((gv(id, 'loggedOut', 0) || 0) >= 2) p.push('vermutlich abgemeldet');
+      let txt;
+      if (!run) txt = 'gestoppt';
+      else if (p.length) txt = p.join(', ');
+      else txt = `ok – Titel ✔ · Preis ${dg.price ? '✔' : '–'} · ${dg.btn ? 'kaufbar' : (dg.oosText || dg.ld === 'out') ? 'ausverkauft erkannt' : 'kein Button (gilt als ausverkauft)'}`;
+      rows.push({ id, run, ok: !p.length, text: txt });
+    }
+    const b = Number(G.get('budgetDay', 0)) || 0;
+    return { rows, budget: b ? `Heute ${fmtEur(spentToday())} € von ${fmtEur(b)} € ausgegeben` : `Heute ${fmtEur(spentToday())} € ausgegeben (kein Tagesbudget)` };
+  }
+  function selfTestText(r) {
+    if (!r.rows.length) return 'Keine Shops mit Produkten eingetragen.';
+    return r.rows.map((x) => `${!x.run ? '⏸️' : x.ok ? '✅' : '⚠️'} **${SHOPS[x.id].name}:** ${x.text}`).join('\n') + `\n💶 ${r.budget}`;
+  }
+  function reportTick() {
+    if (!G.get('reportOn', true)) return;
+    const now = new Date();
+    const key = now.toDateString();
+    if (G.get('reportDay', '') === key) return;
+    const [hh, mm] = String(G.get('reportTime', '09:00')).split(':').map(Number);
+    if (now.getHours() * 60 + now.getMinutes() < (hh || 0) * 60 + (mm || 0)) return;
+    G.set('reportDay', key);
+    const r = selfTest();
+    if (!r.rows.length) return;
+    discord('report', selfTestText(r), { title: '', shop: 'Alle Shops' });
+  }
+
+  /* ---------- Abgestürzte Shop-Tabs neu öffnen ---------- */
+  function watchdog() {
+    if (!G.get('autoReopen', true)) return;
+    for (const id of SHOP_IDS()) {
+      if (!gv(id, 'running', false)) continue;
+      const list = gv(id, 'products', []); if (!list.length) continue;
+      if (Date.now() - (gv(id, 'heartbeat', 0) || 0) < 300000) continue;      // 5 Min. kein Lebenszeichen
+      if (Date.now() - (gv(id, 'reopenAt', 0) || 0) < 600000) continue;       // höchstens alle 10 Min.
+      sv(id, 'reopenAt', Date.now()); sv(id, 'stage', 'product');
+      openTab(list[gv(id, 'idx', 0) % list.length].url);
+      pushLog(id, 'Tab reagierte 5 Min. nicht – vom Dashboard neu geöffnet', 'warn');
+      discord('error', `Der Tab von **${SHOPS[id].name}** reagierte nicht mehr und wurde neu geöffnet.`, { title: '', shop: SHOPS[id].name });
+    }
+  }
+
+  /* ---------- Radar: neue Listungen in Suche/Kategorie ---------- */
+  function gmGet(url) {
+    return new Promise((res, rej) => {
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET', url, timeout: 25000, headers: { Accept: 'text/html,application/json;q=0.9,*/*;q=0.8' },
+          onload: (r) => (r.status >= 200 && r.status < 300 ? res(r.responseText || '') : rej(new Error(`HTTP ${r.status}`))),
+          onerror: () => rej(new Error('nicht erreichbar (Tampermonkey-Erlaubnis?)')),
+          ontimeout: () => rej(new Error('Zeitüberschreitung')),
+        });
+      } catch (e) { rej(e); }
+    });
+  }
+  function radarShop(url) { try { const h = new URL(url).hostname; return SHOP_IDS().find((x) => !SHOPS[x].shopify && SHOPS[x].host.test(h)) || null; } catch (e) { return null; } }
+  function radarIsProduct(id, u) {
+    if (!id) return SHOPS.shopify.productUrl.test(u);
+    if (!SHOPS[id].productUrl.test(u)) return false;
+    if (SHOPS[id].genericUrl) {
+      const path = new URL(u).pathname;
+      return /\d{5,}|\/(p|product|produkt|products|artikel|dp|item)\/|\.html?$/i.test(path)
+        && !/\/(search|suche|kategorie|category|c|brand|marke|marken|service|hilfe|help|account|konto|cart|warenkorb|checkout|filiale|stores?)\//i.test(path);
+    }
+    return true;
+  }
+  const safeDecode = (u) => { try { return decodeURIComponent(u); } catch (e) { return u; } };
+  async function radarScan(w) {
+    const base = new URL(w.url);
+    const id = radarShop(w.url);
+    const items = new Map();
+    const add = (u, t) => {
+      let abs;
+      try { abs = stripUrl(new URL(String(u).replace(/\\\//g, '/'), base).href); } catch (e) { return; }
+      try { if (new URL(abs).hostname !== base.hostname) return; } catch (e) { return; }
+      if (!radarIsProduct(id, abs)) return;
+      const prev = items.get(abs);
+      if (prev === undefined || (t && t.length > prev.length)) items.set(abs, t || prev || '');
+    };
+    if (!id) {   // Shopify-Shop: offizielle Produktliste
+      try {
+        const j = JSON.parse(await gmGet(`${base.origin}/products.json?limit=250`));
+        for (const pr of j.products || []) items.set(`${base.origin}/products/${pr.handle}`, norm(pr.title || ''));
+      } catch (e) { /* kein Shopify → normale Seite lesen */ }
+    }
+    if (!items.size) {
+      const html = await gmGet(w.url);
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      for (const a of doc.querySelectorAll('a[href]')) add(a.getAttribute('href'), norm(a.textContent).slice(0, 140));
+      for (const m of html.matchAll(/"((?:https?:)?(?:\\?\/){2}[^"\s<>]{4,300}|\\?\/[^"\s<>]{4,300})"/g)) add(m[1], '');
+    }
+    const words = norm(w.kw).toLowerCase().split(' ').filter(Boolean);
+    const all = [...items].map(([url, title]) => ({ url, title }));
+    return { total: all.length, items: all.filter((x) => !words.length || words.every((wd) => (x.title + ' ' + safeDecode(x.url)).toLowerCase().includes(wd))) };
+  }
+  let radarBusy = false;
+  async function radarTick(forceId) {
+    if (radarBusy) return; radarBusy = true;
+    try {
+      const list = G.get('radar', []);
+      const w = forceId ? list.find((x) => x.id === forceId) : list.find((x) => Date.now() - (x.lastAt || 0) >= Math.max(2, Number(x.every) || 5) * 60000);
+      if (!w) return;
+      const upd = (fn) => { const l = G.get('radar', []); const x = l.find((y) => y.id === w.id); if (x) { fn(x); G.set('radar', l); } };
+      let res;
+      try { res = await radarScan(w); } catch (e) { upd((x) => { x.lastAt = Date.now(); x.err = e.message || String(e); }); return; }
+      const wasSeeded = !!w.seeded;
+      const seen = new Set(w.seen || []);
+      const fresh = res.items.filter((x) => !seen.has(x.url));
+      upd((x) => {
+        x.lastAt = Date.now(); x.lastN = res.items.length; x.total = res.total;
+        x.err = res.total ? '' : 'Keine Produkt-Links gefunden – der Shop lädt die Liste evtl. erst im Browser nach';
+        x.seen = [...new Set([...(x.seen || []), ...res.items.map((i) => i.url)])].slice(-3000);
+        if (!x.seeded) x.seeded = true;
+      });
+      if (!wasSeeded || !fresh.length) return;
+      const hits = G.get('radarHits', []);
+      const shopName = w.shopId ? SHOPS[w.shopId].name : new URL(w.url).hostname.replace(/^www\./, '');
+      for (const f of fresh.slice(0, 10)) hits.unshift({ t: Date.now(), url: f.url, title: f.title || shortName(f.url), shop: shopName, kw: w.kw });
+      G.set('radarHits', hits.slice(0, 100));
+      const lines = fresh.slice(0, 8).map((f) => `• [${(f.title || shortName(f.url)).replace(/[[\]*_`]/g, '').slice(0, 80)}](${f.url})`).join('\n');
+      notify('QuickBuy – neu gelistet', `${fresh.length} neue(s) Produkt(e) bei ${shopName}`);
+      discord('listing', `${fresh.length} neue(s) Produkt(e)${w.kw ? ` für „${w.kw}“` : ''}:\n${lines}`, { title: shopName, url: w.url, shop: shopName });
+      if (document.getElementById('qb-dash')) dashToast(`🆕 ${fresh.length} neu gelistet bei ${shopName}`);
+    } finally { radarBusy = false; }
+  }
+
+  /* ---------- Export der Bestellungen (CSV, z. B. für die Buchhaltung) ---------- */
+  function exportCsv() {
+    const h = GM_getValue('global:history', []).filter((x) => x.result === 'success' || x.result === 'unclear');
+    if (!h.length) { dashToast('Noch keine Bestellungen zum Exportieren.'); return; }
+    const q = (v) => `"${String(v === undefined || v === null ? '' : v).replace(/"/g, '""')}"`;
+    const num = (n) => (Number(n) ? Number(n).toFixed(2).replace('.', ',') : '');
+    const rows = [['Datum', 'Uhrzeit', 'Shop', 'Produkt', 'Bestellnummer', 'Artikelpreis (EUR)', 'Gesamt (EUR)', 'Zahlungsart', 'Ergebnis', 'Link']];
+    for (const x of h.slice().reverse()) {
+      const d = new Date(x.ts);
+      rows.push([d.toLocaleDateString('de-DE'), d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), x.shop, x.title, x.orderNo || '',
+        num(x.price), num(x.total || x.price), x.pay || '', x.result === 'success' ? 'gekauft' : 'unklar', x.url]);
+    }
+    const csv = '﻿' + rows.map((r) => r.map(q).join(';')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `quickbuy-bestellungen-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    dashToast(`${h.length} Bestellung(en) als CSV exportiert`);
+  }
+
+  /* ---------- Statistik ---------- */
+  let statShop = 'all';
+  const DOW = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+  function statsHtml() {
+    const all = GM_getValue('global:restocks', []);
+    const shopsWith = [...new Set(all.map((r) => r.shopId))].filter((id) => SHOPS[id]);
+    const rs = statShop === 'all' ? all : all.filter((r) => r.shopId === statShop);
+    const grid = DOW.map(() => Array(24).fill(0));
+    const byHour = Array(24).fill(0);
+    for (const r of rs) { const d = new Date(r.t); grid[(d.getDay() + 6) % 7][d.getHours()]++; byHour[d.getHours()]++; }
+    const max = Math.max(1, ...grid.flat());
+    const top = grid.flatMap((row, di) => row.map((n, h) => ({ n, di, h }))).filter((x) => x.n).sort((a, b) => b.n - a.n).slice(0, 5);
+    const sel = `<select id="st-shop"><option value="all">Alle Shops (${all.length})</option>${shopsWith.map((id) => `<option value="${id}" ${statShop === id ? 'selected' : ''}>${esc(SHOPS[id].name)} (${all.filter((r) => r.shopId === id).length})</option>`).join('')}</select>`;
+    if (!rs.length) return `<div class="bar">${sel}</div><div class="empty big">Noch keine Restocks aufgezeichnet. Sobald ein überwachter Artikel verfügbar wird, erscheint er hier – mit Wochentag und Uhrzeit.</div>`;
+    return `<div class="bar">${sel}<span class="chip">Restocks: <b>${rs.length}</b></span><span class="chip">seit <b>${new Date(rs[rs.length - 1].t).toLocaleDateString('de-DE')}</b></span></div>
+      ${top.length ? `<div class="bar"><span class="muted">Häufigste Zeitfenster:</span>${top.map((x) => `<span class="chip"><b>${DOW[x.di]} ${String(x.h).padStart(2, '0')}–${String(x.h + 1).padStart(2, '0')} Uhr</b> · ${x.n}×</span>`).join('')}</div>` : ''}
+      <div class="hm"><table><thead><tr><th></th>${Array.from({ length: 24 }, (_, h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>
+        ${grid.map((row, di) => `<tr><th>${DOW[di]}</th>${row.map((n, h) => `<td title="${DOW[di]} ${h}–${h + 1} Uhr: ${n} Restock(s)" style="background:${n ? `rgba(91,140,255,${(0.18 + 0.82 * n / max).toFixed(2)})` : '#1b1d23'}">${n || ''}</td>`).join('')}</tr>`).join('')}
+      </tbody></table></div>
+      <h3>Letzte Restocks</h3>
+      <table class="pt"><thead><tr><th>Wann</th><th>Shop</th><th>Produkt</th><th class="r">Preis</th></tr></thead><tbody>
+        ${rs.slice(0, 30).map((r) => `<tr><td>${new Date(r.t).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td><span class="tag">${esc(SHOPS[r.shopId] ? SHOPS[r.shopId].name : r.shopId)}</span></td><td class="pn"><a href="${esc(r.url)}" target="_blank">${esc(String(r.title).slice(0, 70))}</a></td><td class="r">${r.price ? fmtEur(r.price) + ' €' : '–'}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+  function radarHtml() {
+    const list = G.get('radar', []); const hits = G.get('radarHits', []);
+    const ago = (t) => (t ? `vor ${Math.max(0, Math.round((Date.now() - t) / 60000))} Min.` : 'noch nie');
+    return `<h3>🆕 Neue Listungen überwachen</h3>
+      <div class="add">
+        <input type="text" id="r-url" placeholder="Such- oder Kategorie-URL, z. B. https://www.otto.de/suche/ps5%20pro">
+        <input type="text" id="r-kw" placeholder="Stichwörter (alle müssen vorkommen)" style="width:230px;flex:none">
+        <input type="text" id="r-min" placeholder="Min." value="5" title="Alle X Minuten prüfen (min. 2)" style="width:60px;flex:none">
+        <button class="go" data-g="radd">Überwachen</button>
+      </div>
+      <div class="hint">Meldet Produkte, die neu in der Suche/Kategorie auftauchen (erste Prüfung merkt sich nur den Ist-Stand). Funktioniert, solange dieser Dashboard-Tab offen ist. Tampermonkey fragt beim ersten Abruf pro Shop nach Erlaubnis → <b>„Immer erlauben“</b>. Bei Shopify-Shops reicht die Startseite.</div>
+      ${list.length ? `<table class="pt"><thead><tr><th>Seite</th><th>Stichwörter</th><th class="c">Alle</th><th>Status</th><th>Zuletzt</th><th></th></tr></thead><tbody>
+        ${list.map((w) => `<tr data-rid="${esc(w.id)}"><td class="pn"><a href="${esc(w.url)}" target="_blank" title="${esc(w.url)}">${esc(w.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60))}</a></td>
+          <td>${esc(w.kw || '– alle –')}</td><td class="c">${esc(w.every)} Min.</td>
+          <td>${w.err ? `<span class="red">✖ ${esc(w.err)}</span>` : w.lastAt ? `✔ ${w.lastN} passende von ${w.total || w.lastN} Produkten` : '<span class="muted">wartet …</span>'}</td>
+          <td class="muted">${ago(w.lastAt)}</td>
+          <td class="r"><button class="sm" data-r="now" title="Jetzt prüfen">↻</button><button class="x2" data-r="del" title="Entfernen">✕</button></td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">Noch keine Seite eingetragen.</div>'}
+      <h3>Funde ${hits.length ? `<button class="lnk" data-g="rclear">leeren</button>` : ''}</h3>
+      ${hits.length ? `<table class="pt"><thead><tr><th>Wann</th><th>Shop</th><th>Produkt</th><th></th></tr></thead><tbody>
+        ${hits.slice(0, 60).map((h, i) => `<tr data-hit="${i}"><td>${new Date(h.t).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td><span class="tag">${esc(h.shop)}</span></td>
+          <td class="pn"><a href="${esc(h.url)}" target="_blank" title="${esc(h.url)}">${esc(String(h.title).slice(0, 80))}</a></td>
+          <td class="r">${shopOfUrl(h.url) ? '<button class="sm go" data-h="add">➕ Überwachen</button>' : ''}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">Noch keine neuen Produkte gefunden.</div>'}`;
+  }
+
   function renderDash(force) {
     const d = document.getElementById('qb-dash'); if (!d) return;
     const ae = document.activeElement;
@@ -2384,7 +2831,7 @@
       const last = logFor(id)[0];
       return `<div class="sh ${run ? 'run' : ''}" data-id="${id}">
         <div class="shn"><span class="dot ${run ? 'on' : ''}"></span>${esc(SHOPS[id].name)}</div>
-        <div class="shs">${run ? `Runde ${gv(id, 'attempts', 0) + 1}` : 'gestoppt'}${open ? '' : ' · kein Tab'}${gv(id, 'autoOrder', false) && !SHOPS[id].alertOnly && !SHOPS[id].stopAfterAdd ? ' · <b class="red">Auto</b>' : ''}</div>
+        <div class="shs">${run ? `Runde ${gv(id, 'attempts', 0) + 1}` : 'gestoppt'}${open ? '' : ' · kein Tab'}${run && gv(id, 'queueSince', 0) ? ' · <b>⏳ Warteschlange</b>' : ''}${(gv(id, 'loggedOut', 0) || 0) >= 2 ? ' · <b class="red">🔑 abgemeldet?</b>' : ''}${gv(id, 'autoOrder', false) && !SHOPS[id].alertOnly && !SHOPS[id].stopAfterAdd ? ' · <b class="red">Auto</b>' : ''}</div>
         <div class="shl" title="${esc(last ? last.msg : '')}">${last ? `${DICON[last.type] || ''} ${esc(last.msg)}` : '–'}</div>
         <div class="sha"><button class="${run ? 'stop' : 'go'} sm" data-shop="${run ? 'stop' : 'start'}">${run ? '■' : '▶'}</button><button class="sm" data-shop="tab" title="Tab öffnen">↗</button></div>
       </div>`;
@@ -2419,12 +2866,14 @@
       <div class="feed">${feed.length ? feed.map((e) => `<div class="fe t-${e.type}"><span class="s">${esc(SHOPS[e.id].name)}</span><span class="t">${esc(e.ts)}</span><span class="m">${DICON[e.type] || ''} ${e.n > 1 ? `<b>×${e.n}</b> ` : ''}${esc(e.msg)}</span></div>`).join('') : '<div class="empty">Noch keine Einträge</div>'}</div>`;
 
     // ---------- Historie ----------
-    const histTab = `<div class="bar"><span class="chip">Käufe: <b>${bought.length}</b></span><span class="chip">Ausgegeben: <b>${fmtEur(spent)} €</b></span><span class="sp"></span><button class="sm" data-g="clearhist">Leeren</button></div>
-      ${hist.length ? `<table class="pt"><thead><tr><th>Wann</th><th>Shop</th><th>Produkt</th><th>Ergebnis</th><th class="r">Preis</th></tr></thead><tbody>
+    const histTab = `<div class="bar"><span class="chip">Käufe: <b>${bought.length}</b></span><span class="chip">Ausgegeben: <b>${fmtEur(spent)} €</b></span><span class="sp"></span><button class="sm" data-g="csv" title="Datum, Shop, Produkt, Bestellnummer, Preise, Zahlungsart – öffnet sich in Excel">📄 CSV exportieren</button><button class="sm" data-g="clearhist">Leeren</button></div>
+      ${hist.length ? `<table class="pt"><thead><tr><th>Wann</th><th>Shop</th><th>Produkt</th><th>Ergebnis</th><th>Bestellnr.</th><th class="r">Preis</th><th class="r">Gesamt</th></tr></thead><tbody>
         ${hist.slice(0, 200).map((h) => `<tr><td>${new Date(h.ts).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td><span class="tag">${esc(h.shop)}</span></td>
           <td class="pn"><a href="${esc(h.url)}" target="_blank">${esc(String(h.title).slice(0, 60))}</a></td>
           <td>${h.result === 'success' ? '✅ gekauft' : h.result === 'alert' ? '🔔 Alarm' : '❓ unklar'}</td>
-          <td class="r">${h.price ? fmtEur(h.price) + ' €' : '–'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty big">Noch keine Käufe</div>'}`;
+          <td>${h.orderNo ? esc(h.orderNo) : '<span class="muted">–</span>'}</td>
+          <td class="r">${h.price ? fmtEur(h.price) + ' €' : '–'}</td>
+          <td class="r">${h.total ? fmtEur(h.total) + ' €' : '–'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty big">Noch keine Käufe</div>'}`;
 
     // ---------- Einstellungen ----------
     const CORE = ['otto', 'mediamarkt', 'saturn', 'microsoft', 'playstation', 'amazon', 'fnacpro'];
@@ -2442,32 +2891,45 @@
         <td><input type="datetime-local" data-s="dropAt" value="${esc(gv(id, 'dropAt', ''))}"></td>
         <td class="c">${sh.sellerOf ? `<input type="checkbox" data-s="onlyOwn" ${gv(id, 'onlyOwn', true) ? 'checked' : ''}>` : '<span class="muted">–</span>'}</td>
         <td class="c"><input type="checkbox" data-s="continueAfterBuy" ${gv(id, 'continueAfterBuy', true) ? 'checked' : ''}></td>
+        <td class="c">${!sh.alertOnly && !sh.needLogin && !sh.shopify ? `<input type="checkbox" data-s="loginCheck" ${gv(id, 'loginCheck', true) ? 'checked' : ''}>` : '<span class="muted">–</span>'}</td>
+        <td class="c">${sh.cartItems ? `<input type="checkbox" data-s="removeOthers" ${gv(id, 'removeOthers', false) ? 'checked' : ''}>` : '<span class="muted">–</span>'}</td>
       </tr>`;
     }).join('');
     const setTab = `
       <h3>Shops <span class="muted" style="font-weight:400;font-size:12px">– weitere Shops erscheinen hier, sobald du dort ein Produkt einträgst</span></h3>
-      <table class="pt set"><thead><tr><th>Shop</th><th>Auto-Bestellung</th><th>Zahlungsart</th><th class="c">Pause (s)</th><th>⏰ Drop-Zeit</th><th class="c">Nur Shop selbst</th><th class="c">Nach Kauf weiter</th></tr></thead><tbody>${setRows}</tbody></table>
+      <table class="pt set"><thead><tr><th>Shop</th><th>Auto-Bestellung</th><th>Zahlungsart</th><th class="c">Pause (s)</th><th>⏰ Drop-Zeit</th><th class="c">Nur Shop selbst</th><th class="c">Nach Kauf weiter</th><th class="c" title="Warnt, wenn du im Shop abgemeldet bist">Login prüfen</th><th class="c" title="Entfernt andere Artikel aus dem Warenkorb, bevor zur Kasse gegangen wird">Fremde Artikel entfernen</th></tr></thead><tbody>${setRows}</tbody></table>
+      <h3>🛡️ Sicherheit & Überwachung</h3>
+      <div class="dcg">
+        <label class="ck">Tagesbudget (alle Shops zusammen): <input type="text" id="g-budget" style="width:90px;flex:none" value="${Number(G.get('budgetDay', 0)) ? fmtEur(G.get('budgetDay', 0)) : ''}" placeholder="aus"> €</label>
+        <span class="muted">heute ausgegeben: ${fmtEur(spentToday())} €</span>
+        <label class="ck"><input type="checkbox" data-gs="autoReopen" ${G.get('autoReopen', true) ? 'checked' : ''}> Abgestürzte Shop-Tabs automatisch neu öffnen</label>
+        <label class="ck"><input type="checkbox" data-gs="reportOn" ${G.get('reportOn', true) ? 'checked' : ''}> Täglicher Selbsttest an Discord um</label>
+        <input type="time" id="g-rtime" value="${esc(G.get('reportTime', '09:00'))}" style="flex:none">
+        <button class="sm" data-g="selftest">🩺 Selbsttest jetzt</button>
+      </div>
+      <div class="hint">Budget: Ist es erreicht, bestellt kein Shop mehr automatisch (zählt erfolgreiche Käufe seit 0 Uhr). Selbsttest, Tab-Wächter und Radar laufen, solange dieser Dashboard-Tab offen ist.</div>
       <h3>🔔 Discord</h3>
       <div class="dcg">
         <input type="text" id="d-wh" placeholder="https://discord.com/api/webhooks/…" value="${esc(dc('webhook'))}">
         <button class="sm" data-g="dctest">Test senden</button>
-        ${[['dcSuccess', 'Kauf erfolgreich'], ['dcCheckout', 'Kasse erreicht / Alarm'], ['dcError', 'Probleme'], ['dcAvailable', 'Artikel verfügbar'], ['dcPing', '@everyone']].map(([k, l]) => `<label class="ck"><input type="checkbox" data-dc="${k}" ${dc(k) ? 'checked' : ''}> ${l}</label>`).join('')}
+        ${[['dcSuccess', 'Kauf erfolgreich'], ['dcCheckout', 'Kasse erreicht / Alarm'], ['dcError', 'Probleme'], ['dcAvailable', 'Artikel verfügbar'], ['dcListing', 'Neu gelistet (Radar)'], ['dcReport', 'Täglicher Selbsttest'], ['dcPing', '@everyone']].map(([k, l]) => `<label class="ck"><input type="checkbox" data-dc="${k}" ${dc(k) ? 'checked' : ''}> ${l}</label>`).join('')}
       </div>
       <h3>💾 Sichern</h3>
       <div class="bar"><button class="sm" data-g="export">⬇ Backup herunterladen</button><button class="sm" data-g="import">⬆ Backup einspielen</button><span class="muted">Enthält Produkte, Einstellungen, Historie und die Discord-URL.</span></div>`;
 
-    const tabs = [['home', 'Übersicht'], ['log', 'Protokoll'], ['hist', `Historie${bought.length ? ` (${bought.length})` : ''}`], ['set', 'Einstellungen']];
+    const tabs = [['home', 'Übersicht'], ['log', 'Protokoll'], ['hist', `Historie${bought.length ? ` (${bought.length})` : ''}`], ['radar', `Radar${G.get('radar', []).length ? ` (${G.get('radar', []).length})` : ''}`], ['stats', 'Statistik'], ['set', 'Einstellungen']];
     d.innerHTML = `<div class="d-wrap">
       <div class="d-top">
         <h1>📊 QuickBuy</h1>
         <span class="sum ${anyRun ? 'on' : ''}">${anyRun ? `● ${runIds.length} Shop${runIds.length > 1 ? 's' : ''} aktiv` : '○ alles gestoppt'}</span>
         ${att.length ? `<span class="sum warn">⚠️ ${att.length}</span>` : ''}
+        <span class="chip" title="Heute ausgegeben${Number(G.get('budgetDay', 0)) ? ' / Tagesbudget' : ''}">💶 heute <b>${fmtEur(spentToday())} €</b>${Number(G.get('budgetDay', 0)) ? ` / ${fmtEur(G.get('budgetDay', 0))} €` : ''}</span>
         <span class="sp"></span>
         <button class="${anyRun ? 'stop' : 'go'} big" data-g="${anyRun ? 'stopall' : 'startall'}">${anyRun ? '■ Alle stoppen' : '▶ Alle starten'}</button>
         <span class="muted" title="Eigener Dashboard-Tab – lädt nie neu, steuert alle Shop-Tabs">Live · eigener Tab</span>
       </div>
       <div class="tabs">${tabs.map(([k, l]) => `<button class="tb ${dashTab === k ? 'act' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
-      <div class="d-body">${dashTab === 'home' ? home : dashTab === 'log' ? logTab : dashTab === 'hist' ? histTab : setTab}</div>
+      <div class="d-body">${dashTab === 'home' ? home : dashTab === 'log' ? logTab : dashTab === 'hist' ? histTab : dashTab === 'radar' ? radarHtml() : dashTab === 'stats' ? statsHtml() : setTab}</div>
     </div>`;
     d.scrollTop = scrollY;
     bindDash(d, ids);
@@ -2523,6 +2985,27 @@
       }
       if (g === 'clearlogs') { if (!confirm('Protokolle aller Shops leeren?')) return; ids.forEach((id) => sv(id, 'log', [])); }
       if (g === 'clearhist') { if (!confirm('Kaufhistorie wirklich leeren?')) return; GM_setValue('global:history', []); }
+      if (g === 'csv') return exportCsv();
+      if (g === 'selftest') {
+        const r = selfTest();
+        const box = document.createElement('div'); box.className = 'toast'; box.style.width = 'min(640px,92vw)';
+        box.innerHTML = `<div style="font-weight:800;margin-bottom:6px">🩺 Selbsttest</div><div class="stl">${esc(selfTestText(r)).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>')}</div><div style="display:flex;gap:6px;justify-content:flex-end"><button data-x>Schließen</button><button class="go" data-ok>An Discord senden</button></div>`;
+        d.appendChild(box);
+        box.querySelector('[data-x]').onclick = () => box.remove();
+        box.querySelector('[data-ok]').onclick = () => { discord('report', selfTestText(r), { title: '', shop: 'Alle Shops' }).then((ok) => dashToast(ok ? 'Selbsttest an Discord gesendet ✔' : 'Discord nicht eingerichtet oder Fehler')); box.remove(); };
+        return;
+      }
+      if (g === 'radd') {
+        const u = norm(d.querySelector('#r-url').value);
+        let ok = false; try { ok = /^https?:$/.test(new URL(u).protocol); } catch (e) {}
+        if (!ok) { alert('Bitte eine vollständige Such- oder Kategorie-URL eintragen (mit https://).'); return; }
+        const l = G.get('radar', []);
+        l.push({ id: Math.random().toString(36).slice(2, 9), url: u, kw: norm(d.querySelector('#r-kw').value), every: Math.max(2, parseInt(d.querySelector('#r-min').value, 10) || 5), shopId: radarShop(u), seen: [], seeded: false, lastAt: 0 });
+        G.set('radar', l);
+        dashToast('Wird überwacht – erste Prüfung merkt sich den aktuellen Stand');
+        radarTick(l[l.length - 1].id).then(() => renderDash(true));
+      }
+      if (g === 'rclear') G.set('radarHits', []);
       renderDash(true); renderPanel();
     });
     // Shop-Leiste
@@ -2560,6 +3043,31 @@
         if (k === 'intervalSec') el.value = v;
       };
     });
+    // Radar
+    d.querySelectorAll('tr[data-rid] [data-r]').forEach((b) => b.onclick = () => {
+      const rid = b.closest('tr').dataset.rid;
+      if (b.dataset.r === 'del') { if (!confirm('Überwachung entfernen?')) return; G.set('radar', G.get('radar', []).filter((x) => x.id !== rid)); renderDash(true); }
+      if (b.dataset.r === 'now') { b.textContent = '…'; radarTick(rid).then(() => renderDash(true)); }
+    });
+    d.querySelectorAll('tr[data-hit] [data-h="add"]').forEach((b) => b.onclick = () => {
+      const h = G.get('radarHits', [])[Number(b.closest('tr').dataset.hit)]; if (!h) return;
+      const id = shopOfUrl(h.url); if (!id) return;
+      const l = gv(id, 'products', []);
+      if (l.some((x) => keyOf2(id, x.url) === keyOf2(id, h.url))) return dashToast('Schon eingetragen');
+      const mx = prompt(`„${h.title}“ bei ${SHOPS[id].name} überwachen.\n\nMaximalpreis in € (leer = ohne Limit):`, '');
+      if (mx === null) return;
+      l.push({ url: stripUrl(h.url), variant: '', maxPrice: parseEur(mx), qty: 1, bought: 0 });
+      sv(id, 'products', l); pushLog(id, `Produkt aus dem Radar hinzugefügt: ${shortName(h.url)}`, 'info');
+      dashToast(`Zu ${SHOPS[id].name} hinzugefügt`); renderDash(true); renderPanel();
+    });
+    const stSel = d.querySelector('#st-shop');
+    if (stSel) stSel.onchange = () => { statShop = stSel.value; renderDash(true); };
+    // Globale Einstellungen
+    const gb = d.querySelector('#g-budget');
+    if (gb) gb.onchange = () => { G.set('budgetDay', parseEur(gb.value) || 0); dashToast(Number(G.get('budgetDay', 0)) ? `Tagesbudget: ${fmtEur(G.get('budgetDay', 0))} €` : 'Tagesbudget aus'); renderDash(true); };
+    const rt = d.querySelector('#g-rtime');
+    if (rt) rt.onchange = () => { G.set('reportTime', rt.value || '09:00'); };
+    d.querySelectorAll('[data-gs]').forEach((c) => { c.onchange = () => G.set(c.dataset.gs, c.checked); });
     const wh = d.querySelector('#d-wh');
     if (wh) wh.onchange = () => { const v = norm(wh.value); if (v && !WEBHOOK_RE.test(v)) { alert('Keine gültige Discord-Webhook-URL.'); return; } G.set('webhook', v); };
     d.querySelectorAll('[data-dc]').forEach((c) => { c.onchange = () => G.set(c.dataset.dc, c.checked); });
@@ -2568,12 +3076,19 @@
 
 
   /* ---------- Fernsteuerung: dieser Tab reagiert auf Start/Stop aus dem Dashboard ---------- */
+  const TAB_START = Date.now();
   function startRemoteWatch() {
     if (window.top !== window) return;
     S.set('heartbeat', Date.now());
     let snap = '';
     let lastPath = location.pathname;
     setInterval(() => {
+      // Das Dashboard hat diesen Tab für abgestürzt gehalten und einen neuen geöffnet → dieser Tab tritt zurück (sonst laufen zwei)
+      if ((S.get('reopenAt') || 0) > TAB_START && S.get('running') && /^(product|basket)$/.test(S.get('stage'))) {
+        log('Ersatz-Tab ist aktiv – dieser alte Tab beendet sich', 'info');
+        location.replace('about:blank');
+        return;
+      }
       S.set('heartbeat', Date.now());
       // Seite hat das Panel/Styles entfernt (z. B. Neuaufbau durch die Shop-App) → wiederherstellen
       if (!document.getElementById('qb-panel') && document.body) { try { renderPanel(); } catch (e) { console.error('[QuickBuy] Panel-Fehler:', e); } }
@@ -2614,9 +3129,17 @@
     const beat = () => GM_setValue('global:dashBeat', Date.now());
     beat(); setInterval(beat, 2000);
     openDashboard();
+    // Hintergrundaufgaben des Dashboards: Tab-Wächter, Radar, täglicher Selbsttest
+    const chores = () => {
+      try { watchdog(); } catch (e) { console.error('[QuickBuy] Wächter:', e); }
+      try { reportTick(); } catch (e) { console.error('[QuickBuy] Selbsttest:', e); }
+      radarTick().catch((e) => console.error('[QuickBuy] Radar:', e));
+    };
+    setTimeout(chores, 5000); setInterval(chores, 20000);
     console.log('[QuickBuy] Dashboard-Tab aktiv');
     return;
   }
+  if (SHOP_ID === '__queue') { queuePage(); return; }
   startRemoteWatch();
 
   console.log(`[QuickBuy] Version ${(GM_info && GM_info.script && GM_info.script.version) || '?'} aktiv auf ${location.hostname} → Shop: ${SHOP.name}`);
