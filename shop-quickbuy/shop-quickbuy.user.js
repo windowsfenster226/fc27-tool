@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.9.3
+// @version      3.9.4
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -246,7 +246,7 @@
     hardOos: [/rupture\s+de\s+stock/i, /article\s+indisponible/i, /produit\s+indisponible/i, /stock\s+en\s+ligne\s+épuisé/i],
     toCheckout: [], finalOrder: [],
     stopAfterAdd: true,    // in den Warenkorb + Alarm (Kasse folgt, sobald Warenkorb/Kasse analysiert sind)
-    minInterval: 30,
+    minInterval: 45,
     beta: true,
   };
 
@@ -707,7 +707,8 @@
   function currentIntervalMs() {
     const jitter = Math.random() * (Number(S.get('jitterSec')) || 0);
     if (dropActive()) return Math.round((Math.max(3, Number(S.get('dropIntervalSec')) || 5) + Math.min(jitter, 2)) * 1000);
-    const base = Math.max(SHOP.minInterval || 5, Number(S.get('intervalSec')) || 15);
+    let base = Math.max(SHOP.minInterval || 5, Number(S.get('intervalSec')) || 15);
+    if (Date.now() < (S.get('slowUntil') || 0)) base *= 2;      // nach einem Captcha vorsichtiger
     return Math.round((base + jitter) * 1000);
   }
 
@@ -1639,21 +1640,32 @@
   function handleCaptcha() {
     if (captchaWatch) return; captchaWatch = true;
     busy = true;
+    if (!S.get('captchaSince')) S.set('captchaSince', Date.now());
     const last = S.get('captchaAt') || 0;
-    if (Date.now() - last > 10 * 60000) {
+    if (Date.now() - last > 30 * 60000) {                       // höchstens alle 30 Min. erinnern
       S.set('captchaAt', Date.now());
       notify(`QuickBuy ${SHOP.name}`, 'Captcha – bitte im Tab lösen, danach geht es automatisch weiter');
-      discord('error', `**Captcha bei ${SHOP.name}** – bitte im offenen Tab lösen. Danach macht das Script automatisch weiter.`);
+      discord('error', `**Captcha bei ${SHOP.name}** – bitte im offenen Tab lösen. Das Script wartet und macht danach automatisch weiter.`);
     }
-    log('Captcha erkannt – warte, bis du es gelöst hast (wird nie automatisch gelöst)', 'warn');
+    log('Captcha erkannt – warte, bis es gelöst ist (wird nie automatisch gelöst)', 'warn');
     const t0 = Date.now();
     const iv = setInterval(() => {
       if (!S.get('running')) { clearInterval(iv); return; }
       if (!captchaPresent()) {
-        clearInterval(iv); log('Captcha gelöst ✔ – weiter geht’s', 'ok');
+        clearInterval(iv);
+        S.set('captchaSince', 0);
+        S.set('slowUntil', Date.now() + 60 * 60000);               // 1 Std. langsamer prüfen
+        log('Captcha weg ✔ – prüfe die nächste Stunde langsamer, damit der Shop nicht erneut sperrt', 'ok');
         setTimeout(() => { S.set('navAt', Date.now()); location.href = cur().url || location.href; }, 2500);
+      } else if (Date.now() - (S.get('captchaSince') || t0) > 3 * 3600000) {
+        clearInterval(iv); S.set('captchaSince', 0);
+        discord('error', `Captcha bei ${SHOP.name} seit 3 Std. nicht gelöst – Script gestoppt.`);
+        stop('Captcha seit 3 Std. nicht gelöst – gestoppt');
       } else if (Date.now() - t0 > 15 * 60000) {
-        clearInterval(iv); stop('Captcha seit 15 Min. nicht gelöst – gestoppt');
+        // Sperre ist oft nach einer Weile von selbst weg → Seite einmal neu laden
+        clearInterval(iv);
+        log('Captcha noch da – lade die Seite neu (Sperre ist oft von selbst weg)', 'info');
+        S.set('navAt', Date.now()); location.href = cur().url || location.href;
       }
     }, 3000);
   }
