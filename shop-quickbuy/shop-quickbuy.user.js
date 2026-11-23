@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.5.6
+// @version      3.6.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -98,6 +98,20 @@
       checkoutSelector: '[data-test="checkout-continue-button"]',
       // Zahlungsarten auf /checkout/payment (gesehen): Radio-Werte statt Texte
       payValue: { card: 'CRECA', paypal: 'PAYPAL', invoice: 'KLARNA' },
+      // Übersicht (gesehen): Button aria-label "Bezahlmethode ändern" – daneben steht die gewählte Zahlungsart
+      summaryPay: {
+        change: () => deepAll().find((e) => e.tagName === 'BUTTON' && /bezahlmethode\s+ändern/i.test(e.getAttribute('aria-label') || '') && visible(e)),
+        text: () => {
+          const b = deepAll().find((e) => e.tagName === 'BUTTON' && /bezahlmethode\s+ändern/i.test(e.getAttribute('aria-label') || ''));
+          let n = b;
+          for (let i = 0; i < 6 && n; i++) {
+            n = n.parentElement; if (!n) break;
+            const t = norm(n.innerText || '').replace(/\bändern\b/gi, '').trim();
+            if (t.length > 8 && t.length < 300) return t;
+          }
+          return null;
+        },
+      },
       // Letzter Schritt auf /checkout/summary (gesehen): "Fortfahren und bezahlen"
       finalOrder: [/^fortfahren\s+und\s+bezahlen$/i, /zahlungspflichtig\s+bestellen/i, /^jetzt\s+kaufen$/i, /^kaufen$/i],
       // Overlay nach "In den Warenkorb" (Versicherungsangebot etc.) wegklicken
@@ -1052,7 +1066,7 @@
     const deadline = Date.now() + 90000;
     log(`Kasse: Seite ${location.pathname}`, 'info');
     let lastPathSeen = location.pathname;
-    let lastNext = null; let lastNextAt = 0; let nextTries = 0; let nextPath = '';
+    let lastNext = null; let lastNextAt = 0; let nextTries = 0; let nextPath = ''; let payChangeTries = 0;
     while (Date.now() < deadline) {
       if (cartOosText()) return backToBasket(`Kasse meldet „${cartOosText()}“`);
       if (wantPay) {
@@ -1066,7 +1080,28 @@
       }
       if (location.pathname !== lastPathSeen) { lastPathSeen = location.pathname; log(`Kasse: Seite ${lastPathSeen}`, 'info'); }
       const f = findClickable(SHOP.finalOrder);
-      if (f && !isDisabled(f)) { btn = f; break; }
+      if (f && !isDisabled(f)) {
+        // Zahlungsseite wurde übersprungen (Shop merkt sich die letzte Zahlungsart) → auf der Übersicht prüfen
+        if (wantPay && !S.get('payOk') && SHOP.summaryPay) {
+          const want = PAY[S.get('payMethod')];
+          await sleep(800);
+          const t = SHOP.summaryPay.text();
+          if (t && want.re.test(t) && !NEW_PAY.test(t)) {
+            S.set('payOk', true);
+            log(`Zahlungsart auf der Übersicht bestätigt: ${want.label} („${t.slice(0, 50)}“)`, 'info');
+          } else if (payChangeTries < 1) {
+            const c = SHOP.summaryPay.change();
+            if (c) {
+              payChangeTries++;
+              log(`Übersicht zeigt andere Zahlungsart („${(t || '?').slice(0, 50)}“) → ändere auf ${want.label}`, 'buy');
+              clickEl(c); await sleep(2500); continue;
+            }
+          } else {
+            log(`Zahlungsart auf der Übersicht: „${(t || 'nicht lesbar').slice(0, 60)}“`, 'warn');
+          }
+        }
+        btn = f; break;
+      }
       const n = findClickable(NEXT_STEP);
       if (n && !isDisabled(n)) {
         // Neuer Button/neue Seite → klicken. Gleicher Button auf gleicher Seite nach 6 s erneut (Klick wurde ignoriert)
