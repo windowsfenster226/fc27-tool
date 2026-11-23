@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Shop QuickBuy – Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro
+// @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.3.1
-// @description  Überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
+// @version      3.3.2
+// @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
 // @match        https://www.saturn.de/*
