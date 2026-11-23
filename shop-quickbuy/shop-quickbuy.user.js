@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.8.0
+// @version      3.8.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -353,7 +353,7 @@
   const shortName = (u) => {
     const parts = stripUrl(u || '').split('/').filter(Boolean);
     let slug = parts.pop() || '';
-    while (/^(w-\d+|a\d{5,}|mp\d{5,})$/i.test(slug) && parts.length > 2) slug = parts.pop();   // FNAC: /<Name>/a12345678/w-4
+    while (/^(w-\d+|a\d{5,}|mp\d{5,}|buy-now|kaufen|product|p)$/i.test(slug) && parts.length > 2) slug = parts.pop();   // FNAC /a123/w-4 · Sony /ps5-pro/buy-now/
     if (/^[a-z0-9]{10,14}$/i.test(slug) && parts.length) {   // Microsoft: /d/<name>/<id> · Amazon: /<name>/dp/<ASIN>
       const id = slug; slug = parts.pop();
       if (/^(dp|product)$/i.test(slug)) { if (parts[parts.length - 1] === 'gp') parts.pop(); slug = parts.length > 2 ? parts.pop() : `Amazon ${id}`; }
