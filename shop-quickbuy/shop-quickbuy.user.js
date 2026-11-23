@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.11.0
+// @version      3.12.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2414,130 +2414,171 @@
 
   /* ---------- UI ---------- */
   const DASH_CSS = `
-    #qb-dash{position:fixed;inset:0;z-index:2147483647;background:rgba(8,9,12,.72);backdrop-filter:blur(4px);
-      display:flex;align-items:flex-start;justify-content:center;padding:28px 18px;overflow:auto;
-      font:13px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;color:#e8e8ea}
+    #qb-dash{--bg:#0a0b0f;--s1:#111319;--s2:#161922;--s3:#1d212c;--bd:#232733;--bd2:#2e3342;--tx:#e9ebf1;--mu:#8a90a2;--ac:#6d8bff;--ac2:#8a5cff;
+      --gr:#34d399;--rd:#f43f5e;--am:#f59e0b;--pu:#a78bfa;
+      position:fixed;inset:0;z-index:2147483647;overflow:auto;background:var(--bg);color:var(--tx);
+      font:13px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
     #qb-dash *{box-sizing:border-box}
-    #qb-dash .d-wrap{width:100%;max-width:1240px;background:#121317;border:1px solid #2a2c33;border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.6)}
-    #qb-dash .d-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:16px 20px;border-bottom:1px solid #22242b;position:sticky;top:0;background:#121317;border-radius:16px 16px 0 0;z-index:2}
-    #qb-dash h1{all:unset;font-size:18px;font-weight:800;margin-right:8px}
-    #qb-dash .chip{font-size:12px;background:#1d1f25;border:1px solid #2a2c33;border-radius:999px;padding:4px 10px;color:#c9cbd3}
-    #qb-dash .chip b{color:#fff}
+    #qb-dash ::-webkit-scrollbar{width:10px;height:10px}#qb-dash ::-webkit-scrollbar-thumb{background:#262a36;border-radius:10px;border:2px solid var(--bg)}
+    #qb-dash a{color:var(--tx);text-decoration:none}#qb-dash a:hover{color:#fff;text-decoration:underline}
+    #qb-dash .app{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100vh}
+    /* Seitenleiste */
+    #qb-dash .nav{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:4px;padding:18px 12px;background:linear-gradient(180deg,#0f1117,#0b0c11);border-right:1px solid var(--bd)}
+    #qb-dash .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px}
+    #qb-dash .brand .lg{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-size:18px;background:linear-gradient(135deg,var(--ac),var(--ac2));box-shadow:0 6px 20px rgba(109,139,255,.35)}
+    #qb-dash .brand b{display:block;font-size:15px;letter-spacing:.2px}#qb-dash .brand small{color:var(--mu);font-size:11px}
+    #qb-dash .tb{all:unset;display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;color:#aeb3c2;font-weight:600;font-size:13px;cursor:pointer}
+    #qb-dash .tb:hover{background:var(--s2);color:#fff}
+    #qb-dash .tb.act{background:linear-gradient(90deg,rgba(109,139,255,.18),rgba(109,139,255,.04));color:#fff;box-shadow:inset 2px 0 0 var(--ac)}
+    #qb-dash .tb .ic{width:20px;text-align:center}
+    #qb-dash .tb .nb{margin-left:auto;font-size:10.5px;font-weight:700;background:var(--s3);color:#cfd3df;border-radius:999px;padding:1px 7px}
+    #qb-dash .nav-sec{margin:18px 10px 6px;font-size:10.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#5f6578}
+    #qb-dash .mini{display:flex;flex-direction:column;gap:2px;overflow:auto;min-height:0}
+    #qb-dash .mi{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:8px;font-size:12px;color:#c3c7d3;cursor:pointer}
+    #qb-dash .mi:hover{background:var(--s2)}
+    #qb-dash .mi .mt{margin-left:auto;font-size:10.5px;color:var(--mu)}
+    #qb-dash .nav-foot{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--bd);font-size:11.5px;color:var(--mu);display:flex;align-items:center;gap:6px}
+    #qb-dash .live i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gr);margin-right:5px;box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:qbpulse 2s infinite}
+    @keyframes qbpulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.55)}70%{box-shadow:0 0 0 7px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+    /* Hauptbereich */
+    #qb-dash .mainc{min-width:0;display:flex;flex-direction:column}
+    #qb-dash .hdr{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:12px;padding:16px 28px;background:rgba(10,11,15,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--bd)}
+    #qb-dash h1{all:unset;display:block;font-size:20px;font-weight:800;letter-spacing:-.2px}
+    #qb-dash .sub{color:var(--mu);font-size:12px;margin-top:1px}
+    #qb-dash .d-body{padding:22px 28px 40px;max-width:1500px;width:100%}
     #qb-dash .sp{flex:1}
-    #qb-dash button{font:600 12px system-ui,sans-serif;border:0;border-radius:8px;padding:7px 11px;cursor:pointer;background:#23262d;color:#d7d9e0}
-    #qb-dash button:hover{filter:brightness(1.15)}
-    #qb-dash button:disabled{opacity:.45;cursor:default;filter:none}
-    #qb-dash .go{background:#1db954;color:#06210f}
-    #qb-dash .stop{background:#e5484d;color:#fff}
-    #qb-dash .x{background:none;font-size:20px;padding:2px 8px;color:#9a9ca6}
-    #qb-dash .d-body{padding:18px 20px;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px}
-    @media (max-width:1000px){#qb-dash .d-body{grid-template-columns:1fr}}
-    #qb-dash .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;align-content:start}
-    #qb-dash .card{background:#181a1f;border:1px solid #2a2c33;border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:9px}
-    #qb-dash .card.run{border-color:#2f7a4c;box-shadow:inset 0 0 0 1px rgba(61,220,122,.15)}
-    #qb-dash .ch{display:flex;align-items:center;gap:8px}
-    #qb-dash .ch .nm{font-weight:800;font-size:14px}
-    #qb-dash .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
-    #qb-dash .pill.on{background:rgba(61,220,122,.14);color:#3ddc7a}
-    #qb-dash .pill.off{background:#2a2d36;color:#9a9ca6}
-    #qb-dash .tab{margin-left:auto;font-size:11px;color:#8b8e99}
-    #qb-dash .tab.ok{color:#3ddc7a}
-    #qb-dash .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-    #qb-dash .muted{color:#8b8e99;font-size:12px}
-    #qb-dash .tog{display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:6px 8px;border-radius:8px;background:#1d1f25;border:1px solid #2a2c33}
-    #qb-dash .tog.on{border-color:#e5484d;background:rgba(229,72,77,.1)}
-    #qb-dash .sw{width:30px;height:17px;border-radius:999px;background:#3a3d46;position:relative;flex:none}
+    #qb-dash h3{all:unset;display:flex;align-items:center;gap:8px;font-weight:800;font-size:14px;margin:24px 0 10px}
+    #qb-dash h3 .muted{font-weight:500}
+    #qb-dash .muted{color:var(--mu);font-size:12px}
+    #qb-dash .red{color:#ff7a90}#qb-dash .green{color:var(--gr)}
+    /* Buttons & Eingaben */
+    #qb-dash button{font:600 12.5px Inter,system-ui,sans-serif;border:1px solid var(--bd2);border-radius:9px;padding:7px 12px;cursor:pointer;background:var(--s2);color:#d9dce6;transition:background .12s,border-color .12s,transform .05s}
+    #qb-dash button:hover{background:var(--s3);border-color:#3a4052}
+    #qb-dash button:active{transform:translateY(1px)}
+    #qb-dash button:disabled{opacity:.45;cursor:default}
+    #qb-dash button.go{background:linear-gradient(180deg,#3be3a2,#22c08a);border-color:transparent;color:#05261a}
+    #qb-dash button.stop{background:linear-gradient(180deg,#ff5d74,#e23a55);border-color:transparent;color:#fff}
+    #qb-dash button.big{padding:10px 18px;font-size:13.5px;border-radius:11px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+    #qb-dash button.sm{padding:5px 10px;font-size:12px}
+    #qb-dash button.lnk{background:none;border:0;padding:0 4px;color:var(--ac);font-weight:600}
+    #qb-dash button.x2{background:none;border-color:transparent;color:#8a90a2;padding:4px 8px}
+    #qb-dash button.x2:hover{color:#ff7a90;background:rgba(244,63,94,.1)}
+    #qb-dash input[type=text],#qb-dash input[type=time],#qb-dash input[type=datetime-local],#qb-dash select{background:#0d0f14;border:1px solid var(--bd2);color:#fff;border-radius:9px;padding:8px 10px;font:12.5px Inter,system-ui,sans-serif;outline:none;color-scheme:dark;min-width:0}
+    #qb-dash input:focus,#qb-dash select:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(109,139,255,.18)}
+    #qb-dash input.cell{width:84px;padding:5px 8px;text-align:right;background:transparent;border-color:transparent}
+    #qb-dash input.cell:hover{border-color:var(--bd2)}#qb-dash input.cell:focus{background:#0d0f14}
+    #qb-dash input.cell.c{width:56px;text-align:center}
+    #qb-dash input[type=checkbox]{accent-color:var(--ac);width:15px;height:15px;cursor:pointer}
+    #qb-dash textarea{width:100%;height:160px;background:#0d0f14;border:1px solid var(--bd2);color:#fff;border-radius:9px;padding:8px;font:11px ui-monospace,Consolas,monospace}
+    #qb-dash .tog{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;padding:5px 9px;border-radius:999px;background:var(--s2);border:1px solid var(--bd2)}
+    #qb-dash .tog.on{border-color:rgba(244,63,94,.6);background:rgba(244,63,94,.12);color:#ffb3c0}
+    #qb-dash .sw{width:30px;height:17px;border-radius:999px;background:#3a3f4f;position:relative;flex:none}
     #qb-dash .sw::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:.15s}
-    #qb-dash .tog.on .sw{background:#e5484d}#qb-dash .tog.on .sw::after{left:15px}
-    #qb-dash .pl{display:flex;flex-direction:column;gap:4px}
-    #qb-dash .pi{display:flex;align-items:center;gap:8px;font-size:12px;background:#121317;border:1px solid #23252c;border-radius:8px;padding:5px 8px}
-    #qb-dash .pi.cur{border-color:#3ddc7a}
-    #qb-dash .pi a{color:#d7d9e0;text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    #qb-dash .pi a:hover{text-decoration:underline}
-    #qb-dash .pi .meta{flex:none;color:#8b8e99;font-size:11px}
-    #qb-dash .pi .bt{flex:none;font-size:10px;font-weight:700;color:#3ddc7a}
-    #qb-dash .pi button{padding:2px 7px;background:none;color:#ff6b6b}
-    #qb-dash input[type=text]{flex:1;min-width:0;background:#0f1013;border:1px solid #2f323a;color:#fff;border-radius:7px;padding:6px 8px;font:12px system-ui,sans-serif;outline:none}
-    #qb-dash input[type=text]:focus{border-color:#5b8cff}
-    #qb-dash .last{font-size:11.5px;color:#a7aab3;background:#121317;border-radius:8px;padding:6px 8px;border-left:3px solid #3a3d46;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #qb-dash .last.t-ok{border-left-color:#3ddc7a}#qb-dash .last.t-err{border-left-color:#e5484d}#qb-dash .last.t-warn{border-left-color:#f5a524}#qb-dash .last.t-buy{border-left-color:#5b8cff}
-    #qb-dash .side{display:flex;flex-direction:column;gap:14px}
-    #qb-dash .box{background:#181a1f;border:1px solid #2a2c33;border-radius:12px;overflow:hidden}
-    #qb-dash .bh{display:flex;align-items:center;gap:8px;padding:10px 12px;font-weight:700;border-bottom:1px solid #22242b}
-    #qb-dash .bh .sp{flex:1}
-    #qb-dash .bh button{padding:3px 8px;font-size:11px}
-    #qb-dash .feed{max-height:360px;overflow:auto;padding:6px;display:flex;flex-direction:column;gap:3px}
-    #qb-dash .fe{display:flex;gap:7px;font-size:11.5px;padding:4px 6px;border-radius:6px}
-    #qb-dash .fe:nth-child(odd){background:#15161a}
-    #qb-dash .fe .s{flex:none;font-weight:700;font-size:10px;background:#2a2d36;border-radius:4px;padding:1px 5px;height:fit-content}
-    #qb-dash .fe .t{flex:none;color:#7d808b;font-size:10.5px}
-    #qb-dash .fe .m{min-width:0;word-break:break-word;color:#c9cbd3}
-    #qb-dash .fe.t-ok .m{color:#3ddc7a}#qb-dash .fe.t-err .m{color:#ff8a8d}#qb-dash .fe.t-warn .m{color:#f5c26b}#qb-dash .fe.t-oos .m{color:#8b8e99}
-    #qb-dash table{width:100%;border-collapse:collapse;font-size:12px}
-    #qb-dash td,#qb-dash th{padding:6px 10px;text-align:left;border-bottom:1px solid #22242b}
-    #qb-dash th{color:#8b8e99;font-weight:600;font-size:11px}
-    #qb-dash td.r,#qb-dash th.r{text-align:right}
-    #qb-dash .empty{padding:14px;color:#7d808b;font-size:12px;text-align:center}
-    #qb-dash .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#1d1f25;border:1px solid #3a3d46;border-radius:10px;padding:10px 14px;font-size:12.5px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
-    #qb-dash textarea{width:100%;height:160px;background:#0f1013;border:1px solid #2f323a;color:#fff;border-radius:8px;padding:8px;font:11px ui-monospace,Consolas,monospace}
-
-    #qb-dash .d-wrap{max-width:1100px}
-    #qb-dash.page{background:#0b0c0f;backdrop-filter:none;padding:24px 18px}
-    #qb-dash .d-top{flex-wrap:nowrap}
-    #qb-dash .sum{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:#23262d;color:#9a9ca6}
-    #qb-dash .sum.on{background:rgba(61,220,122,.14);color:#3ddc7a}
-    #qb-dash .sum.warn{background:rgba(245,165,36,.15);color:#f5c26b}
-    #qb-dash button.big{padding:9px 16px;font-size:13px}
-    #qb-dash button.sm{padding:5px 9px;font-size:11.5px}
-    #qb-dash .tabs{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid #22242b;position:sticky;top:64px;background:#121317;z-index:1}
-    #qb-dash .tb{background:none;border-radius:0;padding:10px 12px;color:#8b8e99;border-bottom:2px solid transparent}
-    #qb-dash .tb.act{color:#fff;border-bottom-color:#5b8cff}
-    #qb-dash .d-body{display:block;padding:18px 20px}
-    #qb-dash .add{display:flex;gap:8px}
-    #qb-dash .add input{padding:10px 12px;font-size:13px}
-    #qb-dash .hint{font-size:12px;min-height:18px;margin:6px 2px 12px;color:#8b8e99}
-    #qb-dash .hint.ok{color:#3ddc7a}#qb-dash .hint.bad{color:#ff8a8d}
-    #qb-dash .att{background:rgba(245,165,36,.08);border:1px solid rgba(245,165,36,.35);border-radius:12px;padding:10px 12px;margin-bottom:14px}
-    #qb-dash .atth{font-weight:800;margin-bottom:6px;display:flex;justify-content:space-between}
-    #qb-dash .atti{font-size:12.5px;padding:4px 0;border-top:1px solid rgba(245,165,36,.15)}
-    #qb-dash .atti.t-err{color:#ff8a8d}
-    #qb-dash .lnk{background:none;padding:0;color:#c9cbd3;text-decoration:underline;font-weight:500}
-    #qb-dash .shops{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:16px}
-    #qb-dash .sh{background:#181a1f;border:1px solid #2a2c33;border-radius:10px;padding:9px 10px;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
-    #qb-dash .sh.run{border-color:#2f7a4c}
-    #qb-dash .shn{font-weight:800;display:flex;align-items:center;gap:7px}
-    #qb-dash .dot{width:8px;height:8px;border-radius:50%;background:#4a4d57}#qb-dash .dot.on{background:#3ddc7a;box-shadow:0 0 8px #3ddc7a}
-    #qb-dash .shs{font-size:11px;color:#8b8e99;grid-column:1}
-    #qb-dash .shl{font-size:11px;color:#a7aab3;grid-column:1/-1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #qb-dash .sha{grid-row:1/3;grid-column:2;display:flex;gap:4px;align-items:center}
-    #qb-dash .red{color:#ff8a8d}#qb-dash .green{color:#3ddc7a}
-    #qb-dash .pt{background:#181a1f;border:1px solid #2a2c33;border-radius:12px;overflow:hidden;border-collapse:separate;border-spacing:0}
+    #qb-dash .tog.on .sw{background:var(--rd)}#qb-dash .tog.on .sw::after{left:15px}
+    /* Karten / Panels */
+    #qb-dash .panel{background:var(--s1);border:1px solid var(--bd);border-radius:14px}
+    #qb-dash .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:18px}
+    #qb-dash .kpi{position:relative;overflow:hidden;background:linear-gradient(180deg,var(--s1),#0f1117);border:1px solid var(--bd);border-radius:14px;padding:14px 16px}
+    #qb-dash .kpi::before{content:'';position:absolute;inset:0 0 auto 0;height:2px;background:var(--kc,var(--ac));opacity:.85}
+    #qb-dash .kl{font-size:11.5px;color:var(--mu);font-weight:600;display:flex;align-items:center;gap:6px}
+    #qb-dash .kv{font-size:26px;font-weight:800;letter-spacing:-.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+    #qb-dash .kv span{font-size:14px;color:var(--mu);font-weight:600;margin-left:4px}
+    #qb-dash .ks{font-size:11.5px;color:var(--mu);margin-top:2px}
+    #qb-dash .meter{height:6px;border-radius:99px;background:#22263a;margin-top:8px;overflow:hidden}
+    #qb-dash .meter i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--gr),#a3e635)}
+    #qb-dash .meter.hi i{background:linear-gradient(90deg,var(--am),var(--rd))}
+    #qb-dash .cols{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+    @media (max-width:1250px){#qb-dash .cols{grid-template-columns:1fr}}
+    /* Achtung */
+    #qb-dash .att{background:linear-gradient(180deg,rgba(245,158,11,.10),rgba(245,158,11,.03));border:1px solid rgba(245,158,11,.35);border-radius:14px;padding:12px 14px;margin-bottom:18px}
+    #qb-dash .atth{display:flex;align-items:center;gap:8px;font-weight:800;color:#fcd34d;margin-bottom:6px}
+    #qb-dash .atth .lnk{margin-left:auto}
+    #qb-dash .atti{font-size:12.5px;padding:5px 0;border-top:1px dashed rgba(245,158,11,.18)}
+    #qb-dash .atti.t-err{color:#ffb3c0}
+    /* Produkt hinzufügen */
+    #qb-dash .add{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px;background:var(--s1);border:1px solid var(--bd);border-radius:14px}
+    #qb-dash .add input[type=text]{flex:1 1 280px}
+    #qb-dash .hint{min-height:18px;font-size:12px;color:var(--mu);margin:6px 4px 0}
+    #qb-dash .hint.ok{color:var(--gr)}#qb-dash .hint.bad{color:#ff7a90}
+    /* Shop-Karten */
+    #qb-dash .shops{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}
+    #qb-dash .sh{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;transition:border-color .15s}
+    #qb-dash .sh:hover{border-color:var(--bd2)}
+    #qb-dash .sh.s-on{border-color:rgba(52,211,153,.35);box-shadow:0 0 0 1px rgba(52,211,153,.08),0 10px 30px -18px rgba(52,211,153,.5)}
+    #qb-dash .sh.s-buy{border-color:rgba(109,139,255,.55)}
+    #qb-dash .sh.s-warn{border-color:rgba(245,158,11,.45)}#qb-dash .sh.s-queue{border-color:rgba(167,139,250,.5)}
+    #qb-dash .sh-top{display:flex;align-items:center;gap:10px}
+    #qb-dash .logo{width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;font-weight:800;font-size:14px;color:#fff}
+    #qb-dash .shn{font-weight:800;font-size:14px}
+    #qb-dash .shs{font-size:11.5px;color:var(--mu)}
+    #qb-dash .pill{margin-left:auto;flex:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--s3);color:var(--mu)}
+    #qb-dash .p-on{background:rgba(52,211,153,.14);color:var(--gr)}#qb-dash .p-buy{background:rgba(109,139,255,.16);color:#a9b9ff}
+    #qb-dash .p-warn{background:rgba(245,158,11,.15);color:#fcd34d}#qb-dash .p-queue{background:rgba(167,139,250,.16);color:var(--pu)}
+    #qb-dash .badges{display:flex;gap:6px;flex-wrap:wrap;min-height:0}
+    #qb-dash .b{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--s3);color:#c3c7d3}
+    #qb-dash .b.red{background:rgba(244,63,94,.15);color:#ff8ea2}#qb-dash .b.warn{background:rgba(245,158,11,.15);color:#fcd34d}
+    #qb-dash .shl{font-size:12px;color:#b9bdca;background:#0d0f14;border:1px solid var(--bd);border-left:3px solid #3a3f4f;border-radius:9px;padding:7px 9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #qb-dash .shl.t-ok{border-left-color:var(--gr)}#qb-dash .shl.t-err{border-left-color:var(--rd)}#qb-dash .shl.t-warn{border-left-color:var(--am)}#qb-dash .shl.t-buy{border-left-color:var(--ac)}
+    #qb-dash .shl .ago{color:#6b7184;font-size:11px;margin-left:4px}
+    #qb-dash .sha{display:flex;gap:6px}#qb-dash .sha button{flex:1}
+    /* Tabellen */
+    #qb-dash table{width:100%;border-collapse:collapse;font-size:12.5px}
+    #qb-dash td,#qb-dash th{padding:9px 12px;text-align:left;border-bottom:1px solid var(--bd)}
+    #qb-dash th{color:#7d8396;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:#0e1016;white-space:nowrap}
+    #qb-dash td.r,#qb-dash th.r{text-align:right}#qb-dash td.c,#qb-dash th.c{text-align:center}
+    #qb-dash .pt{background:var(--s1);border:1px solid var(--bd);border-radius:14px;overflow:hidden;border-collapse:separate;border-spacing:0}
+    #qb-dash .pt tbody tr{transition:background .1s}#qb-dash .pt tbody tr:hover{background:#151821}
+    #qb-dash .pt tbody tr:last-child td{border-bottom:0}
+    #qb-dash .pt tr.cur{background:rgba(52,211,153,.06)}#qb-dash .pt tr.cur td:first-child{box-shadow:inset 3px 0 0 var(--gr)}
     #qb-dash .pt td{vertical-align:middle}
-    #qb-dash .pt tr.cur td{background:rgba(61,220,122,.06)}
-    #qb-dash .pt td.c,#qb-dash .pt th.c{text-align:center}
-    #qb-dash .pn{max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #qb-dash .pn a{color:#e8e8ea;text-decoration:none}#qb-dash .pn a:hover{text-decoration:underline}
-    #qb-dash .tag{font-size:10.5px;font-weight:700;background:#2a2d36;border-radius:5px;padding:2px 6px;white-space:nowrap}
-    #qb-dash .st{font-size:11.5px;white-space:nowrap}#qb-dash .st.on{color:#3ddc7a}#qb-dash .st.wait{color:#c9cbd3}#qb-dash .st.off{color:#7d808b}
-    #qb-dash input.cell{width:84px;flex:none;text-align:right;padding:4px 6px;background:#0f1013;border:1px solid #2f323a;color:#fff;border-radius:6px;font:12px system-ui,sans-serif;outline:none}
-    #qb-dash input.cell:focus{border-color:#5b8cff}
-    #qb-dash input.cell.c{width:52px;text-align:center}
-    #qb-dash .x2{background:none;color:#ff6b6b;padding:2px 6px}
-    #qb-dash .empty.big{padding:40px 20px;font-size:13px}
-    #qb-dash .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
-    #qb-dash .feed{max-height:none;background:#181a1f;border:1px solid #2a2c33;border-radius:12px}
-    #qb-dash .hm{overflow:auto;background:#181a1f;border:1px solid #2a2c33;border-radius:12px;padding:10px;margin-bottom:6px}
+    #qb-dash .pn{max-width:380px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #qb-dash .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--s3);color:#d2d6e2;white-space:nowrap}
+    #qb-dash .st{font-size:11.5px;font-weight:700;white-space:nowrap}
+    #qb-dash .st.on{color:var(--gr)}#qb-dash .st.wait{color:#a9b9ff}#qb-dash .st.off{color:#6b7184}
+    #qb-dash .set td{padding:8px 10px}
+    #qb-dash .set th{white-space:normal;line-height:1.3;vertical-align:bottom}
+    #qb-dash .set input[type=datetime-local]{width:200px}
+    #qb-dash .set select{max-width:200px}
+    #qb-dash .scroll{overflow-x:auto;border-radius:14px}
+    #qb-dash .cols > *{min-width:0}
+    #qb-dash .d-body > h3:first-child{margin-top:0}
+    /* Leisten, Chips, leere Zustände */
+    #qb-dash .bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    #qb-dash .chip{font-size:12px;background:var(--s2);border:1px solid var(--bd2);border-radius:999px;padding:4px 11px;color:#c3c7d3}
+    #qb-dash .chip b{color:#fff}
+    #qb-dash .empty{padding:18px;color:#6b7184;font-size:12.5px;text-align:center}
+    #qb-dash .empty.big{padding:46px 20px;font-size:13px;background:var(--s1);border:1px dashed var(--bd2);border-radius:14px}
+    #qb-dash .dcg{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:14px}
+    #qb-dash .dcg input[type=text]#d-wh{flex:1 1 420px}
+    #qb-dash .ck{font-size:12.5px;display:inline-flex;gap:7px;align-items:center;cursor:pointer}
+    /* Feed */
+    #qb-dash .feed{display:flex;flex-direction:column;background:var(--s1);border:1px solid var(--bd);border-radius:14px;overflow:hidden}
+    #qb-dash .feed.tall{max-height:none}
+    #qb-dash .fe{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:10px;align-items:baseline;font-size:12.5px;padding:8px 12px;border-bottom:1px solid #191c25}
+    #qb-dash .fe:last-child{border-bottom:0}
+    #qb-dash .fe .s{font-weight:700;font-size:10.5px;background:var(--s3);border-radius:5px;padding:1px 6px;white-space:nowrap}
+    #qb-dash .fe .t{color:#6b7184;font-size:11px;font-variant-numeric:tabular-nums}
+    #qb-dash .fe .m{min-width:0;word-break:break-word;color:#c9cdd8}
+    #qb-dash .fe.t-ok .m{color:#6ee7b7}#qb-dash .fe.t-err .m{color:#ff8ea2}#qb-dash .fe.t-warn .m{color:#fcd34d}#qb-dash .fe.t-oos .m{color:#7d8396}#qb-dash .fe.t-buy .m{color:#b7c4ff}
+    #qb-dash .aside h3:first-child{margin-top:0}
+    #qb-dash .aside .fe{grid-template-columns:auto minmax(0,1fr);font-size:12px}
+    #qb-dash .aside .fe .s{grid-column:1}#qb-dash .aside .fe .t{display:none}
+    /* Statistik */
+    #qb-dash .hm{overflow:auto;background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:6px}
     #qb-dash .hm table{border-collapse:separate;border-spacing:3px;font-size:11px;width:auto}
+    #qb-dash .hm th{color:#7d8396;font-weight:600;padding:0 4px;text-align:center;background:none;border:0;text-transform:none;letter-spacing:0}
     #qb-dash .hm th:first-child{width:30px}
-    #qb-dash .hm th{color:#8b8e99;font-weight:600;padding:0 4px;text-align:center}
-    #qb-dash .hm td{width:26px;height:24px;border-radius:5px;text-align:center;color:#fff}
-    #qb-dash .stl{background:#181a1f;border:1px solid #2a2c33;border-radius:12px;padding:10px 14px;margin:8px 0;line-height:1.7}
-    #qb-dash h3{all:unset;display:block;font-weight:800;font-size:14px;margin:18px 0 8px}
-    #qb-dash h3:first-child{margin-top:0}
-    #qb-dash .set select,#qb-dash .set input[type=datetime-local]{background:#0f1013;border:1px solid #2f323a;color:#fff;border-radius:7px;padding:5px 6px;font:12px system-ui,sans-serif;color-scheme:dark}
-    #qb-dash .dcg{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;background:#181a1f;border:1px solid #2a2c33;border-radius:12px;padding:12px}
-    #qb-dash .dcg input[type=text]{flex:1 1 420px}
-    #qb-dash .ck{font-size:12px;display:flex;gap:5px;align-items:center;cursor:pointer}
+    #qb-dash .hm td{width:28px;height:26px;border-radius:6px;text-align:center;color:#fff;border:0;padding:0}
+    #qb-dash .stl{background:#0d0f14;border:1px solid var(--bd);border-radius:10px;padding:10px 14px;margin:8px 0;line-height:1.8}
+    /* Toast */
+    #qb-dash .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:9;background:#171a23;border:1px solid var(--bd2);border-radius:12px;padding:11px 15px;font-size:12.5px;box-shadow:0 18px 50px rgba(0,0,0,.6);animation:qbin .18s ease-out}
+    @keyframes qbin{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+    @media (max-width:900px){
+      #qb-dash .app{grid-template-columns:1fr}
+      #qb-dash .nav{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:10px}
+      #qb-dash .brand{padding:0 8px 0 0}#qb-dash .nav-sec,#qb-dash .mini,#qb-dash .nav-foot{display:none}
+      #qb-dash .hdr,#qb-dash .d-body{padding-left:14px;padding-right:14px}
+    }
   `;
   const DICON = { ok: '✅', err: '⛔', warn: '⚠️', oos: '💤', buy: '🛒', info: 'ℹ️' };
   function dashToast(msg) {
@@ -2568,6 +2609,7 @@
   function closeDashboard() { if (STANDALONE) window.close(); }
 
   let dashTab = 'home';
+  let logShop = 'all'; let logImportant = false;
   function shopOfUrl(url) { return SHOP_IDS().find((id) => SHOPS[id].productUrl.test(url)) || null; }
   function attentionItems() {
     const dismissed = GM_getValue('global:dismissed', 0);
@@ -2813,6 +2855,7 @@
     const anyRun = runIds.length > 0;
     const att = attentionItems();
     const scrollY = d.scrollTop;
+    const keepToasts = [...d.querySelectorAll(':scope > .toast')];
 
     // ---------- Übersicht ----------
     const rows = used.flatMap((id) => {
@@ -2826,43 +2869,97 @@
       if (r.run) return '<span class="st wait">○ in der Schleife</span>';
       return '<span class="st off">pausiert</span>';
     };
+    const ago = (t) => {
+      if (!t) return '';
+      const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+      return s < 60 ? `vor ${s} s` : s < 3600 ? `vor ${Math.round(s / 60)} Min.` : s < 86400 ? `vor ${Math.round(s / 3600)} Std.` : new Date(t).toLocaleDateString('de-DE');
+    };
+    const shopState = (id) => {
+      if (!gv(id, 'running', false)) return { k: 'off', t: 'Gestoppt' };
+      if (gv(id, 'captchaSince', 0)) return { k: 'warn', t: 'Captcha' };
+      if (gv(id, 'queueSince', 0)) return { k: 'queue', t: 'Warteschlange' };
+      if (!tabOpen(id)) return { k: 'warn', t: 'Kein Tab' };
+      const st = String(gv(id, 'stage', 'product'));
+      if (st === 'basket' || st === 'ps-cart') return { k: 'buy', t: 'Warenkorb' };
+      if (st !== 'product') return { k: 'buy', t: 'Kasse' };
+      return { k: 'on', t: 'Aktiv' };
+    };
+    const hue = (id) => { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+    const logo = (id) => `<span class="logo" style="background:linear-gradient(135deg,hsl(${hue(id)} 70% 52%),hsl(${(hue(id) + 40) % 360} 70% 42%))">${esc(SHOPS[id].name.replace(/[^A-Za-zÄÖÜ]/g, '').slice(0, 1).toUpperCase() || '?')}</span>`;
     const shopStrip = used.map((id) => {
-      const run = gv(id, 'running', false); const open = tabOpen(id);
+      const run = gv(id, 'running', false);
+      const st = shopState(id);
       const last = logFor(id)[0];
-      return `<div class="sh ${run ? 'run' : ''}" data-id="${id}">
-        <div class="shn"><span class="dot ${run ? 'on' : ''}"></span>${esc(SHOPS[id].name)}</div>
-        <div class="shs">${run ? `Runde ${gv(id, 'attempts', 0) + 1}` : 'gestoppt'}${open ? '' : ' · kein Tab'}${run && gv(id, 'queueSince', 0) ? ' · <b>⏳ Warteschlange</b>' : ''}${(gv(id, 'loggedOut', 0) || 0) >= 2 ? ' · <b class="red">🔑 abgemeldet?</b>' : ''}${gv(id, 'autoOrder', false) && !SHOPS[id].alertOnly && !SHOPS[id].stopAfterAdd ? ' · <b class="red">Auto</b>' : ''}</div>
-        <div class="shl" title="${esc(last ? last.msg : '')}">${last ? `${DICON[last.type] || ''} ${esc(last.msg)}` : '–'}</div>
-        <div class="sha"><button class="${run ? 'stop' : 'go'} sm" data-shop="${run ? 'stop' : 'start'}">${run ? '■' : '▶'}</button><button class="sm" data-shop="tab" title="Tab öffnen">↗</button></div>
+      const n = gv(id, 'products', []).length;
+      const pm = gv(id, 'payMethod', SHOPS[id].defaultPay || 'default');
+      const auto = gv(id, 'autoOrder', false) && !SHOPS[id].alertOnly && !SHOPS[id].stopAfterAdd;
+      const badges = [
+        auto ? '<span class="b red">Auto-Bestellung</span>' : '',
+        SHOPS[id].alertOnly ? '<span class="b">nur Alarm</span>' : '',
+        auto && PAY[pm] && pm !== 'default' ? `<span class="b">${esc(PAY[pm].label)}</span>` : '',
+        gv(id, 'dropAt', '') ? `<span class="b">⏰ ${esc(new Date(gv(id, 'dropAt', '')).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))}</span>` : '',
+        (gv(id, 'loggedOut', 0) || 0) >= 2 ? '<span class="b warn">🔑 abgemeldet?</span>' : '',
+      ].join('');
+      return `<div class="sh s-${st.k}" data-id="${id}">
+        <div class="sh-top">${logo(id)}<div><div class="shn">${esc(SHOPS[id].name)}</div><div class="shs">${n} Produkt${n === 1 ? '' : 'e'}${run ? ` · Runde ${gv(id, 'attempts', 0) + 1}` : ''}</div></div><span class="pill p-${st.k}">${st.t}</span></div>
+        ${badges ? `<div class="badges">${badges}</div>` : ''}
+        <div class="shl t-${last ? last.type : ''}" title="${esc(last ? last.msg : '')}">${last ? `${DICON[last.type] || ''} ${esc(last.msg)}<span class="ago">${esc(ago(last.at))}</span>` : '<span class="muted">Noch keine Meldung</span>'}</div>
+        <div class="sha"><button class="${run ? 'stop' : 'go'} sm" data-shop="${run ? 'stop' : 'start'}">${run ? '■ Stoppen' : '▶ Starten'}</button><button class="sm" data-shop="tab" title="Shop-Tab öffnen">↗ Tab</button></div>
       </div>`;
     }).join('');
 
+    const budget = Number(G.get('budgetDay', 0)) || 0;
+    const today = spentToday();
+    const pct = budget ? Math.min(100, Math.round(today / budget * 100)) : 0;
+    const rs = GM_getValue('global:restocks', []);
+    const r24 = rs.filter((r) => Date.now() - r.t < 86400e3).length;
+    const spentAll = bought.reduce((a, h) => a + (Number(h.total) || Number(h.price) || 0), 0);
+    const kpis = `<div class="kpis">
+      <div class="kpi" style="--kc:var(--gr)"><div class="kl">🟢 Aktive Shops</div><div class="kv">${runIds.length}<span>/ ${used.length}</span></div><div class="ks">${rows.length} Produkt${rows.length === 1 ? '' : 'e'} in der Überwachung</div></div>
+      <div class="kpi" style="--kc:var(--am)"><div class="kl">💶 Heute ausgegeben</div><div class="kv">${fmtEur(today)} €</div>${budget ? `<div class="meter ${pct >= 80 ? 'hi' : ''}"><i style="width:${pct}%"></i></div><div class="ks">${pct} % von ${fmtEur(budget)} € Tagesbudget</div>` : '<div class="ks">kein Tagesbudget gesetzt</div>'}</div>
+      <div class="kpi" style="--kc:var(--ac)"><div class="kl">🛒 Käufe</div><div class="kv">${bought.length}</div><div class="ks">${fmtEur(spentAll)} € insgesamt</div></div>
+      <div class="kpi" style="--kc:var(--pu)"><div class="kl">🔔 Restocks (24 Std.)</div><div class="kv">${r24}</div><div class="ks">${rs.length ? `zuletzt ${esc(ago(rs[0].t))}` : 'noch keine aufgezeichnet'}</div></div>
+    </div>`;
+    const recent = ids.flatMap((id) => logFor(id).slice(0, 12).map((e) => ({ ...e, id })))
+      .filter((e) => e.type !== 'oos').sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 14);
+
     const home = `
-      ${att.length ? `<div class="att"><div class="atth">⚠️ Braucht dich <button class="lnk" data-g="dismiss">alles erledigt</button></div>
-        ${att.map((e) => `<div class="atti t-${e.type}"><b>${esc(SHOPS[e.id].name)}</b> ${esc(e.msg)} <span class="muted">${esc(e.ts)}</span></div>`).join('')}</div>` : ''}
-      <div class="add">
-        <input type="text" id="d-url" placeholder="➕ Produkt-URL einfügen – Shop wird automatisch erkannt (23 Shops + alle Shopify-Shops)">
-        <input type="text" id="d-max" placeholder="Max. €" style="width:90px;flex:none">
-        <input type="text" id="d-qty" placeholder="Stk." title="Stückzahl (∞ = so viele wie möglich)" style="width:60px;flex:none">
-        <button class="go" data-g="add">Hinzufügen</button>
+      ${kpis}
+      ${att.length ? `<div class="att"><div class="atth">⚠️ Braucht deine Aufmerksamkeit <button class="lnk" data-g="dismiss">alles erledigt ✓</button></div>
+        ${att.map((e) => `<div class="atti t-${e.type}"><b>${esc(SHOPS[e.id].name)}</b> · ${esc(e.msg)} <span class="muted">${esc(e.ts)}</span></div>`).join('')}</div>` : ''}
+      <div class="cols"><div>
+        <div class="add">
+          <input type="text" id="d-url" placeholder="➕ Produkt-URL einfügen – Shop wird automatisch erkannt">
+          <input type="text" id="d-max" placeholder="Max. €" style="width:96px;flex:none">
+          <input type="text" id="d-qty" placeholder="Stück" title="Stückzahl (∞ = so viele wie möglich)" style="width:72px;flex:none">
+          <button class="go" data-g="add">Hinzufügen</button>
+        </div>
+        <div class="hint" id="d-hint"></div>
+        ${used.length ? `<h3>Shops <span class="muted">${runIds.length} von ${used.length} aktiv</span></h3><div class="shops">${shopStrip}</div>` : ''}
+        ${rows.length ? `<h3>Produkte <span class="muted">${rows.length}</span></h3><table class="pt"><thead><tr><th>Shop</th><th>Produkt</th><th>Status</th><th class="r">Max. €</th><th class="c">Stück</th><th class="c">Gekauft</th><th></th></tr></thead><tbody>
+          ${rows.map((r) => `<tr class="${r.active ? 'cur' : ''}" data-id="${r.id}" data-i="${r.i}">
+            <td><span class="tag">${esc(SHOPS[r.id].name)}</span></td>
+            <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}</td>
+            <td>${status(r)}</td>
+            <td class="r"><input type="text" class="cell" data-f="maxPrice" value="${r.x.maxPrice ? fmtEur(r.x.maxPrice) : ''}" placeholder="–"></td>
+            <td class="c"><input type="text" class="cell c" data-f="qty" value="${Number(r.x.qty) === 0 ? '∞' : (r.x.qty === undefined ? 1 : r.x.qty)}"></td>
+            <td class="c">${r.x.bought ? `<b class="green">${r.x.bought}</b>` : '<span class="muted">0</span>'}</td>
+            <td class="r"><button class="x2" data-p="del" title="Entfernen">✕</button></td></tr>`).join('')}
+        </tbody></table>` : `<div class="empty big" style="margin-top:18px">🚀 Noch keine Produkte.<br>Füge oben eine Produkt-URL ein – der Shop wird automatisch erkannt (23 Shops + alle Shopify-Shops).</div>`}
       </div>
-      <div class="hint" id="d-hint"></div>
-      ${used.length ? `<div class="shops">${shopStrip}</div>` : ''}
-      ${rows.length ? `<table class="pt"><thead><tr><th>Shop</th><th>Produkt</th><th>Status</th><th class="r">Max. €</th><th class="c">Stück</th><th class="c">Gekauft</th><th></th></tr></thead><tbody>
-        ${rows.map((r) => `<tr class="${r.active ? 'cur' : ''}" data-id="${r.id}" data-i="${r.i}">
-          <td><span class="tag">${esc(SHOPS[r.id].name)}</span></td>
-          <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}</td>
-          <td>${status(r)}</td>
-          <td class="r"><input type="text" class="cell" data-f="maxPrice" value="${r.x.maxPrice ? fmtEur(r.x.maxPrice) : ''}" placeholder="–"></td>
-          <td class="c"><input type="text" class="cell c" data-f="qty" value="${Number(r.x.qty) === 0 ? '∞' : (r.x.qty === undefined ? 1 : r.x.qty)}"></td>
-          <td class="c">${r.x.bought ? `<b class="green">${r.x.bought}</b>` : '<span class="muted">0</span>'}</td>
-          <td class="r"><button class="x2" data-p="del" title="Entfernen">✕</button></td></tr>`).join('')}
-      </tbody></table>` : `<div class="empty big">Noch keine Produkte. Füge oben eine Produkt-URL ein – der Shop wird automatisch erkannt.</div>`}`;
+      <div class="aside">
+        <h3>Live-Aktivität <span class="sp"></span><button class="lnk" data-tab="log">alle →</button></h3>
+        <div class="feed">${recent.length ? recent.map((e) => `<div class="fe t-${e.type}"><span class="s">${esc(SHOPS[e.id].name)}</span><span class="t">${esc(e.ts)}</span><span class="m">${DICON[e.type] || ''} ${esc(e.msg)} <span class="muted">${esc(ago(e.at))}</span></span></div>`).join('') : '<div class="empty">Noch nichts passiert</div>'}</div>
+      </div></div>`;
 
     // ---------- Protokoll ----------
-    const feed = ids.flatMap((id) => logFor(id).slice(0, 40).map((e) => ({ ...e, id })))
-      .sort((a, b) => (b.at || 0) - (a.at || 0) || String(b.ts).localeCompare(String(a.ts))).slice(0, 120);
-    const logTab = `<div class="bar"><span class="muted">Neueste zuerst · gleiche Meldungen zusammengefasst</span><span class="sp"></span><button class="sm" data-g="clearlogs">Leeren</button></div>
+    const logIds = ids.filter((id) => logFor(id).length);
+    const feed = ids.filter((id) => logShop === 'all' || id === logShop).flatMap((id) => logFor(id).slice(0, 60).map((e) => ({ ...e, id })))
+      .filter((e) => !logImportant || e.type !== 'oos')
+      .sort((a, b) => (b.at || 0) - (a.at || 0) || String(b.ts).localeCompare(String(a.ts))).slice(0, 150);
+    const logTab = `<div class="bar"><select id="lg-shop"><option value="all">Alle Shops</option>${logIds.map((id) => `<option value="${id}" ${logShop === id ? 'selected' : ''}>${esc(SHOPS[id].name)}</option>`).join('')}</select>
+      <label class="ck"><input type="checkbox" id="lg-imp" ${logImportant ? 'checked' : ''}> nur Wichtiges (ohne „ausverkauft“)</label>
+      <span class="sp"></span><span class="muted">gleiche Meldungen werden zusammengefasst</span><button class="sm" data-g="clearlogs">Leeren</button></div>
       <div class="feed">${feed.length ? feed.map((e) => `<div class="fe t-${e.type}"><span class="s">${esc(SHOPS[e.id].name)}</span><span class="t">${esc(e.ts)}</span><span class="m">${DICON[e.type] || ''} ${e.n > 1 ? `<b>×${e.n}</b> ` : ''}${esc(e.msg)}</span></div>`).join('') : '<div class="empty">Noch keine Einträge</div>'}</div>`;
 
     // ---------- Historie ----------
@@ -2897,7 +2994,7 @@
     }).join('');
     const setTab = `
       <h3>Shops <span class="muted" style="font-weight:400;font-size:12px">– weitere Shops erscheinen hier, sobald du dort ein Produkt einträgst</span></h3>
-      <table class="pt set"><thead><tr><th>Shop</th><th>Auto-Bestellung</th><th>Zahlungsart</th><th class="c">Pause (s)</th><th>⏰ Drop-Zeit</th><th class="c">Nur Shop selbst</th><th class="c">Nach Kauf weiter</th><th class="c" title="Warnt, wenn du im Shop abgemeldet bist">Login prüfen</th><th class="c" title="Entfernt andere Artikel aus dem Warenkorb, bevor zur Kasse gegangen wird">Fremde Artikel entfernen</th></tr></thead><tbody>${setRows}</tbody></table>
+      <div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th>Auto-Bestellung</th><th>Zahlungsart</th><th class="c">Pause (s)</th><th>⏰ Drop-Zeit</th><th class="c">Nur Shop selbst</th><th class="c">Nach Kauf weiter</th><th class="c" title="Warnt, wenn du im Shop abgemeldet bist">Login prüfen</th><th class="c" title="Entfernt andere Artikel aus dem Warenkorb, bevor zur Kasse gegangen wird">Fremde Artikel entfernen</th></tr></thead><tbody>${setRows}</tbody></table></div>
       <h3>🛡️ Sicherheit & Überwachung</h3>
       <div class="dcg">
         <label class="ck">Tagesbudget (alle Shops zusammen): <input type="text" id="g-budget" style="width:90px;flex:none" value="${Number(G.get('budgetDay', 0)) ? fmtEur(G.get('budgetDay', 0)) : ''}" placeholder="aus"> €</label>
@@ -2917,20 +3014,33 @@
       <h3>💾 Sichern</h3>
       <div class="bar"><button class="sm" data-g="export">⬇ Backup herunterladen</button><button class="sm" data-g="import">⬆ Backup einspielen</button><span class="muted">Enthält Produkte, Einstellungen, Historie und die Discord-URL.</span></div>`;
 
-    const tabs = [['home', 'Übersicht'], ['log', 'Protokoll'], ['hist', `Historie${bought.length ? ` (${bought.length})` : ''}`], ['radar', `Radar${G.get('radar', []).length ? ` (${G.get('radar', []).length})` : ''}`], ['stats', 'Statistik'], ['set', 'Einstellungen']];
-    d.innerHTML = `<div class="d-wrap">
-      <div class="d-top">
-        <h1>📊 QuickBuy</h1>
-        <span class="sum ${anyRun ? 'on' : ''}">${anyRun ? `● ${runIds.length} Shop${runIds.length > 1 ? 's' : ''} aktiv` : '○ alles gestoppt'}</span>
-        ${att.length ? `<span class="sum warn">⚠️ ${att.length}</span>` : ''}
-        <span class="chip" title="Heute ausgegeben${Number(G.get('budgetDay', 0)) ? ' / Tagesbudget' : ''}">💶 heute <b>${fmtEur(spentToday())} €</b>${Number(G.get('budgetDay', 0)) ? ` / ${fmtEur(G.get('budgetDay', 0))} €` : ''}</span>
-        <span class="sp"></span>
-        <button class="${anyRun ? 'stop' : 'go'} big" data-g="${anyRun ? 'stopall' : 'startall'}">${anyRun ? '■ Alle stoppen' : '▶ Alle starten'}</button>
-        <span class="muted" title="Eigener Dashboard-Tab – lädt nie neu, steuert alle Shop-Tabs">Live · eigener Tab</span>
-      </div>
-      <div class="tabs">${tabs.map(([k, l]) => `<button class="tb ${dashTab === k ? 'act' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
-      <div class="d-body">${dashTab === 'home' ? home : dashTab === 'log' ? logTab : dashTab === 'hist' ? histTab : dashTab === 'radar' ? radarHtml() : dashTab === 'stats' ? statsHtml() : setTab}</div>
+    const ver = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '';
+    const radarN = G.get('radar', []).length;
+    const tabs = [['home', 'Übersicht', '🏠', att.length ? `⚠ ${att.length}` : ''], ['log', 'Protokoll', '📜', ''], ['hist', 'Historie', '🧾', bought.length || ''],
+      ['radar', 'Radar', '📡', radarN || ''], ['stats', 'Statistik', '📈', ''], ['set', 'Einstellungen', '⚙️', '']];
+    const TITLES = { home: ['Übersicht', anyRun ? `${runIds.length} Shop${runIds.length > 1 ? 's' : ''} aktiv · aktualisiert ${new Date().toLocaleTimeString('de-DE')}` : 'Alles gestoppt – starte einzelne Shops oder alle auf einmal'],
+      log: ['Protokoll', 'Alle Meldungen aller Shops, neueste zuerst'], hist: ['Historie', 'Käufe und Alarme – als CSV exportierbar'],
+      radar: ['Radar', 'Neu gelistete Produkte in Suchen und Kategorien finden'], stats: ['Statistik', 'Wann wird nachgefüllt? Restocks nach Wochentag und Uhrzeit'],
+      set: ['Einstellungen', 'Shops, Sicherheit, Discord und Backup'] };
+    const [ttl, sub] = TITLES[dashTab] || TITLES.home;
+    d.innerHTML = `<div class="app">
+      <aside class="nav">
+        <div class="brand"><span class="lg">⚡</span><div><b>QuickBuy</b><small>Dashboard${ver ? ` · v${esc(ver)}` : ''}</small></div></div>
+        ${tabs.map(([k, l, ic, nb]) => `<button class="tb ${dashTab === k ? 'act' : ''}" data-tab="${k}"><span class="ic">${ic}</span>${l}${nb !== '' ? `<span class="nb">${esc(nb)}</span>` : ''}</button>`).join('')}
+        ${used.length ? `<div class="nav-sec">Shops</div><div class="mini">${used.map((id) => { const st = shopState(id); return `<div class="mi" data-tab="home" title="${esc(st.t)}"><span class="dot2" style="width:8px;height:8px;border-radius:50%;flex:none;background:${{ on: 'var(--gr)', buy: 'var(--ac)', warn: 'var(--am)', queue: 'var(--pu)', off: '#3a3f4f' }[st.k]}"></span>${esc(SHOPS[id].name)}<span class="mt">${esc(st.t)}</span></div>`; }).join('')}</div>` : ''}
+        <div class="nav-foot"><span class="live"><i></i>Live</span><span>· eigener Tab, lädt nie neu</span></div>
+      </aside>
+      <main class="mainc">
+        <header class="hdr">
+          <div><h1>${ttl}</h1><div class="sub">${esc(sub)}</div></div>
+          <span class="sp"></span>
+          <span class="chip" title="Heute ausgegeben${budget ? ' / Tagesbudget' : ''}">💶 heute <b>${fmtEur(today)} €</b>${budget ? ` / ${fmtEur(budget)} €` : ''}</span>
+          <button class="${anyRun ? 'stop' : 'go'} big" data-g="${anyRun ? 'stopall' : 'startall'}">${anyRun ? '■ Alle stoppen' : '▶ Alle starten'}</button>
+        </header>
+        <div class="d-body">${dashTab === 'home' ? home : dashTab === 'log' ? logTab : dashTab === 'hist' ? histTab : dashTab === 'radar' ? radarHtml() : dashTab === 'stats' ? statsHtml() : setTab}</div>
+      </main>
     </div>`;
+    for (const t of keepToasts) d.appendChild(t);   // offene Meldungen/Dialoge bleiben beim Aktualisieren erhalten
     d.scrollTop = scrollY;
     bindDash(d, ids);
   }
@@ -3060,6 +3170,10 @@
       sv(id, 'products', l); pushLog(id, `Produkt aus dem Radar hinzugefügt: ${shortName(h.url)}`, 'info');
       dashToast(`Zu ${SHOPS[id].name} hinzugefügt`); renderDash(true); renderPanel();
     });
+    const lgSel = d.querySelector('#lg-shop');
+    if (lgSel) lgSel.onchange = () => { logShop = lgSel.value; renderDash(true); };
+    const lgImp = d.querySelector('#lg-imp');
+    if (lgImp) lgImp.onchange = () => { logImportant = lgImp.checked; renderDash(true); };
     const stSel = d.querySelector('#st-shop');
     if (stSel) stSel.onchange = () => { statShop = stSel.value; renderDash(true); };
     // Globale Einstellungen
