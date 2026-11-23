@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.5.3
+// @version      3.5.4
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1052,7 +1052,7 @@
     const deadline = Date.now() + 90000;
     log(`Kasse: Seite ${location.pathname}`, 'info');
     let lastPathSeen = location.pathname;
-    let lastNext = null;
+    let lastNext = null; let lastNextAt = 0; let nextTries = 0; let nextPath = '';
     while (Date.now() < deadline) {
       if (cartOosText()) return backToBasket(`Kasse meldet „${cartOosText()}“`);
       if (wantPay) {
@@ -1068,7 +1068,21 @@
       const f = findClickable(SHOP.finalOrder);
       if (f && !isDisabled(f)) { btn = f; break; }
       const n = findClickable(NEXT_STEP);
-      if (n && !isDisabled(n) && n !== lastNext) { log(`Kasse: „${elText(n)}“`, 'buy'); lastNext = n; clickEl(n); await sleep(2500); continue; }
+      if (n && !isDisabled(n)) {
+        // Neuer Button/neue Seite → klicken. Gleicher Button auf gleicher Seite nach 6 s erneut (Klick wurde ignoriert)
+        const samePage = n === lastNext && location.pathname === nextPath;
+        if (!samePage) nextTries = 0;
+        if (!samePage || (Date.now() - lastNextAt > 6000 && nextTries < 5)) {
+          nextTries++;
+          log(`Kasse: „${elText(n)}“${nextTries > 1 ? ` (Versuch ${nextTries})` : ''} auf ${location.pathname}`, 'buy');
+          lastNext = n; lastNextAt = Date.now(); nextPath = location.pathname;
+          n.scrollIntoView({ block: 'center' });
+          await sleep(300);
+          clickEl(n);
+          await sleep(2500);
+          continue;
+        }
+      }
       await sleep(600);
     }
 
