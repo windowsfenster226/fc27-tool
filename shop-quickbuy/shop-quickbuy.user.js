@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.7.0
+// @version      3.8.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -29,6 +29,8 @@
 // @match        https://www.snipes.com/*
 // @match        https://www.solebox.com/*
 // @match        *://*/products/*
+// @match        https://example.com/*
+// @match        https://www.example.com/*
 // @match        *://*/*/products/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -315,7 +317,12 @@
     variantOpener: [/größe\s+wählen/i, /variante\s+wählen/i, /bitte\s+wählen/i],
   };
 
-  const SHOP_ID = Object.keys(SHOPS).find((id) => SHOPS[id].host.test(location.hostname)) || (isShopifyPage() ? 'shopify' : null);
+  // Eigenständiges Dashboard (eigener Tab, lädt nie neu): https://example.com/?quickbuy
+  const DASH_URL = 'https://example.com/?quickbuy';
+  const STANDALONE = /^(www\.)?example\.com$/.test(location.hostname) && /quickbuy/i.test(location.search + location.hash);
+  SHOPS.__dash = { name: 'Dashboard', internal: true, host: /^$/, productUrl: /^$/, productHint: '', basketUrl: '', isBasket: () => false, isCheckout: () => false, addToCart: [], oos: [], toCheckout: [], finalOrder: [] };
+  const SHOP_IDS = () => Object.keys(SHOPS).filter((id) => !SHOPS[id].internal);
+  const SHOP_ID = STANDALONE ? '__dash' : (SHOP_IDS().find((id) => SHOPS[id].host.test(location.hostname)) || (isShopifyPage() ? 'shopify' : null));
   if (!SHOP_ID) return;
   const SHOP = SHOPS[SHOP_ID];
   if (SHOP_ID === 'shopify') SHOP.name = `Shopify · ${location.hostname.replace(/^www\./, '')}`;
@@ -1751,6 +1758,7 @@
   }
 
   function renderPanel() {
+    if (STANDALONE) return;
     if (window.top !== window) return;
     if (!document.body) return;
     let p = document.getElementById('qb-panel');
@@ -2024,8 +2032,8 @@
     return true;
   }
   // Tampermonkey-Tab (wird nicht vom Popup-Blocker gestoppt, auch bei "Alle starten")
-  function openTab(url) {
-    try { GM_openInTab(url, { active: false, insert: true, setParent: true }); } catch (e) { window.open(url, '_blank'); }
+  function openTab(url, active) {
+    try { GM_openInTab(url, { active: !!active, insert: true, setParent: true }); } catch (e) { window.open(url, '_blank'); }
   }
   function dashStop(id) { sv(id, 'running', false); sv(id, 'stage', 'product'); sv(id, 'dryRun', false); pushLog(id, 'Gestoppt: vom Dashboard', 'warn'); }
 
@@ -2121,6 +2129,7 @@
     #qb-dash textarea{width:100%;height:160px;background:#0f1013;border:1px solid #2f323a;color:#fff;border-radius:8px;padding:8px;font:11px ui-monospace,Consolas,monospace}
 
     #qb-dash .d-wrap{max-width:1100px}
+    #qb-dash.page{background:#0b0c0f;backdrop-filter:none;padding:24px 18px}
     #qb-dash .d-top{flex-wrap:nowrap}
     #qb-dash .sum{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:#23262d;color:#9a9ca6}
     #qb-dash .sum.on{background:rgba(61,220,122,.14);color:#3ddc7a}
@@ -2178,31 +2187,33 @@
     const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; d.appendChild(t);
     setTimeout(() => t.remove(), 4500);
   }
+  // 📊 in einem Shop-Tab → eigenen Dashboard-Tab öffnen (oder Hinweis, wenn schon offen)
+  function openStandaloneDashboard() {
+    if (Date.now() - (GM_getValue('global:dashBeat', 0) || 0) < 6000) {
+      alert('Das QuickBuy-Dashboard ist bereits in einem anderen Tab geöffnet.\n\n(Adresse: ' + DASH_URL + ')');
+      return;
+    }
+    openTab(DASH_URL, true);
+  }
   function openDashboard() {
+    if (!STANDALONE) return openStandaloneDashboard();
     if (window.top !== window) return;
-    GM_setValue('global:dashOpen', true);
     if (document.getElementById('qb-dash')) return;
     if (!document.getElementById('qb-dash-css')) {
       addCss(DASH_CSS, 'qb-dash-css');
     }
-    const d = document.createElement('div'); d.id = 'qb-dash'; document.body.appendChild(d);
-    d.addEventListener('mousedown', (e) => { if (e.target === d) closeDashboard(); });
-    if (!window.__qbEsc) { window.__qbEsc = true; document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('qb-dash')) closeDashboard(); }); }
+    const d = document.createElement('div'); d.id = 'qb-dash'; d.className = 'page'; document.body.appendChild(d);
     renderDash(true);
     dashTimer = setInterval(() => renderDash(false), 1500);
   }
-  function closeDashboard() {
-    GM_setValue('global:dashOpen', false);
-    clearInterval(dashTimer);
-    const d = document.getElementById('qb-dash'); if (d) d.remove();
-  }
+  function closeDashboard() { if (STANDALONE) window.close(); }
 
   let dashTab = 'home';
-  function shopOfUrl(url) { return Object.keys(SHOPS).find((id) => SHOPS[id].productUrl.test(url)) || null; }
+  function shopOfUrl(url) { return SHOP_IDS().find((id) => SHOPS[id].productUrl.test(url)) || null; }
   function attentionItems() {
     const dismissed = GM_getValue('global:dismissed', 0);
     const out = [];
-    for (const id of Object.keys(SHOPS)) {
+    for (const id of SHOP_IDS()) {
       for (const e of logFor(id).slice(0, 15)) {
         const isNeed = /kasse erreicht|bitte selbst|anmeldung klappt nicht|manuell|nicht bestätigt|über limit|nicht im warenkorb|weitere artikel|nicht angemeldet|verfügbar – alarm/i.test(e.msg);
         if (!(e.type === 'err' || (e.type === 'warn' && isNeed) || isNeed)) continue;
@@ -2219,7 +2230,7 @@
     const ae = document.activeElement;
     if (!force && d.contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return;
     if (!force && d.querySelector('textarea')) return;
-    const ids = Object.keys(SHOPS);
+    const ids = SHOP_IDS();
     const used = ids.filter((id) => gv(id, 'products', []).length || gv(id, 'running', false));
     const hist = GM_getValue('global:history', []);
     const bought = hist.filter((h) => h.result === 'success');
@@ -2326,7 +2337,7 @@
         ${att.length ? `<span class="sum warn">⚠️ ${att.length}</span>` : ''}
         <span class="sp"></span>
         <button class="${anyRun ? 'stop' : 'go'} big" data-g="${anyRun ? 'stopall' : 'startall'}">${anyRun ? '■ Alle stoppen' : '▶ Alle starten'}</button>
-        <button class="x" data-g="close" title="Schließen (Esc)">✕</button>
+        <span class="muted" title="Eigener Dashboard-Tab – lädt nie neu, steuert alle Shop-Tabs">Live · eigener Tab</span>
       </div>
       <div class="tabs">${tabs.map(([k, l]) => `<button class="tb ${dashTab === k ? 'act' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
       <div class="d-body">${dashTab === 'home' ? home : dashTab === 'log' ? logTab : dashTab === 'hist' ? histTab : setTab}</div>
@@ -2467,9 +2478,19 @@
     }, 3000);
   }
 
-  try { GM_registerMenuCommand('📊 QuickBuy Dashboard öffnen', openDashboard); } catch (e) {}
+  try { GM_registerMenuCommand('📊 QuickBuy Dashboard öffnen', openStandaloneDashboard); } catch (e) {}
+  if (STANDALONE) {
+    // example.com komplett durch das Dashboard ersetzen
+    if (window.top !== window) return;
+    document.title = '📊 QuickBuy Dashboard';
+    document.documentElement.innerHTML = '<head><meta charset="utf-8"><title>📊 QuickBuy Dashboard</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#0b0c0f"></body>';
+    const beat = () => GM_setValue('global:dashBeat', Date.now());
+    beat(); setInterval(beat, 2000);
+    openDashboard();
+    console.log('[QuickBuy] Dashboard-Tab aktiv');
+    return;
+  }
   startRemoteWatch();
-  if (window.top === window && GM_getValue('global:dashOpen', false)) setTimeout(openDashboard, 800);
 
   console.log(`[QuickBuy] Version ${(GM_info && GM_info.script && GM_info.script.version) || '?'} aktiv auf ${location.hostname} → Shop: ${SHOP.name}`);
   main().catch((e) => { console.error('[QuickBuy] Fehler:', e); try { log(`Interner Fehler: ${e && e.message}`, 'err'); } catch (e2) {} });
