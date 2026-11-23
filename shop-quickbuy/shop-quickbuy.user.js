@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.8.1
+// @version      3.9.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -136,6 +136,10 @@
       finalOrder: [/^fortfahren\s+und\s+bezahlen$/i, /zahlungspflichtig\s+bestellen/i, /^jetzt\s+kaufen$/i, /^kaufen$/i],
       // Overlay nach "In den Warenkorb" (Versicherungsangebot etc.) wegklicken
       dismiss: [/^nein,?\s+danke$/i, /ohne\s+(versicherung|schutz|garantie)/i, /^weiter\s+ohne/i],
+      // Fenster "Sichere dein Gerät ab" (gesehen): immer "Ich verzichte auf den zusätzlichen Schutz" → "Weiter"
+      declineWarranty: true,
+      // Im Warenkorb nie bezahlte Zusatzleistungen angehakt lassen
+      cartUncheck: /plusgarantie|geräteschutz|garantie|versicherung|ersteinrichtung|einrichtung|aufbau|hausbesuch|service/i,
     },
     microsoft: {
       name: 'Microsoft Store',
@@ -952,6 +956,27 @@
     location.href = `${origin}/checkout`;
   }
 
+  /* ---------- Geräteschutz / Garantie-Angebote immer ablehnen ---------- */
+  const DECLINE_RE = /ich\s+verzichte|kein(en)?\s+(zusätzlichen\s+)?schutz|ohne\s+(zusätzlichen\s+)?(schutz|garantie|versicherung)|nein,?\s+danke/i;
+  async function declineWarranty() {
+    const opt = await waitFor(() => deepAll().find((e) => /^(LABEL|INPUT|DIV|SPAN|BUTTON|P)$/.test(e.tagName) && visible(e) &&
+      elText(e).length < 90 && DECLINE_RE.test(elText(e)) && !/plusgarantie|\+\s*\d/i.test(elText(e))), 6000, 250);
+    if (!opt) return false;
+    const target = opt.closest('label') || opt;
+    clickEl(target);
+    await sleep(600);
+    const radio = (target.querySelector && target.querySelector('input[type="radio"],input[type="checkbox"]')) || (opt.tagName === 'INPUT' ? opt : null);
+    if (radio && !radio.checked) { radio.click(); await sleep(400); }
+    // Sicherheitscheck: keine Garantie ausgewählt
+    const wrong = deepAll().find((e) => e.tagName === 'INPUT' && /radio|checkbox/.test(e.type) && e.checked && /plusgarantie|garantie|absicherung/i.test(radioLabel(e)) && !DECLINE_RE.test(radioLabel(e)));
+    if (wrong) { clickEl(wrong); await sleep(400); }
+    const box = opt.closest('[role="dialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="layer" i], [class*="overlay" i]') || document;
+    const next = [...box.querySelectorAll('button')].find((b) => /^(weiter|fortfahren|ok|übernehmen)$/i.test(elText(b)) && visible(b) && !isDisabled(b));
+    if (next) { clickEl(next); await sleep(1200); }
+    log('Geräteschutz abgelehnt („Ich verzichte auf den zusätzlichen Schutz“)', 'info');
+    return true;
+  }
+
   async function runProduct() {
     if (SHOP.shopify) return runShopify();
     await sleep(1500);
@@ -1042,6 +1067,7 @@
     clickEl(btn);
 
     await sleep(1500);
+    if (SHOP.declineWarranty) await declineWarranty();
     if (SHOP.dismiss) {
       const d = findClickable(SHOP.dismiss);
       if (d) { clickEl(d); log('Zusatzangebot abgelehnt'); await sleep(800); }
@@ -1141,6 +1167,18 @@
         return restartLoop('Produkt nicht mehr im Warenkorb', false);
       }
       setInCart(true);
+
+      // Bezahlte Zusatzleistungen (PlusGarantie, Einrichtung …) abwählen
+      if (SHOP.cartUncheck) {
+        for (const cb of deepAll().filter((e) => e.tagName === 'INPUT' && /checkbox|radio/.test(e.type) && e.checked)) {
+          const t = radioLabel(cb);
+          if (SHOP.cartUncheck.test(t) && !DECLINE_RE.test(t)) {
+            clickEl((cb.labels && cb.labels[0]) || cb);
+            log(`Zusatzleistung abgewählt: ${t.slice(0, 50)}`, 'info');
+            await sleep(1500);
+          }
+        }
+      }
 
       // Menge auf 1 korrigieren
       if (item.qty > 1 && item.minus) {
