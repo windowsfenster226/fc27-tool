@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.5.5
+// @version      3.5.6
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2009,6 +2009,7 @@
       for (const e of logFor(id).slice(0, 15)) {
         const isNeed = /kasse erreicht|bitte selbst|anmeldung klappt nicht|manuell|nicht bestätigt|über limit|nicht im warenkorb|weitere artikel|nicht angemeldet|verfügbar – alarm/i.test(e.msg);
         if (!(e.type === 'err' || (e.type === 'warn' && isNeed) || isNeed)) continue;
+        if (/gestoppt:\s*(manuell|vom dashboard)|probelauf erfolgreich/i.test(e.msg)) continue;   // selbst gestoppt = kein Problem
         if (!e.at || e.at <= dismissed || Date.now() - e.at > 3 * 3600e3) continue;
         out.push({ ...e, id });
       }
@@ -2058,7 +2059,7 @@
       ${att.length ? `<div class="att"><div class="atth">⚠️ Braucht dich <button class="lnk" data-g="dismiss">alles erledigt</button></div>
         ${att.map((e) => `<div class="atti t-${e.type}"><b>${esc(SHOPS[e.id].name)}</b> ${esc(e.msg)} <span class="muted">${esc(e.ts)}</span></div>`).join('')}</div>` : ''}
       <div class="add">
-        <input type="text" id="d-url" placeholder="➕ Produkt-URL einfügen – Otto, MediaMarkt, Saturn, Microsoft, PlayStation oder Amazon">
+        <input type="text" id="d-url" placeholder="➕ Produkt-URL einfügen – Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon oder FNAC Pro">
         <input type="text" id="d-max" placeholder="Max. €" style="width:90px;flex:none">
         <input type="text" id="d-qty" placeholder="Stk." title="Stückzahl (∞ = so viele wie möglich)" style="width:60px;flex:none">
         <button class="go" data-g="add">Hinzufügen</button>
