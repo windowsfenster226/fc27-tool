@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.5.1
+// @version      3.5.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1022,6 +1022,9 @@
     log('Warenkorb ok → Zur Kasse', 'buy');
     S.set('stage', 'checkout'); S.set('payOk', false);
     clickEl(btn);
+    // Viele Shops (z. B. MediaMarkt) wechseln zur Kasse, ohne die Seite neu zu laden → hier selbst weitermachen
+    const inCheckout = await waitFor(() => SHOP.isCheckout(location.pathname), 10000, 250);
+    if (inCheckout) return runCheckout();
   }
 
   function backToBasket(msg) {
@@ -1032,7 +1035,12 @@
   const NEXT_STEP = [/^weiter$/i, /^weiter\s+zur\s+(zahlung|zahlungsart|übersicht|bestellübersicht|prüfung)$/i,
     /^zur\s+(bestellübersicht|übersicht|zahlung)$/i, /^weiter\s+zum\s+(bezahlen|nächsten\s+schritt)$/i, /^bestellung\s+prüfen$/i];
 
+  let checkoutRunning = false;
   async function runCheckout() {
+    if (checkoutRunning) return; checkoutRunning = true;
+    try { return await runCheckoutInner(); } finally { checkoutRunning = false; }
+  }
+  async function runCheckoutInner() {
     await sleep(2000);
     const oos = cartOosText();
     if (oos) return backToBasket(`Kasse meldet „${oos}“`);
@@ -2203,6 +2211,7 @@
     if (window.top !== window) return;
     S.set('heartbeat', Date.now());
     let snap = '';
+    let lastPath = location.pathname;
     setInterval(() => {
       S.set('heartbeat', Date.now());
       // Seite hat das Panel/Styles entfernt (z. B. Neuaufbau durch die Shop-App) → wiederherstellen
@@ -2218,6 +2227,13 @@
         }
       }
       if (!running && busy && !bgActive) busy = false;
+      // Seite hat ohne Neuladen gewechselt (Single-Page-App) → Ablauf für die neue Seite starten
+      if (running && location.pathname !== lastPath) {
+        lastPath = location.pathname;
+        const st = S.get('stage');
+        if (st === 'checkout' && SHOP.isCheckout(location.pathname) && !checkoutRunning) runCheckout();
+        else if (st === 'basket' && SHOP.isBasket(location.pathname)) runBasket();
+      }
       // Panel aktualisieren, wenn im Dashboard etwas geändert wurde
       const p = document.getElementById('qb-panel');
       const now = JSON.stringify([running, S.get('autoOrder'), S.get('products').length, S.get('payMethod'), S.get('dropAt')]);
