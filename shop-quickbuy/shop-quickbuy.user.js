@@ -1,12 +1,14 @@
 // ==UserScript==
-// @name         Shop QuickBuy – Otto, MediaMarkt, Saturn, Microsoft, PlayStation & Amazon
+// @name         Shop QuickBuy – Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.2.1
+// @version      3.3.0
 // @description  Überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
 // @match        https://www.saturn.de/*
 // @match        https://www.amazon.de/*
+// @match        https://www.fnacpro.com/*
+// @match        https://fnacpro.com/*
 // @match        https://www.microsoft.com/de-de/*
 // @match        https://www.playstation.com/de-de/*
 // @match        https://checkout.playstation.com/*
@@ -180,6 +182,23 @@
     toCheckout: [], finalOrder: [],
     alertOnly: true,
     minInterval: 30,
+  };
+
+  // FNAC Pro (Beta): Seitenaufbau noch unbekannt (Captcha-Schutz) → erst einmal Alarm-Modus
+  SHOPS.fnacpro = {
+    name: 'FNAC Pro',
+    host: /(^|\.)fnacpro\.com$/,
+    productUrl: /^https:\/\/(www\.)?fnacpro\.com\/(?!$|\?|#)[^?#]+/i,
+    productHint: 'https://www.fnacpro.com/…',
+    productKey: (u) => { const m = u.match(/\/(a|mp)(\d{5,})/i); return m ? m[2] : stripUrl(u).replace(/^https:\/\/(www\.)?fnacpro\.com\//i, '').replace(/\/+$/, '').toLowerCase(); },
+    basketUrl: '', isBasket: (p) => /panier|basket|cart|warenkorb/i.test(p), isCheckout: (p) => /commande|checkout|kasse|paiement/i.test(p),
+    addToCart: [/^ajouter\s+au\s+panier$/i, /^in\s+den\s+warenkorb$/i, /^acheter$/i, /^ajouter$/i, /^commander$/i, /^add\s+to\s+(cart|basket)$/i],
+    oos: [/rupture\s+de\s+stock/i, /indisponible/i, /épuisé/i, /plus\s+disponible/i, /ausverkauft/i, /nicht\s+verfügbar/i, /out\s+of\s+stock/i],
+    hardOos: [/rupture\s+de\s+stock/i, /article\s+indisponible/i, /produit\s+indisponible/i],
+    toCheckout: [], finalOrder: [],
+    alertOnly: true,
+    minInterval: 30,
+    beta: true,
   };
 
   // Gemeinsame Texte für alle Shops
@@ -775,6 +794,7 @@
       }
       if (S.get('loginWait')) { S.set('loginWait', 0); S.set('loginAlerted', false); log('Angemeldet ✔ – weiter geht’s', 'ok'); }
     }
+    if (captchaPresent()) return handleCaptcha();
     if (isOOS()) return scheduleReload();
 
     if (SHOP.sellerOf && S.get('onlyOwn')) {
@@ -1234,6 +1254,33 @@
     psRunning = false;
   }
 
+  /* ---------- Captcha (DataDome, Amazon, reCAPTCHA, Cloudflare) – wird NIE automatisch gelöst ---------- */
+  function captchaPresent() {
+    return !!document.querySelector('iframe[src*="captcha-delivery.com"], script[src*="captcha-delivery.com"], form[action*="validateCaptcha"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], #challenge-form, iframe[src*="challenges.cloudflare.com"]');
+  }
+  let captchaWatch = false;
+  function handleCaptcha() {
+    if (captchaWatch) return; captchaWatch = true;
+    busy = true;
+    const last = S.get('captchaAt') || 0;
+    if (Date.now() - last > 10 * 60000) {
+      S.set('captchaAt', Date.now());
+      notify(`QuickBuy ${SHOP.name}`, 'Captcha – bitte im Tab lösen, danach geht es automatisch weiter');
+      discord('error', `**Captcha bei ${SHOP.name}** – bitte im offenen Tab lösen. Danach macht das Script automatisch weiter.`);
+    }
+    log('Captcha erkannt – warte, bis du es gelöst hast (wird nie automatisch gelöst)', 'warn');
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (!S.get('running')) { clearInterval(iv); return; }
+      if (!captchaPresent()) {
+        clearInterval(iv); log('Captcha gelöst ✔ – weiter geht’s', 'ok');
+        setTimeout(() => { S.set('navAt', Date.now()); location.href = cur().url || location.href; }, 2500);
+      } else if (Date.now() - t0 > 15 * 60000) {
+        clearInterval(iv); stop('Captcha seit 15 Min. nicht gelöst – gestoppt');
+      }
+    }, 3000);
+  }
+
   async function main() {
     if (SHOP.psFlow) {
       // Jeder Frame (auch die Einkaufswagen-Leiste) schaut regelmäßig, ob ein Checkout läuft
@@ -1244,6 +1291,7 @@
     renderPanel();
     if (!S.get('running')) return;
     busy = true;
+    if (captchaPresent()) return handleCaptcha();
     const path = location.pathname;
     const stage = S.get('stage');
 
@@ -1464,7 +1512,7 @@
 
         ${SHOP.alertOnly ? `<div class="qb-auto" style="cursor:default">
           <span style="font-size:18px">🔔</span>
-          <span><b>Modus: Nur Alarm</b><small>Bei ${SHOP.name} meldet das Script Verfügbarkeit (Ton + Discord) – kaufen machst du selbst</small></span>
+          <span><b>Modus: Nur Alarm${SHOP.beta ? ' (Beta)' : ''}</b><small>Bei ${SHOP.name} meldet das Script Verfügbarkeit (Ton + Discord) – kaufen machst du selbst${SHOP.beta ? '. Bitte einmal 🔍 Test + 🧩 Seite analysieren und an Claude schicken.' : ''}</small></span>
         </div>` : ''}
         ${SHOP.stopAfterAdd ? `<div class="qb-auto" style="cursor:default">
           <span style="font-size:18px">🛒</span>

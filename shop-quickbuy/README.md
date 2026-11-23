@@ -1,6 +1,6 @@
 # Shop QuickBuy
 
-Tampermonkey-Userscript: Restock-Überwachung und Schnell-Checkout für Otto, MediaMarkt, Saturn, Microsoft Store, PlayStation und Amazon (nur Alarm), mit Gesamt-Dashboard.
+Tampermonkey-Userscript: Restock-Überwachung und Schnell-Checkout für Otto, MediaMarkt, Saturn, Microsoft Store, PlayStation, Amazon (nur Alarm) und FNAC Pro (Beta, nur Alarm), mit Gesamt-Dashboard.
 
 ## Installation / Updates
 
