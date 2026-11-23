@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy – Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon & FNAC Pro
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.3.0
+// @version      3.3.1
 // @description  Überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -22,6 +22,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_info
 // @grant        GM_openInTab
+// @grant        GM_addStyle
 // @connect      discord.com
 // @connect      discordapp.com
 // @updateURL    https://raw.githubusercontent.com/windowsfenster226/fc27-tool/quickbuy/shop-quickbuy/shop-quickbuy.user.js
@@ -194,7 +195,7 @@
     basketUrl: '', isBasket: (p) => /panier|basket|cart|warenkorb/i.test(p), isCheckout: (p) => /commande|checkout|kasse|paiement/i.test(p),
     addToCart: [/^ajouter\s+au\s+panier$/i, /^in\s+den\s+warenkorb$/i, /^acheter$/i, /^ajouter$/i, /^commander$/i, /^add\s+to\s+(cart|basket)$/i],
     oos: [/rupture\s+de\s+stock/i, /indisponible/i, /épuisé/i, /plus\s+disponible/i, /ausverkauft/i, /nicht\s+verfügbar/i, /out\s+of\s+stock/i],
-    hardOos: [/rupture\s+de\s+stock/i, /article\s+indisponible/i, /produit\s+indisponible/i],
+    hardOos: [/rupture\s+de\s+stock/i, /article\s+indisponible/i, /produit\s+indisponible/i, /stock\s+en\s+ligne\s+épuisé/i],
     toCheckout: [], finalOrder: [],
     alertOnly: true,
     minInterval: 30,
@@ -1462,12 +1463,20 @@
     return list;
   }
 
+  // Styles über Tampermonkey einfügen (funktioniert auch auf Seiten mit strenger CSP)
+  function addCss(css, id) {
+    if (document.getElementById(id)) return;
+    try { const el = GM_addStyle(css); if (el && el.setAttribute) el.id = id; if (el) return; } catch (e) {}
+    const st = document.createElement('style'); st.id = id; st.textContent = css; (document.head || document.documentElement).appendChild(st);
+  }
+
   function renderPanel() {
     if (window.top !== window) return;
+    if (!document.body) return;
     let p = document.getElementById('qb-panel');
     if (!p) {
       p = document.createElement('div'); p.id = 'qb-panel'; document.body.appendChild(p);
-      const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
+      addCss(CSS, 'qb-panel-css');
       try { const pos = JSON.parse(localStorage.getItem('qb-pos') || 'null');
         if (pos) Object.assign(p.style, { left: pos.l + 'px', top: pos.t + 'px', right: 'auto', bottom: 'auto' }); } catch (e) {}
       if (S.get('minimized')) p.classList.add('min');
@@ -1893,7 +1902,7 @@
     GM_setValue('global:dashOpen', true);
     if (document.getElementById('qb-dash')) return;
     if (!document.getElementById('qb-dash-css')) {
-      const st = document.createElement('style'); st.id = 'qb-dash-css'; st.textContent = DASH_CSS; document.head.appendChild(st);
+      addCss(DASH_CSS, 'qb-dash-css');
     }
     const d = document.createElement('div'); d.id = 'qb-dash'; document.body.appendChild(d);
     d.addEventListener('mousedown', (e) => { if (e.target === d) closeDashboard(); });
@@ -2143,6 +2152,8 @@
     let snap = '';
     setInterval(() => {
       S.set('heartbeat', Date.now());
+      // Seite hat das Panel/Styles entfernt (z. B. Neuaufbau durch die Shop-App) → wiederherstellen
+      if (!document.getElementById('qb-panel') && document.body) { try { renderPanel(); } catch (e) { console.error('[QuickBuy] Panel-Fehler:', e); } }
       const running = S.get('running');
       if (running && !busy) {
         busy = true;
@@ -2168,5 +2179,7 @@
   startRemoteWatch();
   if (window.top === window && GM_getValue('global:dashOpen', false)) setTimeout(openDashboard, 800);
 
-  main();
+  console.log(`[QuickBuy] Version ${(GM_info && GM_info.script && GM_info.script.version) || '?'} aktiv auf ${location.hostname} → Shop: ${SHOP.name}`);
+  main().catch((e) => { console.error('[QuickBuy] Fehler:', e); try { log(`Interner Fehler: ${e && e.message}`, 'err'); } catch (e2) {} });
+
 })();
