@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.15.1
+// @version      3.15.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -160,7 +160,8 @@
       toCheckout: [/^zur\s+kasse$/i, /^zur\s+kasse\s+gehen$/i, /weiter\s+zur\s+kasse/i],
       checkoutSelector: '[data-test="checkout-continue-button"]',
       // Zahlungsarten auf /checkout/payment (gesehen): Radio-Werte statt Texte
-      payValue: { card: 'CRECA', paypal: 'PAYPAL', invoice: 'KLARNA' },
+      payValue: { card: 'CRECA', paypal: 'PAYPAL', invoice: 'KLARNA', prepay: 'PIA' },   // live: Vorkasse = PIA
+      payConfirmSelector: '[data-test="start-select-payment"]',   // Zahlungsfenster auf der Übersicht: „Zahlungsmethode auswählen“
       // Übersicht (gesehen): Button aria-label "Bezahlmethode ändern" – daneben steht die gewählte Zahlungsart
       summaryPay: {
         change: () => deepAll().find((e) => e.tagName === 'BUTTON' && /bezahlmethode\s+ändern/i.test(e.getAttribute('aria-label') || '') && visible(e)),
@@ -1774,21 +1775,24 @@
       const f = findClickable(SHOP.finalOrder);
       if (f && !isDisabled(f)) {
         // Zahlungsseite wurde übersprungen (Shop merkt sich die letzte Zahlungsart) → auf der Übersicht prüfen
-        if (wantPay && !S.get('payOk') && SHOP.summaryPay) {
+        // Letzte Kontrolle IMMER auf der Übersicht: dort steht, womit wirklich bezahlt wird
+        // (live gesehen: Auswahl im Zahlungsfenster ohne „Zahlungsmethode auswählen“ blieb unwirksam)
+        if (wantPay && SHOP.summaryPay) {
           const want = PAY[S.get('payMethod')];
           await sleep(800);
           const t = SHOP.summaryPay.text();
           if (t && want.re.test(t) && !NEW_PAY.test(t)) {
+            if (!S.get('payOk') || payChangeTries) log(`Zahlungsart auf der Übersicht bestätigt: ${want.label} („${t.slice(0, 50)}“)`, 'info');
             S.set('payOk', true);
-            log(`Zahlungsart auf der Übersicht bestätigt: ${want.label} („${t.slice(0, 50)}“)`, 'info');
-          } else if (payChangeTries < 1) {
+          } else if (t) S.set('payOk', false);
+          if (t && !S.get('payOk') && payChangeTries < 2) {
             const c = SHOP.summaryPay.change();
             if (c) {
               payChangeTries++;
               log(`Übersicht zeigt andere Zahlungsart („${(t || '?').slice(0, 50)}“) → ändere auf ${want.label}`, 'buy');
               clickEl(c); await sleep(2500); continue;
             }
-          } else {
+          } else if (!S.get('payOk')) {
             log(`Zahlungsart auf der Übersicht: „${(t || 'nicht lesbar').slice(0, 60)}“`, 'warn');
           }
         }
@@ -1894,7 +1898,7 @@
     default:  { label: 'Wie im Konto (Standard)' },
     card:     { label: 'Kreditkarte', re: /\b(visa|mastercard|master\s*card|amex|american\s+express|kreditkarte|kartenzahlung|click\s+to\s+pay)\b|[*•·]{2,}\s*\d{4}/i },
     invoice:  { label: 'Rechnung (Klarna)', re: /rechnung|klarna/i },
-    prepay:   { label: 'Vorkasse / Überweisung', re: /vorkasse|überweisung/i },
+    prepay:   { label: 'Vorkasse / Überweisung', re: /vorkasse|(?<!direkt)überweisung/i },
     paypal:   { label: 'PayPal', re: /paypal/i },
   };
   const PAY_HEAD = /^(zahlungsmethoden?|zahlungsart(en)?|bezahlart|bezahlmethode|zahlung|zahlungsoptionen|wie\s+möchtest\s+du\s+(be)?zahlen\??)$/i;
@@ -1986,9 +1990,16 @@
     }
     if (opt) clickEl(opt);
     await sleep(2000);
-    const confirmBtn = findClickable([/^(übernehmen|bestätigen|auswählen|speichern|fertig)$/i]);
+    const confirmBtn = (SHOP.payConfirmSelector && [...document.querySelectorAll(SHOP.payConfirmSelector)].find((x) => visible(x) && !isDisabled(x)))
+      || findClickable([/^(übernehmen|bestätigen|auswählen|speichern|fertig)$/i, /^zahlungs(methode|art)\s+(auswählen|übernehmen|bestätigen|speichern)$/i]);
     if (confirmBtn) { clickEl(confirmBtn); await sleep(1500); }
     if (paySelected(want) === true) return { ok: true, msg: `Zahlungsart gewählt: ${want.label}` };
+    // Zahlungsfenster auf der Übersicht ist nach dem Bestätigen zu → dort steht jetzt die gewählte Zahlungsart
+    if (SHOP.summaryPay) {
+      await sleep(800);
+      const t = SHOP.summaryPay.text();
+      if (t && want.re.test(t) && !NEW_PAY.test(t)) return { ok: true, msg: `Zahlungsart gewählt: ${want.label} (Übersicht: „${t.slice(0, 40)}“)` };
+    }
     return { ok: false, msg: `Auswahl „${want.label}“ nicht bestätigt` };
   }
 
