@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.13.0
+// @version      3.13.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -73,7 +73,24 @@
       productHint: 'https://www.otto.de/p/…',
       productKey: (u) => { const m = stripUrl(u).match(/-(\d{6,})\/?$/); return m ? m[1] : stripUrl(u).split('/').filter(Boolean).pop(); },
       basketUrl: 'https://www.otto.de/order/basket',
+      // Warenkorb (live geprüft 24.11.2026): jede Position ist [data-qa="item"], Preis steckt im Shadow-DOM → Attribut retail-price (Cent)
+      cartReady: () => !!document.querySelector('[data-qa="item"]') || /ganz\s+schön\s+leer|warenkorb\s+ist\s+leer/i.test(document.body.innerText),
+      cartItems: () => [...document.querySelectorAll('[data-qa="item"]')].map((box) => {
+        const link = box.querySelector('[data-qa="articleNameLink"]');
+        const qd = box.querySelector('[data-qa="changeQuantity"]');
+        const pr = box.querySelector('[data-qa="pricingItem"]');
+        const cents = pr ? parseInt(pr.getAttribute('retail-price'), 10) : NaN;
+        return {
+          box, href: link ? link.href : '',
+          remove: box.querySelector('[data-qa="deleteBasketItemButton"], [data-qa="deleteButton"]'),
+          title: norm((link && (link.getAttribute('aria-label') || link.innerText)) || box.innerText.slice(0, 80)),
+          qty: qd ? parseInt(qd.getAttribute('value'), 10) || 1 : 1,
+          unitPrice: cents > 0 ? cents / 100 : 0, minus: null,
+        };
+      }),
       isBasket: (p) => /\/order\/basket/i.test(p),
+      // Kasse (live geprüft): eine Seite „Prüfen & Absenden“, Beträge ohne €-Zeichen → Gesamtsumme über data-qa
+      totalSelector: '[data-qa="grandTotalAmount"]',
       isCheckout: (p) => /\/order\/(checkout|ordering|payment|summary)|kasse|checkout/i.test(p),
       addToCart: [/^in\s+den\s+warenkorb$/i, /^in\s+den\s+warenkorb\s+legen$/i],
       oos: [new RegExp(NOT_FAST + 'ausverkauft', 'i'), /nicht\s+(mehr\s+)?lieferbar/i,
@@ -545,6 +562,11 @@
   }
 
   function getTotalPrice() {
+    if (SHOP.totalSelector) {
+      const el = document.querySelector(SHOP.totalSelector);
+      const m = el && norm(el.innerText || el.textContent || '').match(/(\d{1,3}(?:\.\d{3})*|\d+),(\d{2})/);
+      if (m) return parseFloat(m[1].replace(/\./g, '') + '.' + m[2]);
+    }
     const t = pageText();
     const m = t.match(/(gesamtsumme|gesamtbetrag|gesamtpreis|zu\s+zahlen(?:der\s+betrag)?|summe)[^€]{0,40}?((\d{1,3}(?:\.\d{3})*|\d+)(,\d{2}|,-{1,2})?\s*€)/i);
     return m ? parsePrice(m[2]) : null;
@@ -1353,16 +1375,19 @@
     }
 
     // Shop leitet evtl. selbst weiter (z. B. Microsoft "Jetzt kaufen") – kurz abwarten
-    const moved = await waitFor(() => location.href !== before, 4000);
+    // (nur echte Seitenwechsel zählen – Otto hängt z. B. nur „#oc-sheet…“ für die Hinzugefügt-Ebene an)
+    const noHash = (u) => String(u).split('#')[0];
+    const moved = await waitFor(() => noHash(location.href) !== noHash(before), 4000);
     if (moved && SHOP.isBasket(location.pathname)) return runBasket();
     if (moved && SHOP.isCheckout(location.pathname)) { S.set('stage', 'checkout'); return runCheckout(); }
-    if (!moved) location.href = SHOP.basketUrl;
+    if (!moved || !(SHOP.isBasket(location.pathname) || SHOP.isCheckout(location.pathname))) location.href = SHOP.basketUrl;
   }
 
   async function restartLoop(reason, tryRemove, item) {
     log(`${reason} → starte Loop neu`);
     if (tryRemove) {
-      const rm = (item && item.remove) || findClickable(COMMON.remove);
+      const many = (cartCountAny() || 0) > 1;
+      const rm = item ? item.remove : (many ? null : findClickable(COMMON.remove));
       if (rm) {
         clickEl(rm);
         await sleep(1500);
@@ -1371,7 +1396,7 @@
         setInCart(false);
         log('Nicht lieferbaren Artikel aus dem Warenkorb entfernt', 'info');
       } else {
-        log('Entfernen-Button nicht gefunden – Artikel bleibt im Warenkorb (wird nicht erneut hinzugefügt)', 'warn');
+        log('Artikel wird nicht entfernt (Knopf nicht eindeutig) – bleibt im Warenkorb und wird nicht erneut hinzugefügt', 'warn');
       }
     }
     S.set('stage', 'product');
@@ -1382,8 +1407,9 @@
   function findCartItem(items) {
     const key = keyOf(cur().url);
     const title = (S.get('curTitle') || '').toLowerCase().slice(0, 25);
-    return items.find((it) => (title && it.title.toLowerCase().includes(title)) ||
-      (key && key.length >= 5 && it.box.innerHTML.toLowerCase().includes(key))) || null;
+    // zuerst über die Artikelnummer im Link (eindeutig), erst dann über den Titel
+    return (key && key.length >= 5 && items.find((it) => (it.href || it.box.innerHTML).toLowerCase().includes(key)))
+      || items.find((it) => title && it.title.toLowerCase().includes(title)) || null;
   }
 
   function targetInCartGeneric() {
@@ -1392,6 +1418,24 @@
     if (key && key.length >= 5 && main.innerHTML.toLowerCase().includes(key)) return true;
     const title = (S.get('curTitle') || '').toLowerCase();
     return !!title && pageText().toLowerCase().includes(title.slice(0, 25));
+  }
+
+  // Container des Zielprodukts im Warenkorb (für Shops ohne eigene Warenkorb-Erkennung)
+  function targetCartBox() {
+    const key = keyOf(cur().url);
+    const title = (S.get('curTitle') || '').toLowerCase().slice(0, 25);
+    const main = document.querySelector('main') || document.body;
+    let anchor = null;
+    if (key && key.length >= 5) anchor = [...main.querySelectorAll('a[href]')].find((a) => a.href.toLowerCase().includes(key));
+    if (!anchor && title) anchor = [...main.querySelectorAll('a, h2, h3, h4, p, span')].find((e) => e.childElementCount < 4 && norm(e.innerText || '').toLowerCase().includes(title));
+    if (!anchor) return null;
+    let n = anchor;
+    for (let i = 0; i < 12 && n && n !== main; i++) {
+      n = n.parentElement;
+      if (!n || n === main || norm(n.innerText || '').length > 4000) break;
+      if ([...n.querySelectorAll('button, a, [role="button"]')].some((b) => COMMON.remove.some((r) => r.test(elText(b)) || r.test(b.getAttribute('aria-label') || '')))) return n;
+    }
+    return null;
   }
 
   function wrongItemStop() {
@@ -1453,7 +1497,7 @@
 
       // Preis im Warenkorb nochmal prüfen (letzte Sicherung vor der Kasse)
       const maxP = Number(cur().maxPrice) || 0;
-      const itemPrice = parsePrice(norm(item.box.innerText));
+      const itemPrice = item.unitPrice ? item.unitPrice * Math.max(1, item.qty) : parsePrice(norm(item.box.innerText));
       if (maxP && itemPrice && itemPrice / Math.max(1, item.qty) > maxP) {
         log(`Preis im Warenkorb ${fmtEur(itemPrice)} € > Max ${fmtEur(maxP)} € – entferne Artikel`, 'err');
         discord('error', `Preis im Warenkorb **${fmtEur(itemPrice)} €** über Limit **${fmtEur(maxP)} €** – Artikel entfernt.`);
@@ -1513,8 +1557,20 @@
           }
         }
       }
-      const oos = cartOosText();
-      if (oos) return restartLoop(`Warenkorb meldet „${oos}“`, true);
+      const box = targetCartBox();
+      if (box) {
+        const t = norm(box.innerText);
+        const hit = COMMON.cartOos.find((p) => p.test(t));
+        if (hit) {
+          const rm = [...box.querySelectorAll('button, a, [role="button"]')].find((b) => COMMON.remove.some((r) => r.test(elText(b)) || r.test(b.getAttribute('aria-label') || '')));
+          return restartLoop(`Warenkorb meldet „${t.match(hit)[0]}“`, true, { remove: rm || null });
+        }
+      } else {
+        const oos = cartOosText();
+        const c = cartCountAny();
+        if (oos && c !== null && c > 1) log(`Warenkorb meldet „${oos}“ – steht vermutlich bei einem anderen Artikel, wird ignoriert`, 'warn');
+        else if (oos) return restartLoop(`Warenkorb meldet „${oos}“`, true);
+      }
     }
 
     const btn = await waitFor(() => {
