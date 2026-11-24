@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.14.2
+// @version      3.15.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -121,6 +121,17 @@
       hardOos: [/leider\s+keine\s+lieferung\s+möglich/i],
       priceSelector: '[data-test="mms-product-price"]',
       retryAdd: true,
+      // Lagerstatus im Hintergrund (live geprüft 24.11.2026): das erste JSON-LD-Produkt ist der Hauptartikel
+      // (PS5 Pro/Xbox: OutOfStock, Kabel: InStock). Nur Marktplatz-Angebot („onlineStatus“: MP_OFFER) zählt als nicht verfügbar,
+      // wenn „Nur Shop selbst“ an ist. Prüfung dauerte live 70–140 ms statt >10 s Neuladen.
+      bgCheck: true,
+      bgParse: (html) => {
+        if (S.get('onlyOwn') && /\\?"onlineStatus\\?"\s*:\s*\\?"MP_OFFER/.test(html) && !/\\?"onlineStatus\\?"\s*:\s*\\?"AVAILABLE/.test(html)) return 'out';
+        // Produktdaten stecken als escaptes JSON im Seitenzustand (kein eigenes JSON-LD-Skript) → erstes Vorkommen = Hauptartikel
+        const m = html.match(/\\?"availability\\?"\s*:\s*\\?"https?:\/\/schema\.org\/(\w+)/);
+        if (!m) return null;
+        return /InStock|PreOrder|LimitedAvailability|OnlineOnly/i.test(m[1]) ? 'in' : /OutOfStock|SoldOut|Discontinued/i.test(m[1]) ? 'out' : null;
+      },
       totalSelector: '[data-test="checkout-total"]',   // Übersicht (live): Gesamtsumme inkl. Versand
       // Marktplatz-Händler erkennen ("Verkauf und Versand durch <Händler>")
       sellerOf: () => { const m = pageText().match(/verkauf\s+und\s+versand\s+durch:?\s+(.{2,40}?)(?=\s+(finanzierung|in\s+den\s+warenkorb|inkl|\d|$))/i); return m ? norm(m[1]) : null; },
@@ -995,10 +1006,13 @@
     }
     try {
       const r = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      if (r.status === 404 || r.status === 410) return 'out';   // Artikel (vorerst) aus dem Sortiment – live bei Saturn gesehen (410)
       if (!r.ok) return 'err';
       const html = await r.text();
+      lastBgHtml = html;
       // Weiterleitung auf eine andere Seite (Suche, anderes Produkt) → Seite laden und dort entscheiden
       if (r.redirected && keyOf(r.url) !== keyOf(url)) return 'err';
+      if (SHOP.bgParse) { const v = SHOP.bgParse(html); if (v) return v; }
       const doc = new DOMParser().parseFromString(html, 'text/html');
       for (const sc of doc.querySelectorAll('script[type="application/ld+json"]')) {
         let d; try { d = JSON.parse(sc.textContent); } catch (e) { continue; }
@@ -1010,9 +1024,16 @@
           if (/OutOfStock|SoldOut|Discontinued/i.test(av)) return 'out';
         }
       }
-      if (SHOP.bgParse) { const v = SHOP.bgParse(html); if (v) return v; }
       return 'err';
     } catch (e) { return 'err'; }
+  }
+  let lastBgHtml = '';
+  // Preis aus dem Hintergrund-Abruf (erstes Angebot = Hauptartikel; auch als escaptes JSON) – nur zur Vorab-Prüfung,
+  // die echte Preisprüfung passiert weiterhin auf der Produktseite
+  function bgPrice(html) {
+    const m = String(html || '').match(/\\?"offers\\?"\s*:\s*\{[^}]*?\\?"price\\?"\s*:\s*\\?"?(\d+(?:\.\d+)?)/);
+    const v = m ? parseFloat(m[1]) : NaN;
+    return v > 0 ? v : null;
   }
   let bgActive = false;
   async function bgLoop() {
@@ -1040,6 +1061,13 @@
           const st = await bgStatus(list[i].url);
           const tag = `[${i + 1}/${list.length} ${shortName(list[i].url)}]`;
           if (st === 'in') {
+            const bp = SHOP.shopify ? null : bgPrice(lastBgHtml);
+            const mx = Number(list[i].maxPrice) || 0;
+            if (bp && mx && bp > mx * 1.02) {      // deutlich über dem Höchstpreis → Seite gar nicht erst laden
+              log(`${tag} Hintergrund: verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos');
+              if (i < list.length - 1) await sleep(700 + Math.random() * 800);
+              continue;
+            }
             log(`${tag} Hintergrund: verfügbar! → öffne Seite`, 'ok');
             S.set('idx', i); S.set('navAt', Date.now()); location.href = list[i].url; return;
           }
@@ -3733,8 +3761,33 @@
 
   /* ---------- Fernsteuerung: dieser Tab reagiert auf Start/Stop aus dem Dashboard ---------- */
   const TAB_START = Date.now();
+
+  /* ---------- Hintergrundaufgaben ohne Dashboard ----------
+   * Discord-Befehle, Radar, Tab-Wächter und Selbsttest laufen im Dashboard-Tab. Ist der zu, übernimmt GENAU EIN Shop-Tab
+   * (Absprache über eine „Leitung“ in GM-Storage, 20 s gültig). Die Tab-Kennung bleibt über Neuladen erhalten (sessionStorage),
+   * damit ein Shop, der jede Runde neu lädt, seine Leitung behält. */
+  const TAB_ID = (() => { try { let v = sessionStorage.getItem('qbTabId'); if (!v) { v = Math.random().toString(36).slice(2, 10); sessionStorage.setItem('qbTabId', v); } return v; } catch (e) { return Math.random().toString(36).slice(2, 10); } })();
+  let choreTicks = 0;
+  function choresTick() {
+    if (Date.now() - (GM_getValue('global:dashBeat', 0) || 0) < 10000) { choreTicks = 0; return; }   // Dashboard offen → macht es selbst
+    const lease = GM_getValue('global:choresLease', null);
+    if (lease && lease.id !== TAB_ID && Date.now() - lease.at < 20000) { choreTicks = 0; return; }
+    GM_setValue('global:choresLease', { id: TAB_ID, at: Date.now(), shop: SHOP_ID });
+    // erst ab dem zweiten Durchgang handeln – so gewinnt bei gleichzeitigem Zugriff nur ein Tab
+    if (choreTicks++ === 0) return;
+    const mine = GM_getValue('global:choresLease', null);
+    if (!mine || mine.id !== TAB_ID) { choreTicks = 0; return; }
+    botPoll().catch((e) => console.error('[QuickBuy] Discord:', e));
+    if (choreTicks % 5 === 0) {
+      try { watchdog(); } catch (e) { console.error('[QuickBuy] Wächter:', e); }
+      try { reportTick(); } catch (e) { console.error('[QuickBuy] Selbsttest:', e); }
+      radarTick().catch((e) => console.error('[QuickBuy] Radar:', e));
+    }
+  }
+
   function startRemoteWatch() {
     if (window.top !== window) return;
+    { const tick = () => later(4000, () => { try { choresTick(); } catch (e) { console.error('[QuickBuy]', e); } tick(); }); setTimeout(tick, 1500 + Math.random() * 1500); }
     S.set('heartbeat', Date.now());
     let snap = '';
     let lastPath = location.pathname;
