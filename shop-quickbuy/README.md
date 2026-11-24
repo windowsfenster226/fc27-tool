@@ -26,3 +26,7 @@ Einstellungen, Produkte, Kaufhistorie und Discord-Webhook werden nur lokal im Br
 ## Neu in 3.13.0 – Steuerung per Discord
 
 Eigener Discord-Bot, das Dashboard liest einen Kanal mit und führt Befehle aus (`!status`, `!start`, `!stop`, `!add`, `!max`, `!entfernen`, `!auto`, `!zahlung`, `!drop`, `!pause`, `!budget`, `!heute`, `!log`, `!radar`, `!selbsttest`, `!hilfe`). Kritische Änderungen (Auto-Bestellung an, Budget erhöhen, Start mit Auto-Bestellung) brauchen `!ja`. Nur eingetragene Nutzer-IDs dürfen steuern; der Bot-Token bleibt im Browser und ist nicht im Backup.
+
+## Neu in 3.14.0 – Amazon-Kaufprozess
+
+Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kaufen“): nur „In den Einkaufswagen“ (nie 1-Click), nur „Verkauf durch Amazon“, Preis immer inkl. MwSt. (auch bei Business-Konten), Zwischenseiten werden übersprungen, Höchstpreis wird auf Produktseite, im Einkaufswagen und bei der Gesamtsumme geprüft.

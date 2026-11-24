@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.13.3
+// @version      3.14.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -223,30 +223,62 @@
   };
 
   // Amazon: nur Alarm (Amazon-Kasse wird nicht automatisiert)
+  // Amazon (live geprüft 24.11.2026, auch mit Business-Konto). NUR „In den Einkaufswagen“ – nie „Jetzt kaufen“ (1-Click bestellt sofort!)
   SHOPS.amazon = {
     name: 'Amazon',
     host: /(^|\.)amazon\.de$/,
     productUrl: /^https:\/\/www\.amazon\.de\/(?:[^?#]*\/)?(?:dp|gp\/product)\/[A-Z0-9]{10}/i,
     productHint: 'https://www.amazon.de/dp/XXXXXXXXXX',
     productKey: (u) => { const m = u.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i); return m ? m[1].toLowerCase() : stripUrl(u); },
-    basketUrl: '', isBasket: () => false, isCheckout: () => false,
-    addToCart: [/^in\s+den\s+einkaufswagen$/i, /^jetzt\s+kaufen$/i],
-    availableFn: () => !!document.querySelector('#add-to-cart-button, #buy-now-button') &&
+    addToCart: [/^in\s+den\s+einkaufswagen$/i],
+    buyFilter: (el) => el.id === 'add-to-cart-button' || !!el.closest('#addToCart_feature_div, #add-to-cart-button'),
+    availableFn: () => !!document.querySelector('#add-to-cart-button') &&
       !/derzeit\s+nicht\s+verfügbar|nicht\s+auf\s+lager|currently\s+unavailable/i.test((document.querySelector('#availability') || {}).innerText || ''),
     oos: [/derzeit\s+nicht\s+verfügbar/i, /nicht\s+auf\s+lager/i],
-    priceSelector: '#corePrice_feature_div .a-offscreen, #corePriceDisplay_desktop_feature_div .a-offscreen, #apex_desktop .a-offscreen',
+    // Preis immer inkl. MwSt. (Business-Konten zeigen groß den Nettopreis)
+    priceFn: () => {
+      const inp = document.getElementById('items[0.base][customerVisiblePrice][amount]');
+      const v = inp && parseFloat(inp.value);
+      if (v > 0) return v;
+      const el = document.querySelector('#corePrice_feature_div .a-offscreen, #corePriceDisplay_desktop_feature_div .a-offscreen, #apex_desktop .a-offscreen');
+      return el ? parsePrice(norm(el.textContent)) : null;
+    },
     sellerOf: () => {
-      const box = document.querySelector('#merchantInfoFeature_feature_div, #tabular-buybox, #merchant-info');
-      const t = box ? norm(box.innerText) : '';
+      const t = norm([...document.querySelectorAll('#merchant-info, #merchantInfoFeature_feature_div, #tabular-buybox, #shipsFromSoldByODF_feature_div, #offerDisplayFeatures_desktop, [offer-display-feature-name="desktop-merchant-info"]')]
+        .map((e) => e.innerText || '').join(' '));
       if (!t) return null;
-      if (/verkäufer\s*:?\s*amazon|verkauf\s+(und\s+versand\s+)?durch\s+amazon/i.test(t)) return 'Amazon';
-      const m = t.match(/verkäufer\s*:?\s*([^\n]{2,40}?)(?=\s{2,}|\s+(rückgaben|zahlung|versand|$))/i);
+      if (/verkauft?\b[^.]{0,50}?durch\s+amazon|verkäufer\s*:?\s*amazon/i.test(t)) return 'Amazon';
+      const m = t.match(/(?:verkäufer|verkauft\s+(?:von|durch))\s*:?\s*([^\n.]{2,40}?)(?=\s{2,}|\s+(rückgaben|zahlung|versand|und)|\.|$)/i);
       return m ? norm(m[1]) : null;
     },
-    ownSeller: /amazon/i,
-    toCheckout: [], finalOrder: [],
-    alertOnly: true,
+    sellerRequired: true,     // Verkäufer nicht erkennbar → nicht kaufen
+    ownSeller: /^amazon/i,
+    declineWarranty: true,    // „Schutzplan hinzufügen?“ → „Nein, danke“
+    cartCount: () => { const e = document.querySelector('#nav-cart-count'); const n = e && parseInt(e.innerText, 10); return Number.isFinite(n) ? n : null; },
+    basketUrl: 'https://www.amazon.de/gp/cart/view.html',
+    basketRedirect: (p) => /\/cart\/smart-wagon|\/cart\/add-to-cart|\/gp\/huc\//i.test(p),   // Zwischenseite nach dem Hinzufügen
+    isBasket: (p) => /^\/gp\/cart\/view|^\/cart\/?$|\/cart\/smart-wagon|\/gp\/huc\//i.test(p),
+    isCheckout: (p) => /^\/checkout\/|\/gp\/buy\//i.test(p),
+    cartReady: () => !!document.querySelector('#sc-active-cart'),
+    // (gelöschte Positionen bleiben als „wurde entfernt“ stehen → data-removed)
+    cartItems: () => [...document.querySelectorAll('#sc-active-cart [data-itemtype="active"][data-asin]')].filter((b) => b.getAttribute('data-removed') !== 'true' && !/wurde\s+entfernt/i.test(b.innerText || '')).map((box) => ({
+      box, href: `https://www.amazon.de/dp/${box.getAttribute('data-asin')}`,
+      title: norm(box.getAttribute('data-producttitle') || ''),
+      qty: parseInt(box.getAttribute('data-quantity'), 10) || 1,
+      unitPrice: parseFloat(box.getAttribute('data-price')) || 0,
+      remove: box.querySelector('input[data-feature-id="item-delete-button"], input[name^="submit.delete-active"], input[name^="submit.delete"]'),
+      // „−“ löscht bei Menge 1 den Artikel → nur bei Menge > 1 anbieten
+      minus: (parseInt(box.getAttribute('data-quantity'), 10) || 1) > 1 ? box.querySelector('button[data-action="a-stepper-decrement"]') : null,
+    })),
+    checkoutSelector: '[name="proceedToRetailCheckout"]',
+    // Zwischenseite „Benötigst du noch etwas?“ (/checkout/byg) → „Zur Kasse gehen“
+    nextSelector: '[name="checkout-byg-ptc-button"]',
+    nextStep: [/^zur\s+kasse\s+gehen$/i, /^weiter\s+zur\s+kasse$/i],
+    toCheckout: [/^zur\s+kasse(\s+gehen)?$/i, /^proceed\s+to\s+checkout$/i],
+    // Kasse (eine Seite, /checkout/p/…/spc): Button input#placeOrder „Jetzt kaufen“
+    finalOrder: [/^jetzt\s+kaufen$/i, /^bestellung\s+aufgeben$/i, /^bestellung\s+abschicken$/i],
     minInterval: 30,
+    beta: true,
   };
 
   // FNAC Pro (Beta): Seitenaufbau noch unbekannt (Captcha-Schutz) → erst einmal Alarm-Modus
@@ -514,6 +546,7 @@
   }
 
   function getProductPrice() {
+    if (SHOP.priceFn) { const v = SHOP.priceFn(); if (v) return { price: v, src: 'Anzeige' }; }
     if (SHOP.priceSelector) {
       const cands = deepAll().filter((e) => e.matches && e.matches(SHOP.priceSelector));
       const el = cands.find(visible) || cands[0];
@@ -1241,7 +1274,7 @@
     }
     return null;
   }
-  const ADDED_RE = /(wurde|wurden|ist)\s+(erfolgreich\s+)?(in\s+den|zum|dem)\s+(warenkorb|einkaufswagen)|zum\s+warenkorb\s+hinzugefügt|in\s+den\s+warenkorb\s+gelegt|artikel\s+hinzugefügt|added\s+to\s+(cart|basket)|ajouté\s+au\s+panier|c['’]est\s+dans\s+votre\s+panier/i;
+  const ADDED_RE = /(wurde|wurden|ist)\s+(erfolgreich\s+)?(in\s+den|zum|dem)\s+(warenkorb|einkaufswagen)|zum\s+(warenkorb|einkaufswagen)\s+hinzugefügt|in\s+den\s+warenkorb\s+gelegt|artikel\s+hinzugefügt|added\s+to\s+(cart|basket)|ajouté\s+au\s+panier|c['’]est\s+dans\s+votre\s+panier/i;
 
   async function runProduct() {
     if (SHOP.shopify) return runShopify();
@@ -1295,6 +1328,7 @@
     if (SHOP.sellerOf && S.get('onlyOwn')) {
       const seller = SHOP.sellerOf();
       if (seller && !SHOP.ownSeller.test(seller)) return scheduleReload(`Marktplatz-Händler „${seller}“ – übersprungen`);
+      if (!seller && SHOP.sellerRequired) return scheduleReload('Verkäufer nicht erkennbar – sicherheitshalber übersprungen');
     }
 
     const pc = priceOk();
@@ -1488,6 +1522,11 @@
   }
 
   async function runBasket() {
+    if (SHOP.basketRedirect && SHOP.basketRedirect(location.pathname)) {
+      log('Zwischenseite nach dem Hinzufügen → öffne Einkaufswagen', 'info');
+      location.href = SHOP.basketUrl;
+      return;
+    }
     log(`Warenkorb geladen (${location.pathname})`, 'info');
     const justAdded = S.get('justAdded');
     S.set('justAdded', false);
@@ -1682,7 +1721,7 @@
         }
         btn = f; break;
       }
-      const n = findClickable(NEXT_STEP);
+      const n = (SHOP.nextSelector && [...document.querySelectorAll(SHOP.nextSelector)].find((x) => visible(x) && !isDisabled(x))) || findClickable(SHOP.nextStep ? NEXT_STEP.concat(SHOP.nextStep) : NEXT_STEP);
       if (n && !isDisabled(n)) {
         // Neuer Button/neue Seite → klicken. Gleicher Button auf gleicher Seite nach 6 s erneut (Klick wurde ignoriert)
         const samePage = n === lastNext && location.pathname === nextPath;
