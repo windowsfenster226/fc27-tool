@@ -30,3 +30,10 @@ Eigener Discord-Bot, das Dashboard liest einen Kanal mit und führt Befehle aus 
 ## Neu in 3.14.0 – Amazon-Kaufprozess
 
 Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kaufen“): nur „In den Einkaufswagen“ (nie 1-Click), nur „Verkauf durch Amazon“, Preis immer inkl. MwSt. (auch bei Business-Konten), Zwischenseiten werden übersprungen, Höchstpreis wird auf Produktseite, im Einkaufswagen und bei der Gesamtsumme geprüft.
+
+## Neu in 3.16.0 – Captcha-Schutz & schlafende Tabs
+- **MediaMarkt + Saturn teilen sich ein Abruf-Limit** (Standard 4 Abrufe/Min zusammen, im Dashboard unter Einstellungen → Captcha-Schutz änderbar).
+- **Captcha-Bremse:** nach jedem Captcha prüft der Shop dauerhaft langsamer (× 1,5 → × 2 → × 3), je 24 Std. ohne Captcha eine Stufe zurück.
+- Abrufe einer Runde werden gleichmäßig verteilt statt direkt hintereinander.
+- **Schlafende Tabs** werden erkannt (Protokoll + Discord), Anleitung für Chrome/Edge im Dashboard; der Tab-Wächter greift nach 2,5 statt 5 Min.
+- Läuft ein Shop schon in einem anderen Tab, wartet ein zweiter Tab und übernimmt nur, wenn der erste ausfällt (kein doppeltes Prüfen mehr).

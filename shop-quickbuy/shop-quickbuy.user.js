@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.15.4
+// @version      3.16.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -109,6 +109,7 @@
       finalOrder: [/zahlungspflichtig\s+bestellen/i, /^jetzt\s+kaufen$/i, /kaufen$/i],
     },
     mediamarkt: {
+      rateGroup: 'mms',      // MediaMarkt + Saturn: gleicher Bot-Schutz (DataDome) → Abrufe zählen zusammen
       name: 'MediaMarkt',
       defaultPay: 'card',
       host: /(^|\.)mediamarkt\.de$/,
@@ -426,7 +427,7 @@
     running: false, products: [], idx: 0, stepDelaySec: 3, continueAfterBuy: true,
     dryRun: false, dryProduct: null, dropAt: '', dropIntervalSec: 5, dropReloaded: false, heartbeat: 0,
     targetUrl: '', variant: '', intervalSec: 15, jitterSec: 5,
-    maxAttempts: 0, maxPrice: 0, autoOrder: false, autoLogin: true, loginWait: 0, onlyOwn: true, payMethod: SHOP.defaultPay || 'default', payOk: false, inCart: {}, justAdded: false, loginCheck: true, removeOthers: false, curTotal: 0, minimized: false, logOpen: false, curTitle: '', attempts: 0, stage: 'product', log: [],
+    maxAttempts: 0, maxPrice: 0, autoOrder: false, autoLogin: true, loginWait: 0, onlyOwn: true, payMethod: SHOP.defaultPay || 'default', payOk: false, inCart: {}, justAdded: false, owner: null, sleeps: [], loginCheck: true, removeOthers: false, curTotal: 0, minimized: false, logOpen: false, curTitle: '', attempts: 0, stage: 'product', log: [],
   };
   const S = {
     get: (k) => GM_getValue(`${SHOP_ID}:${k}`, DEFAULTS[k]),
@@ -997,10 +998,9 @@
   function currentIntervalMs() {
     const jitter = Math.random() * (Number(S.get('jitterSec')) || 0);
     if (dropActive()) return Math.round((Math.max(3, Number(S.get('dropIntervalSec')) || 5) + Math.min(jitter, 2)) * 1000);
-    let base = Math.max(SHOP.minInterval || 5, Number(S.get('intervalSec')) || 15);
-    if (Date.now() < (S.get('slowUntil') || 0)) base *= 2;      // nach einem Captcha vorsichtiger
+    let base = effRoundSec(SHOP_ID);      // Pause + gemeinsames Limit (MediaMarkt/Saturn) + Captcha-Bremse
     // Kurz nach einem „Fast-Treffer“ (Artikel war kurz da, Shop hat beim Hinzufügen abgelehnt) → 3 Min. schneller nachsehen
-    else if (Date.now() < (S.get('burstUntil') || 0)) base = Math.min(base, 8);
+    if (Date.now() >= (S.get('slowUntil') || 0) && Date.now() < (S.get('burstUntil') || 0)) base = Math.min(base, Math.max(8, SHOP.rateGroup ? SHOP.minInterval || 8 : 8));
     return Math.round((base + jitter) * 1000);
   }
 
@@ -1056,17 +1056,18 @@
           log('Drop-Modus aktiv – lade Seite neu (Login prüfen) und prüfe ab jetzt schneller', 'buy');
           S.set('navAt', Date.now()); location.href = cur().url; return;
         }
-        const ms = currentIntervalMs();
-        countdown(ms);
-        await wait(ms);
-        if (!S.get('running')) break;
         rounds++;
         const r = S.get('attempts') + 1; S.set('attempts', r);
         const max = S.get('maxAttempts');
         if (max > 0 && r >= max) { bgActive = false; return stop(`Maximale Runden (${max}) erreicht`); }
         if (rounds % 10 === 0) { log('Kontroll-Neuladen (Login & Status) …', 'info'); S.set('navAt', Date.now()); location.href = cur().url; return; }
         const list = S.get('products');
+        // Abrufe gleichmäßig über die Runde verteilen (kein Schwall direkt hintereinander → weniger Captchas)
+        const step = Math.max(2000, Math.round(currentIntervalMs() / Math.max(1, list.length)));
         for (let i = 0; i < list.length; i++) {
+          if (!S.get('running')) break;
+          countdown(step);
+          await wait(step);
           if (!S.get('running')) break;
           const st = await bgStatus(list[i].url);
           const tag = `[${i + 1}/${list.length} ${shortName(list[i].url)}]`;
@@ -1075,7 +1076,6 @@
             const mx = Number(list[i].maxPrice) || 0;
             if (bp && mx && bp > mx * 1.02) {      // deutlich über dem Höchstpreis → Seite gar nicht erst laden
               log(`${tag} Hintergrund: verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos');
-              if (i < list.length - 1) await sleep(700 + Math.random() * 800);
               continue;
             }
             log(`${tag} Hintergrund: verfügbar! → öffne Seite`, 'ok');
@@ -1086,7 +1086,6 @@
             S.set('idx', i); S.set('navAt', Date.now()); location.href = list[i].url; return;
           }
           log(`${tag} OOS (Hintergrund)`, 'oos');
-          if (i < list.length - 1) await sleep(700 + Math.random() * 800);
         }
       }
     } finally { bgActive = false; }
@@ -2116,12 +2115,19 @@
   function handleCaptcha() {
     if (captchaWatch) return; captchaWatch = true;
     busy = true;
-    if (!S.get('captchaSince')) S.set('captchaSince', Date.now());
+    let brake = '';
+    if (!S.get('captchaSince')) {
+      S.set('captchaSince', Date.now());
+      const f = capRecord(SHOP_ID);
+      const who = SHOP.rateGroup ? RATE_GROUPS[SHOP.rateGroup].name : SHOP.name;
+      brake = ` Ab jetzt prüft ${who} ${String(f).replace('.', ',')}× langsamer (geht nach 24 Std. ohne Captcha stufenweise zurück).`;
+      log(`Captcha-Bremse: ${who} prüft jetzt ${String(f).replace('.', ',')}× langsamer`, 'warn');
+    }
     const last = S.get('captchaAt') || 0;
     if (Date.now() - last > 30 * 60000) {                       // höchstens alle 30 Min. erinnern
       S.set('captchaAt', Date.now());
       notify(`QuickBuy ${SHOP.name}`, 'Captcha – bitte im Tab lösen, danach geht es automatisch weiter');
-      discord('error', `**Captcha bei ${SHOP.name}** – bitte im offenen Tab lösen. Das Script wartet und macht danach automatisch weiter.`);
+      discord('error', `**Captcha bei ${SHOP.name}** – bitte im offenen Tab lösen. Das Script wartet und macht danach automatisch weiter.${brake}`);
     }
     log('Captcha erkannt – warte, bis es gelöst ist (wird nie automatisch gelöst)', 'warn');
     const t0 = Date.now();
@@ -2156,6 +2162,8 @@
     renderPanel();
     if (!S.get('running')) return;
     busy = true;
+    if (otherOwner()) return yieldTab();
+    S.set('owner', { id: TAB_ID, at: Date.now() });
     if (captchaPresent()) return handleCaptcha();
     if (queuePresent()) return handleQueue();
     if (S.get('queueSince')) queuePassed();
@@ -2603,6 +2611,45 @@
   const gv = (id, k, d) => GM_getValue(`${id}:${k}`, d !== undefined ? d : DEFAULTS[k]);
   const sv = (id, k, v) => GM_setValue(`${id}:${k}`, v);
   const tabOpen = (id) => Date.now() - (gv(id, 'heartbeat', 0) || 0) < 12000;
+
+  /* ---------- Captcha-Schutz: gemeinsames Abruf-Limit + dauerhafte Bremse nach Captchas ---------- */
+  const RATE_GROUPS = { mms: { name: 'MediaMarkt + Saturn', def: 4 } };
+  const BOOST_STEPS = [1, 1.5, 2, 3];
+  const capKey = (id) => (SHOPS[id] && SHOPS[id].rateGroup) || id;
+  function capInfo(id) {
+    const s = G.get(`cap:${capKey(id)}`, null) || { lvl: 0, last: 0, hits: [] };
+    // je 24 Std. ohne Captcha eine Stufe zurück
+    const lvl = Math.max(0, (s.lvl || 0) - Math.floor((Date.now() - (s.last || 0)) / 86400e3));
+    const hits = (s.hits || []).filter((t) => Date.now() - t < 7 * 86400e3);
+    return { lvl, factor: BOOST_STEPS[lvl], hits, h24: hits.filter((t) => Date.now() - t < 86400e3).length };
+  }
+  function capRecord(id) {
+    const i = capInfo(id);
+    const lvl = Math.min(BOOST_STEPS.length - 1, i.lvl + 1);
+    G.set(`cap:${capKey(id)}`, { lvl, last: Date.now(), hits: [...i.hits, Date.now()].slice(-50) });
+    return BOOST_STEPS[lvl];
+  }
+  function groupLimit(g) { const v = G.get(`rateMax:${g}`, null); return v === null || v === undefined || v === '' ? RATE_GROUPS[g].def : Math.max(0, Number(v) || 0); }
+  // Shops der Gruppe, die gerade wirklich prüfen
+  function groupShops(g) {
+    return SHOP_IDS().filter((id) => SHOPS[id].rateGroup === g && gv(id, 'running', false) && gv(id, 'products', []).length
+      && Date.now() - (gv(id, 'heartbeat', 0) || 0) < 60000);
+  }
+  // Sekunden zwischen zwei Runden (eine Runde = jedes Produkt einmal prüfen) – inkl. Gruppen-Limit und Captcha-Bremse
+  function effRoundSec(id) {
+    const sh = SHOPS[id];
+    let base = Math.max(sh.minInterval || 5, Number(gv(id, 'intervalSec', 15)) || 15);
+    const g = sh.rateGroup; const lim = g ? groupLimit(g) : 0;
+    if (lim > 0) {
+      const ids = groupShops(g); if (!ids.includes(id)) ids.push(id);
+      base = Math.max(base, (60 * ids.reduce((a, x) => a + gv(x, 'products', []).length, 0)) / lim);
+    }
+    base *= capInfo(id).factor;
+    if (Date.now() < (gv(id, 'slowUntil', 0) || 0)) base *= 2;      // direkt nach einem Captcha 1 Std. zusätzlich langsamer
+    return base;
+  }
+  // Abrufe pro Minute (ungefähr) – für die Anzeige im Dashboard
+  function ratePerMin(ids) { return ids.reduce((a, id) => a + (gv(id, 'products', []).length * 60) / Math.max(1, effRoundSec(id)), 0); }
   function logFor(id) {
     return gv(id, 'log', []).map((e) => typeof e === 'string'
       ? { ts: e.slice(0, 8), msg: e.replace(/^[\d:]+\s+–\s+/, ''), type: logType(e), n: 1 } : e);
@@ -2860,7 +2907,7 @@
     const out = [];
     for (const id of SHOP_IDS()) {
       for (const e of logFor(id).slice(0, 15)) {
-        const isNeed = /kasse erreicht|bitte selbst|anmeldung klappt nicht|manuell|nicht bestätigt|über limit|nicht im warenkorb|weitere artikel|nicht angemeldet|verfügbar – alarm/i.test(e.msg);
+        const isNeed = /kasse erreicht|bitte selbst|anmeldung klappt nicht|manuell|nicht bestätigt|über limit|nicht im warenkorb|weitere artikel|nicht angemeldet|verfügbar – alarm|schlafen gelegt|captcha-bremse/i.test(e.msg);
         if (!(e.type === 'err' || (e.type === 'warn' && isNeed) || isNeed)) continue;
         if (/gestoppt:\s*(manuell|vom dashboard)|probelauf erfolgreich/i.test(e.msg)) continue;   // selbst gestoppt = kein Problem
         if (!e.at || e.at <= dismissed || Date.now() - e.at > 3 * 3600e3) continue;
@@ -2881,6 +2928,8 @@
       if (run) {
         if (Date.now() - (gv(id, 'heartbeat', 0) || 0) > 180000) p.push('Tab reagiert nicht');
         if (gv(id, 'captchaSince', 0)) p.push('Captcha offen');
+        { const sl = (gv(id, 'sleeps', []) || []).filter((t) => Date.now() - t < 86400e3).length; if (sl) p.push(`Tab ${sl}× schlafen gelegt (24 Std.)`); }
+        { const ci = capInfo(id); if (ci.h24) p.push(`${ci.h24}× Captcha (24 Std.)`); }
         if (gv(id, 'queueSince', 0)) p.push('in der Warteschlange');
         if (!dg) p.push('noch keine Produktprüfung');
         else {
@@ -2922,12 +2971,13 @@
     for (const id of SHOP_IDS()) {
       if (!gv(id, 'running', false)) continue;
       const list = gv(id, 'products', []); if (!list.length) continue;
-      if (Date.now() - (gv(id, 'heartbeat', 0) || 0) < 300000) continue;      // 5 Min. kein Lebenszeichen
+      if (Date.now() - (gv(id, 'heartbeat', 0) || 0) < 150000) continue;      // 2,5 Min. kein Lebenszeichen (Herzschlag läuft im Worker, wird nicht gedrosselt)
       if (Date.now() - (gv(id, 'reopenAt', 0) || 0) < 600000) continue;       // höchstens alle 10 Min.
       sv(id, 'reopenAt', Date.now()); sv(id, 'stage', 'product');
+      sv(id, 'owner', null);
       openTab(list[gv(id, 'idx', 0) % list.length].url);
-      pushLog(id, 'Tab reagierte 5 Min. nicht – vom Dashboard neu geöffnet', 'warn');
-      discord('error', `Der Tab von **${SHOPS[id].name}** reagierte nicht mehr und wurde neu geöffnet.`, { title: '', shop: SHOPS[id].name });
+      pushLog(id, 'Tab reagierte 2,5 Min. nicht (geschlafen/abgestürzt) – vom Dashboard neu geöffnet', 'warn');
+      discord('error', `Der Tab von **${SHOPS[id].name}** reagierte nicht mehr (vom Browser schlafen gelegt oder abgestürzt) und wurde neu geöffnet. Tipp: Shop-Seiten im Browser auf „immer aktiv“ stellen – Anleitung im Dashboard unter Einstellungen.`, { title: '', shop: SHOPS[id].name });
     }
   }
 
@@ -3190,7 +3240,9 @@
     if (!gv(id, 'running', false)) return { k: 'off', t: 'Gestoppt' };
     if (gv(id, 'captchaSince', 0)) return { k: 'warn', t: 'Captcha' };
     if (gv(id, 'queueSince', 0)) return { k: 'queue', t: 'Warteschlange' };
-    if (!tabOpen(id)) return { k: 'warn', t: 'Kein Tab' };
+    { const age = Date.now() - (gv(id, 'heartbeat', 0) || 0);
+      if (age > 150000) return { k: 'warn', t: 'Kein Tab' };
+      if (age > 20000) return { k: 'warn', t: 'Tab schläft?' }; }
     const st = String(gv(id, 'stage', 'product'));
     if (st === 'basket' || st === 'ps-cart') return { k: 'buy', t: 'Warenkorb' };
     if (st !== 'product') return { k: 'buy', t: 'Kasse' };
@@ -3406,6 +3458,44 @@
     return `Unbekannter Befehl \`${dmd(cmd)}\` – \`!hilfe\` zeigt alle Befehle.`;
   }
 
+  /* ---------- Dashboard: Captcha-Schutz & schlafende Tabs ---------- */
+  function protectBlock() {
+    const used = SHOP_IDS().filter((id) => gv(id, 'products', []).length || gv(id, 'running', false));
+    const f = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
+    const rows = [];
+    for (const g of Object.keys(RATE_GROUPS)) {
+      const members = used.filter((id) => SHOPS[id].rateGroup === g);
+      if (!members.length) continue;
+      const run = groupShops(g); const ci = capInfo(members[0]); const lim = groupLimit(g);
+      const rate = ratePerMin(run);
+      rows.push(`<tr><td><b>${esc(RATE_GROUPS[g].name)}</b></td>
+        <td class="c"><input type="text" class="cell c" data-rate="${g}" value="${lim || ''}" placeholder="aus" style="width:60px" title="Höchstens so viele Abrufe pro Minute – beide Shops zusammen. Leer/0 = aus"></td>
+        <td class="c">${run.length ? `≈ ${f(rate)}` : '<span class="muted">–</span>'}</td>
+        <td class="c">${ci.h24} / ${ci.hits.length}</td>
+        <td class="c">${ci.factor > 1 ? `<span class="red">× ${f(ci.factor)}</span> <button class="sm" data-capreset="${g}">zurücksetzen</button>` : '<span class="muted">–</span>'}</td></tr>`);
+    }
+    for (const id of used) {
+      if (SHOPS[id].rateGroup) continue;
+      const ci = capInfo(id); if (!ci.hits.length && ci.factor === 1) continue;
+      rows.push(`<tr><td><b>${esc(SHOPS[id].name)}</b></td><td class="c"><span class="muted">–</span></td>
+        <td class="c">${gv(id, 'running', false) ? `≈ ${f(ratePerMin([id]))}` : '<span class="muted">–</span>'}</td><td class="c">${ci.h24} / ${ci.hits.length}</td>
+        <td class="c">${ci.factor > 1 ? `<span class="red">× ${f(ci.factor)}</span> <button class="sm" data-capreset="${id}">zurücksetzen</button>` : '<span class="muted">–</span>'}</td></tr>`);
+    }
+    const sleeps = used.map((id) => ({ id, n: (gv(id, 'sleeps', []) || []).filter((t) => Date.now() - t < 7 * 86400e3).length })).filter((x) => x.n);
+    const hosts = [...new Set(used.map((id) => (id === 'shopify' ? '' : (gv(id, 'products', [])[0] || {}).url)).filter(Boolean).map((u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }).filter(Boolean))];
+    return `
+      <h3>🧩 Captcha-Schutz</h3>
+      ${rows.length ? `<div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th class="c">Max. Abrufe/Min</th><th class="c">aktuell/Min</th><th class="c">Captchas 24 Std. / 7 Tage</th><th class="c">Bremse</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>` : '<div class="muted">Noch keine Shops mit Captcha-Schutz aktiv.</div>'}
+      <div class="hint">MediaMarkt und Saturn haben denselben Bot-Schutz – ihre Abrufe zählen zusammen. Das Limit verteilt sich automatisch auf alle laufenden Produkte (z. B. 4/Min bei 4 Produkten = jedes Produkt einmal pro Minute). Nach jedem Captcha prüft der Shop dauerhaft langsamer (× 1,5 → × 2 → × 3); je 24 Std. ohne Captcha geht es eine Stufe zurück. Abrufe einer Runde werden gleichmäßig verteilt statt direkt hintereinander.</div>
+      <h3>😴 Schlafende Tabs</h3>
+      ${sleeps.length ? `<div class="hint" style="border-color:#e0a63a"><b class="red">Schlafen gelegt (7 Tage):</b> ${sleeps.map((x) => `${esc(SHOPS[x.id].name)} ${x.n}×`).join(' · ')} – in dieser Zeit wurde nicht geprüft.</div>` : '<div class="muted">Bisher wurde kein Shop-Tab schlafen gelegt ✔</div>'}
+      <div class="hint">Damit Chrome/Edge die Shop-Tabs nie einfrieren:<br>
+        <b>Chrome:</b> Einstellungen → <i>Leistung</i> → bei „Speicher sparen“ unter <i>Diese Websites immer aktiv lassen</i> auf <i>Hinzufügen</i> und die Shops eintragen.<br>
+        <b>Edge:</b> Einstellungen → <i>System und Leistung</i> → <i>Schlafende Tabs</i> → <i>Diese Websites nie in den Standbymodus versetzen</i> → Hinzufügen.<br>
+        ${hosts.length ? `Einzutragen: <code>${hosts.map(esc).join('</code> <code>')}</code><br>` : ''}
+        Außerdem: Energiesparmodus/Standby des PCs aus, solange das Tool läuft. Erkennt das Script eine Pause, meldet es sich im Protokoll und in Discord; reagiert ein Tab 2,5 Min. nicht, öffnet das Dashboard ihn neu.</div>`;
+  }
+
   function renderDash(force) {
     const d = document.getElementById('qb-dash'); if (!d) return;
     const ae = document.activeElement;
@@ -3443,7 +3533,9 @@
       if (!gv(id, 'running', false)) return { k: 'off', t: 'Gestoppt' };
       if (gv(id, 'captchaSince', 0)) return { k: 'warn', t: 'Captcha' };
       if (gv(id, 'queueSince', 0)) return { k: 'queue', t: 'Warteschlange' };
-      if (!tabOpen(id)) return { k: 'warn', t: 'Kein Tab' };
+      { const age = Date.now() - (gv(id, 'heartbeat', 0) || 0);
+        if (age > 150000) return { k: 'warn', t: 'Kein Tab' };
+        if (age > 20000) return { k: 'warn', t: 'Tab schläft?' }; }
       const st = String(gv(id, 'stage', 'product'));
       if (st === 'basket' || st === 'ps-cart') return { k: 'buy', t: 'Warenkorb' };
       if (st !== 'product') return { k: 'buy', t: 'Kasse' };
@@ -3569,6 +3661,7 @@
         <input type="time" id="g-rtime" value="${esc(G.get('reportTime', '09:00'))}" style="flex:none">
         <button class="sm" data-g="selftest">🩺 Selbsttest jetzt</button>
       </div>
+      ${protectBlock()}
       <div class="hint">Budget: Ist es erreicht, bestellt kein Shop mehr automatisch (zählt erfolgreiche Käufe seit 0 Uhr). Selbsttest, Tab-Wächter und Radar laufen, solange dieser Dashboard-Tab offen ist.</div>
       <h3>🔔 Discord</h3>
       <div class="dcg">
@@ -3774,6 +3867,8 @@
     const rt = d.querySelector('#g-rtime');
     if (rt) rt.onchange = () => { G.set('reportTime', rt.value || '09:00'); };
     d.querySelectorAll('[data-gs]').forEach((c) => { c.onchange = () => G.set(c.dataset.gs, c.checked); });
+    d.querySelectorAll('[data-rate]').forEach((c) => { c.onchange = () => { const v = Math.max(0, Math.round(parseEur(c.value) || 0)); G.set(`rateMax:${c.dataset.rate}`, v); dashToast(v ? `${RATE_GROUPS[c.dataset.rate].name}: max. ${v} Abrufe/Min` : 'Gemeinsames Limit aus'); renderDash(true); }; });
+    d.querySelectorAll('[data-capreset]').forEach((b) => { b.onclick = () => { const k = b.dataset.capreset; const o = G.get(`cap:${k}`, null) || {}; G.set(`cap:${k}`, { lvl: 0, last: 0, hits: o.hits || [] }); dashToast('Captcha-Bremse zurückgesetzt'); renderDash(true); }; });
     // Discord-Bot
     const bTok = d.querySelector('#b-token');
     if (bTok) bTok.onchange = () => { const v = norm(bTok.value); if (v) { G.set('botToken', v); G.set('botLast', ''); bTok.value = ''; dashToast('Bot-Token gespeichert'); renderDash(true); } };
@@ -3822,8 +3917,51 @@
     }
   }
 
+  /* ---------- Schlafende Tabs ----------
+   * Chrome („Speicher sparen“) und Edge („Schlafende Tabs“) frieren Hintergrund-Tabs ein oder entladen sie → keine Prüfung.
+   * Erkennung: Lücke im Herzschlag (läuft im Worker, wird also nicht gedrosselt), document.wasDiscarded, freeze/resume. */
+  let yielded = false; let lastBeat = 0;
+  function sleepDetected(gapMs, how) {
+    if (!S.get('running')) return;
+    const l = (S.get('sleeps') || []).filter((t) => Date.now() - t < 7 * 86400e3);
+    l.push(Date.now()); S.set('sleeps', l.slice(-50));
+    const mins = gapMs ? Math.round(gapMs / 60000) : 0;
+    log(`Tab wurde schlafen gelegt (${how}${mins ? `, ${mins} Min. keine Prüfung` : ''}) – im Browser „immer aktiv lassen“ einstellen (Dashboard → Einstellungen)`, 'warn');
+    if (Date.now() - (S.get('sleepDcAt') || 0) > 3600e3) {
+      S.set('sleepDcAt', Date.now());
+      discord('error', `Der Tab von **${SHOP.name}** wurde vom Browser oder PC schlafen gelegt${mins ? ` (${mins} Min. ohne Prüfung)` : ''}. Er läuft wieder – damit das nicht erneut passiert: Browser-Einstellung „Diese Websites immer aktiv lassen“ (Anleitung im Dashboard unter Einstellungen).`);
+    }
+  }
+  function beatTick() {
+    const now = Date.now();
+    if (lastBeat && now - lastBeat > 60000) sleepDetected(now - lastBeat, 'Pause erkannt');
+    lastBeat = now;
+    if (yielded) return;
+    S.set('heartbeat', now);
+    if (S.get('running') && !otherOwner()) S.set('owner', { id: TAB_ID, at: now });
+  }
+  // Läuft der Shop schon in einem anderen Tab? Dann wartet dieser hier, statt doppelt zu prüfen
+  function otherOwner() { const o = S.get('owner'); return !!(o && o.id !== TAB_ID && Date.now() - o.at < 15000); }
+  function yieldTab() {
+    yielded = true; busy = true;
+    log('Shop läuft schon in einem anderen Tab – dieser Tab wartet (übernimmt, falls der andere ausfällt)', 'info');
+    const poll = () => later(5000, () => {
+      if (!S.get('running')) { yielded = false; busy = false; return; }
+      if (otherOwner()) return poll();
+      yielded = false; S.set('owner', { id: TAB_ID, at: Date.now() });
+      log('Anderer Tab antwortet nicht mehr – dieser Tab übernimmt', 'info');
+      S.set('navAt', Date.now()); location.href = cur().url || location.href;
+    });
+    poll();
+  }
+
   function startRemoteWatch() {
     if (window.top !== window) return;
+    { const hb = () => later(5000, () => { try { beatTick(); } catch (e) { console.error('[QuickBuy]', e); } hb(); }); beatTick(); hb(); }
+    try { if (document.wasDiscarded) setTimeout(() => sleepDetected(0, 'vom Browser entladen'), 1500); } catch (e) {}
+    { let frozenAt = 0;
+      document.addEventListener('freeze', () => { frozenAt = Date.now(); });
+      document.addEventListener('resume', () => { if (frozenAt) sleepDetected(Date.now() - frozenAt, 'vom Browser eingefroren'); frozenAt = 0; lastBeat = Date.now(); }); }
     { const tick = () => later(4000, () => { try { choresTick(); } catch (e) { console.error('[QuickBuy]', e); } tick(); }); setTimeout(tick, 1500 + Math.random() * 1500); }
     S.set('heartbeat', Date.now());
     let snap = '';
@@ -3835,7 +3973,7 @@
         location.replace('about:blank');
         return;
       }
-      S.set('heartbeat', Date.now());
+      if (!yielded) S.set('heartbeat', Date.now());
       // Seite hat das Panel/Styles entfernt (z. B. Neuaufbau durch die Shop-App) → wiederherstellen
       if (!document.getElementById('qb-panel') && document.body) { try { renderPanel(); } catch (e) { console.error('[QuickBuy] Panel-Fehler:', e); } }
       const running = S.get('running');
