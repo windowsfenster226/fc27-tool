@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.15.0
+// @version      3.15.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -252,6 +252,8 @@
     productKey: (u) => { const m = u.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i); return m ? m[1].toLowerCase() : stripUrl(u); },
     addToCart: [/^in\s+den\s+einkaufswagen$/i],
     buyFilter: (el) => el.id === 'add-to-cart-button' || !!el.closest('#addToCart_feature_div, #add-to-cart-button'),
+    // (live gesehen: im Privatkonto hat der Button weder Text noch value → nur über die ID auffindbar)
+    buySelector: '#add-to-cart-button',
     availableFn: () => !!document.querySelector('#add-to-cart-button') &&
       !/derzeit\s+nicht\s+verfügbar|nicht\s+auf\s+lager|currently\s+unavailable/i.test((document.querySelector('#availability') || {}).innerText || ''),
     oos: [/derzeit\s+nicht\s+verfügbar/i, /nicht\s+auf\s+lager/i],
@@ -525,7 +527,7 @@
       el.getAttribute('role') === 'button' || (tag === 'INPUT' && el.type === 'submit');
   }
 
-  const elText = (el) => norm(el.innerText || el.textContent || el.value || el.getAttribute('aria-label'));
+  const elText = (el) => norm(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || el.getAttribute('title'));
 
   function findClickable(patterns) {
     for (const el of deepAll()) {
@@ -658,6 +660,11 @@
   }
 
   function findBuyButton() {
+    // Shop-spezifischer, eindeutiger Button (z. B. Amazon: <input id="add-to-cart-button"> ohne sichtbaren Text)
+    if (SHOP.buySelector) {
+      const b = [...document.querySelectorAll(SHOP.buySelector)].find((x) => visible(x) && !x.closest('#qb-panel'));
+      if (b) return b;
+    }
     const all = deepAll();
     const h1 = document.querySelector('h1');
     const boundary = SHOP.useBoundary && all.find((el) => /^(H2|H3|H4|BUTTON|A)$/.test(el.tagName) || el.getAttribute('role') === 'tab'
