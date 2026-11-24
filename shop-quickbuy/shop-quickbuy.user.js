@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.15.2
+// @version      3.15.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -162,6 +162,8 @@
       // Zahlungsarten auf /checkout/payment (gesehen): Radio-Werte statt Texte
       payValue: { card: 'CRECA', paypal: 'PAYPAL', invoice: 'KLARNA', prepay: 'PIA' },   // live: Vorkasse = PIA
       payConfirmSelector: '[data-test="start-select-payment"]',   // Zahlungsfenster auf der Übersicht: „Zahlungsmethode auswählen“
+      // Live gemessen: Übersicht direkt aufrufen ~2,5 s statt Warenkorb → Versand → Übersicht (~6–10 s inkl. Wartezeiten)
+      directSummary: () => `${location.origin}/de/checkout/summary`,
       // Übersicht (gesehen): Button aria-label "Bezahlmethode ändern" – daneben steht die gewählte Zahlungsart
       summaryPay: {
         change: () => deepAll().find((e) => e.tagName === 'BUTTON' && /bezahlmethode\s+ändern/i.test(e.getAttribute('aria-label') || '') && visible(e)),
@@ -1371,7 +1373,7 @@
     }
     if (captchaPresent()) return handleCaptcha();
     if (queuePresent()) return handleQueue();
-    S.set('curTotal', 0);
+    S.set('curTotal', 0); S.set('skipDirect', false);
     recordDiag();
     checkLogin();
     if (S.get('autoOrder') && !SHOP.alertOnly && !S.get('dryRun')) {
@@ -1727,8 +1729,15 @@
       const o = cartOosText();
       return restartLoop(o ? `Warenkorb meldet „${o}“` : '„Zur Kasse“ nicht verfügbar', false);
     }
-    log('Warenkorb ok → Zur Kasse', 'buy');
     S.set('stage', 'checkout'); S.set('payOk', false);
+    // Direkt zur Übersicht springen (Versand-Schritt überspringen) – Lieferadresse/Zahlung sind im Konto gespeichert.
+    // Fehlt etwas, leitet der Shop selbst auf den passenden Schritt um und der normale Ablauf übernimmt.
+    if (SHOP.directSummary && !S.get('skipDirect') && SHOP.host.test(location.hostname)) {
+      log('Warenkorb ok → direkt zur Übersicht', 'buy');
+      location.href = SHOP.directSummary();
+      return;
+    }
+    log('Warenkorb ok → Zur Kasse', 'buy');
     clickEl(btn);
     // Viele Shops (z. B. MediaMarkt) wechseln zur Kasse, ohne die Seite neu zu laden → hier selbst weitermachen
     const inCheckout = await waitFor(() => SHOP.isCheckout(location.pathname), 10000, 250);
@@ -2180,7 +2189,7 @@
     }
     if (stage === 'checkout' && SHOP.isCheckout(path)) return runCheckout();
     if (SHOP.isBasket(path)) {
-      if (stage === 'checkout') log(`Shop hat von der Kasse zurück zum Warenkorb geleitet (${path})`, 'warn');
+      if (stage === 'checkout') { log(`Shop hat von der Kasse zurück zum Warenkorb geleitet (${path})`, 'warn'); S.set('skipDirect', true); }
       return runBasket();
     }
     if (SHOP.isCheckout(path) || stage === 'checkout') return runCheckout();
