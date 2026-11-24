@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.14.1
+// @version      3.14.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -261,6 +261,7 @@
       return m ? norm(m[1]) : null;
     },
     sellerRequired: true,     // Verkäufer nicht erkennbar → nicht kaufen
+    limitText: /mengenbegrenzung[^.]{0,60}erreicht|maximale\s+(bestell)?menge[^.]{0,40}erreicht|kauflimit[^.]{0,30}erreicht/i,
     // Fehlerseite nach „In den Einkaufswagen“/„Jetzt kaufen“ (gesehen): „Ein Problem ist aufgetreten. Leider ist der Artikel … nicht mehr
     // über den von dir gewählten Anbieter erhältlich.“ → von vorne beginnen
     failText: /ein\s+problem\s+ist\s+aufgetreten|nicht\s+mehr\s+über\s+den\s+von\s+(dir|ihnen)\s+gewählten\s+anbieter\s+erhältlich/i,
@@ -977,6 +978,8 @@
     if (dropActive()) return Math.round((Math.max(3, Number(S.get('dropIntervalSec')) || 5) + Math.min(jitter, 2)) * 1000);
     let base = Math.max(SHOP.minInterval || 5, Number(S.get('intervalSec')) || 15);
     if (Date.now() < (S.get('slowUntil') || 0)) base *= 2;      // nach einem Captcha vorsichtiger
+    // Kurz nach einem „Fast-Treffer“ (Artikel war kurz da, Shop hat beim Hinzufügen abgelehnt) → 3 Min. schneller nachsehen
+    else if (Date.now() < (S.get('burstUntil') || 0)) base = Math.min(base, 8);
     return Math.round((base + jitter) * 1000);
   }
 
@@ -1340,6 +1343,18 @@
       if (b && spentToday() >= b) {
         discord('error', `**Tagesbudget ${fmtEur(b)} € erreicht** – ${SHOP.name} gestoppt.`);
         return stop(`Tagesbudget ${fmtEur(b)} € erreicht (heute ${fmtEur(spentToday())} €) – keine weiteren Bestellungen`);
+      }
+    }
+    // Kauflimit des Shops (live bei Amazon gesehen: „Die Mengenbegrenzung für diesen Verkäufer ist erreicht.“) → nicht kaufbar, melden
+    if (SHOP.limitText) {
+      const lt = (document.querySelector('#desktop_buybox, #buybox, #rightCol') || document.body).innerText || '';
+      if (SHOP.limitText.test(lt)) {
+        if (Date.now() - (S.get('limitAlertAt') || 0) > 6 * 3600e3) {
+          S.set('limitAlertAt', Date.now());
+          notify(`QuickBuy ${SHOP.name}`, 'Kauflimit erreicht – Kauf nicht möglich');
+          discord('error', `**${SHOP.name} meldet ein Kauflimit** („Mengenbegrenzung erreicht“) – mit diesem Konto kann der Artikel gerade nicht gekauft werden.`);
+        }
+        return scheduleReload('Kauflimit des Shops erreicht („Mengenbegrenzung“) – nicht kaufbar');
       }
     }
     if (isOOS()) return scheduleReload();
@@ -2086,7 +2101,8 @@
     if (SHOP.failText && stage !== 'product' && stage !== 'done' && SHOP.failText.test(pageText())) {
       log('Shop meldet „Ein Problem ist aufgetreten / nicht mehr erhältlich“ → starte von vorne', 'warn');
       setInCart(false); S.set('justAdded', false); S.set('stage', 'product');
-      return scheduleReload('Artikel beim Hinzufügen/Bezahlen nicht mehr erhältlich');
+      S.set('burstUntil', Date.now() + 3 * 60000);   // Angebote flackern bei Drops oft → 3 Min. alle ~8 s prüfen
+      return scheduleReload('Artikel beim Hinzufügen/Bezahlen nicht mehr erhältlich – prüfe 3 Min. schneller');
     }
 
     // Nach "Bestellen" wurde die Seite gewechselt → auswerten, NIE erneut kaufen
