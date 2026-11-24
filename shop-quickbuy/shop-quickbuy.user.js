@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.15.3
+// @version      3.15.4
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1421,6 +1421,10 @@
     if (isInCart() && SHOP.stopAfterAdd && !SHOP.psFlow) {
       return stop('Produkt liegt laut Script schon im Einkaufswagen – Einkaufswagen prüfen. (Zum erneuten Hinzufügen Produkt entfernen und neu eintragen.)');
     }
+    if (isInCart() && cartCountAny() === 0) {
+      setInCart(false);
+      log('Merker „liegt im Warenkorb“ war veraltet (Warenkorb ist leer) → lege direkt hinein', 'info');
+    }
     if (isInCart()) {
       log('Produkt liegt schon im Warenkorb – prüfe dort statt erneut hinzuzufügen', 'buy');
       S.set('justAdded', false); S.set('stage', 'basket');
@@ -1622,8 +1626,7 @@
       item = findCartItem(items);
       if (!item) {
         if (justAdded) return wrongItemStop();
-        setInCart(false);                       // wurde extern entfernt → beim nächsten Mal wieder hinzufügen
-        return restartLoop('Produkt nicht mehr im Warenkorb', false);
+        return readdNow('Produkt nicht mehr im Warenkorb');   // wurde extern entfernt / Merker war veraltet
       }
       setInCart(true); S.set('addRetry', 0);
 
@@ -1690,8 +1693,7 @@
       await uncheckAddons('Warenkorb');
       if (!targetInCartGeneric()) {
         if (justAdded) return wrongItemStop();
-        setInCart(false);
-        return restartLoop('Produkt nicht mehr im Warenkorb', false);
+        return readdNow('Produkt nicht mehr im Warenkorb');
       }
       setInCart(true); S.set('addRetry', 0);
       {
@@ -1742,6 +1744,14 @@
     // Viele Shops (z. B. MediaMarkt) wechseln zur Kasse, ohne die Seite neu zu laden → hier selbst weitermachen
     const inCheckout = await waitFor(() => SHOP.isCheckout(location.pathname), 10000, 250);
     if (inCheckout) return runCheckout();
+  }
+
+  // Script dachte, der Artikel liegt schon im Warenkorb – stimmt nicht (mehr) → ohne Pause zurück und hinzufügen
+  function readdNow(msg) {
+    setInCart(false);
+    log(`${msg} → sofort zurück zur Produktseite und hinzufügen`, 'buy');
+    S.set('stage', 'product'); S.set('justAdded', false); S.set('navAt', Date.now());
+    location.href = cur().url;
   }
 
   function backToBasket(msg) {
