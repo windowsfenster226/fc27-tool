@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.14.0
+// @version      3.14.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -89,6 +89,15 @@
         };
       }),
       isBasket: (p) => /\/order\/basket/i.test(p),
+      // Lagerstatus im Hintergrund (live geprüft 24.11.2026): ausverkauft = „leider ausverkauft“, Button disabled, AvailabilityMin 0.0;
+      // lieferbar = JSON-LD InStock bzw. AvailabilityMin > 0. Unklar → Seite neu laden.
+      bgCheck: true,
+      bgParse: (html) => {
+        if (/leider\s+ausverkauft/i.test(html) || /<oc-button-v1[^>]*\bdisabled\b[^>]*>\s*In den Warenkorb/i.test(html)) return 'out';
+        const am = html.match(/product_AvailabilityMin\\?"\s*:\s*\\?"([\d.]+)/);
+        if (am) return parseFloat(am[1]) > 0 ? 'in' : 'out';
+        return null;
+      },
       // Kasse (live geprüft): eine Seite „Prüfen & Absenden“, Beträge ohne €-Zeichen → Gesamtsumme über data-qa
       totalSelector: '[data-qa="grandTotalAmount"]',
       isCheckout: (p) => /\/order\/(checkout|ordering|payment|summary)|kasse|checkout/i.test(p),
@@ -252,6 +261,9 @@
       return m ? norm(m[1]) : null;
     },
     sellerRequired: true,     // Verkäufer nicht erkennbar → nicht kaufen
+    // Fehlerseite nach „In den Einkaufswagen“/„Jetzt kaufen“ (gesehen): „Ein Problem ist aufgetreten. Leider ist der Artikel … nicht mehr
+    // über den von dir gewählten Anbieter erhältlich.“ → von vorne beginnen
+    failText: /ein\s+problem\s+ist\s+aufgetreten|nicht\s+mehr\s+über\s+den\s+von\s+(dir|ihnen)\s+gewählten\s+anbieter\s+erhältlich/i,
     ownSeller: /^amazon/i,
     declineWarranty: true,    // „Schutzplan hinzufügen?“ → „Nein, danke“
     cartCount: () => { const e = document.querySelector('#nav-cart-count'); const n = e && parseInt(e.innerText, 10); return Number.isFinite(n) ? n : null; },
@@ -370,7 +382,7 @@
 
   // Gemeinsame Texte für alle Shops
   const COMMON = {
-    cartOos: [new RegExp(NOT_FAST + 'ausverkauft', 'i'), /nicht\s+(mehr\s+)?lieferbar/i, /nicht\s+(mehr\s+)?verfügbar/i,
+    cartOos: [new RegExp(NOT_FAST + 'ausverkauft', 'i'), /nicht\s+(mehr\s+)?lieferbar/i, /nicht\s+(mehr\s+)?verfügbar/i, /nicht\s+mehr\s+(über\s+[^.]{0,60}\s+)?erhältlich/i,
               /leider\s+nicht\s+mehr/i, /bestand\s+reicht\s+nicht/i, /nicht\s+in\s+der\s+gewünschten\s+menge/i],
     remove: [/^entfernen$/i, /^löschen$/i, /^entferne\b/i, /(artikel|produkt)\s+entfernen/i, /aus\s+dem\s+warenkorb\s+entfernen/i],
     confirmRemove: [/^entfernen$/i, /^ja/i, /^löschen$/i],
@@ -981,7 +993,10 @@
     try {
       const r = await fetch(url, { credentials: 'include', cache: 'no-store' });
       if (!r.ok) return 'err';
-      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+      const html = await r.text();
+      // Weiterleitung auf eine andere Seite (Suche, anderes Produkt) → Seite laden und dort entscheiden
+      if (r.redirected && keyOf(r.url) !== keyOf(url)) return 'err';
+      const doc = new DOMParser().parseFromString(html, 'text/html');
       for (const sc of doc.querySelectorAll('script[type="application/ld+json"]')) {
         let d; try { d = JSON.parse(sc.textContent); } catch (e) { continue; }
         for (const it of [].concat(d, (d && d['@graph']) || [])) {
@@ -992,6 +1007,7 @@
           if (/OutOfStock|SoldOut|Discontinued/i.test(av)) return 'out';
         }
       }
+      if (SHOP.bgParse) { const v = SHOP.bgParse(html); if (v) return v; }
       return 'err';
     } catch (e) { return 'err'; }
   }
@@ -1238,16 +1254,19 @@
     }
     return n;
   }
-  async function declineWarranty() {
+  async function declineWarranty(doneFn) {
     const BAD = /mit\s+garantie|plusgarantie|\+\s*\d|\d+,\d{2}\s*€|hinzufügen/i;
+    let doneAt = 0;
     const opt = await waitFor(() => {
+      // Shop hat das Hinzufügen schon bestätigt und nach 1 s kam keine Garantie-Frage → nicht weiter warten (spart bis zu 4 s)
+      if (doneFn && doneFn()) { if (!doneAt) doneAt = Date.now(); else if (Date.now() - doneAt > 1000) return 'none'; }
       const c = deepAll().filter((e) => /^(LABEL|INPUT|DIV|SPAN|BUTTON|A|P)$/.test(e.tagName) && visible(e) && !e.closest('#qb-panel') &&
         elText(e).length < 90 && DECLINE_RE.test(elText(e)) && !BAD.test(elText(e)));
       // Buttons/Labels bevorzugen, dann das Element mit dem kürzesten Text (= am genauesten)
       c.sort((a, b) => (/^(BUTTON|LABEL|A|INPUT)$/.test(b.tagName) - /^(BUTTON|LABEL|A|INPUT)$/.test(a.tagName)) || elText(a).length - elText(b).length);
       return c[0] || null;
     }, 4500, 250);
-    if (!opt) return false;
+    if (!opt || opt === 'none') return false;
     const target = opt.closest('label') || opt;
     clickEl(target);
     await sleep(600);
@@ -1387,8 +1406,12 @@
     const countBefore = cartCountAny();
     clickEl(btnNow);
 
-    await sleep(1500);
-    if (SHOP.declineWarranty) await declineWarranty();
+    const addConfirmed = () => {
+      const c = cartCountAny();
+      return (countBefore !== null && c !== null && c > countBefore) || ADDED_RE.test(document.body.innerText || '');
+    };
+    await sleep(SHOP.declineWarranty ? 700 : 1500);
+    if (SHOP.declineWarranty) await declineWarranty(addConfirmed);
     // Warten, bis der Shop das Hinzufügen bestätigt (Zähler steigt oder Meldung) – sonst ist der Warenkorb evtl. noch leer
     if (!SHOP.psFlow) {
       const ok = await waitFor(() => {
@@ -2058,6 +2081,13 @@
     if (S.get('queueSince')) queuePassed();
     const path = location.pathname;
     const stage = S.get('stage');
+
+    // Shop-Fehlerseite (z. B. Amazon: „Artikel nicht mehr über den gewählten Anbieter erhältlich“) → nicht hängen bleiben, von vorne
+    if (SHOP.failText && stage !== 'product' && stage !== 'done' && SHOP.failText.test(pageText())) {
+      log('Shop meldet „Ein Problem ist aufgetreten / nicht mehr erhältlich“ → starte von vorne', 'warn');
+      setInCart(false); S.set('justAdded', false); S.set('stage', 'product');
+      return scheduleReload('Artikel beim Hinzufügen/Bezahlen nicht mehr erhältlich');
+    }
 
     // Nach "Bestellen" wurde die Seite gewechselt → auswerten, NIE erneut kaufen
     if (stage === 'done') {
