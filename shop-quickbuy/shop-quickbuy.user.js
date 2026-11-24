@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.13.1
+// @version      3.13.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -111,11 +111,13 @@
       // Produktseite zeigt Button, obwohl keine Lieferung möglich ist → als OOS werten
       hardOos: [/leider\s+keine\s+lieferung\s+möglich/i],
       priceSelector: '[data-test="mms-product-price"]',
+      retryAdd: true,
+      totalSelector: '[data-test="checkout-total"]',   // Übersicht (live): Gesamtsumme inkl. Versand
       // Marktplatz-Händler erkennen ("Verkauf und Versand durch <Händler>")
       sellerOf: () => { const m = pageText().match(/verkauf\s+und\s+versand\s+durch:?\s+(.{2,40}?)(?=\s+(finanzierung|in\s+den\s+warenkorb|inkl|\d|$))/i); return m ? norm(m[1]) : null; },
       ownSeller: /media\s*markt/i,
       // Warenkorb (geprüft im echten MediaMarkt-Warenkorb)
-      cartReady: () => !!document.querySelector('[data-test="delete-item-button"]') || /warenkorb\s+ist\s+leer/i.test(document.body.innerText),
+      cartReady: () => !!document.querySelector('[data-test="delete-item-button"]') || /warenkorb\s+ist\s+leer|befinden\s+sich\s+keine\s+produkte/i.test(document.body.innerText),
       cartItems: () => [...document.querySelectorAll('[data-test="delete-item-button"]')].map((del) => {
         let box = del;
         for (let i = 0; i < 12 && box; i++) { box = box.parentElement; if (box && box.querySelector('[data-test="amount-picker-minus"]')) break; }
@@ -259,7 +261,8 @@
     // Mengenfeld der Produktseite (gesehen: name="products[<Artikelnr>].Quantity")
     qtyInput: () => document.querySelector('input[name^="products["][name$="].Quantity"]'),
     // Warenkorb-Zähler oben ("Mon panier 0 articles dans Mon panier")
-    cartCount: () => { const a = [...document.querySelectorAll('a')].find((x) => /mon\s+panier/i.test(x.innerText || '')); const m = a && (a.innerText || '').match(/(\d+)\s+articles?/i); return m ? parseInt(m[1], 10) : null; },
+    // (live: nach dem Hinzufügen steht zusätzlich „Voir mon panier“ im Popup → nur Links mit Zahl werten)
+    cartCount: () => { for (const x of document.querySelectorAll('a')) { const m = /mon\s+panier/i.test(x.innerText || '') && (x.innerText || '').match(/(\d+)\s+articles?/i); if (m) return parseInt(m[1], 10); } return null; },
     signInButton: () => [...document.querySelectorAll('a, button')].find((e) => /^me\s+connecter$/i.test(norm(e.innerText)) && visible(e)),
     oos: [/rupture\s+de\s+stock/i, /indisponible/i, /épuisé/i, /plus\s+disponible/i, /ausverkauft/i, /nicht\s+verfügbar/i, /out\s+of\s+stock/i],
     hardOos: [/rupture\s+de\s+stock/i, /article\s+indisponible/i, /produit\s+indisponible/i, /stock\s+en\s+ligne\s+épuisé/i],
@@ -484,6 +487,7 @@
     (inner || el).click();
   }
 
+  const noHashUrl = (u) => String(u).split('#')[0];
   async function waitFor(fn, timeout = 10000, step = 200) {
     const end = Date.now() + timeout;
     while (Date.now() < end) { const r = fn(); if (r) return r; await sleep(step); }
@@ -568,8 +572,12 @@
       if (m) return parseFloat(m[1].replace(/\./g, '') + '.' + m[2]);
     }
     const t = pageText();
-    const m = t.match(/(gesamtsumme|gesamtbetrag|gesamtpreis|zu\s+zahlen(?:der\s+betrag)?|summe)[^€]{0,40}?((\d{1,3}(?:\.\d{3})*|\d+)(,\d{2}|,-{1,2})?\s*€)/i);
-    return m ? parsePrice(m[2]) : null;
+    // erst die eindeutigen Begriffe, „Summe“ nur als letzte Möglichkeit (sonst wird die Zwischensumme ohne Versand gelesen)
+    for (const word of ['gesamtsumme|gesamtbetrag|gesamtpreis|zu\\s+zahlen(?:der\\s+betrag)?|total', '(?<!zwischen)summe']) {
+      const m = t.match(new RegExp(`(${word})[^€]{0,40}?((\\d{1,3}(?:\\.\\d{3})*|\\d+)(,\\d{2}|,-{1,2})?\\s*€)`, 'i'));
+      if (m) return parsePrice(m[2]);
+    }
+    return null;
   }
 
   /* ---------- Echten Kauf-Button finden (nicht Zubehör/Empfehlungen!) ---------- */
@@ -636,7 +644,18 @@
     return !(btn && !isDisabled(btn));
   }
   const oosReason = () => (SHOP.ldStock && pageLdAvailability() === 'out' && 'Seite meldet „ausverkauft“') || (SHOP.hardOos && matchText(SHOP.hardOos)) || matchText(SHOP.oos) || 'kein aktiver Warenkorb-Button';
-  const cartOosText = () => matchText(COMMON.cartOos);
+  // „nicht verfügbar“ nur werten, wenn es um den Artikel selbst geht – nicht um Sofort-Lieferung, Abholung oder Adresse
+  // (live bei MediaMarkt: „Für die eingegebene Adresse ist die Sofort-Lieferung nicht verfügbar …“ stand in JEDER Artikelzeile)
+  const DELIVERY_NOISE = /sofort-?lieferung|abholung|abholen|liefermethode|lieferart|lieferadresse|adresse|im\s+markt|naheliegende|express|same\s*day|uber/i;
+  function oosIn(text) {
+    for (const sent of String(text || '').split(/(?<=[.!?])\s+|\n+/)) {
+      if (DELIVERY_NOISE.test(sent)) continue;
+      const p = COMMON.cartOos.find((r) => r.test(sent));
+      if (p) return sent.match(p)[0];
+    }
+    return null;
+  }
+  const cartOosText = () => oosIn((document.querySelector('main') || document.body).innerText);
 
   /* ---------- Discord-Webhook (gilt für alle Shops) ---------- */
   const G = {
@@ -1222,7 +1241,7 @@
     }
     return null;
   }
-  const ADDED_RE = /(wurde|wurden|ist)\s+(erfolgreich\s+)?(in\s+den|zum|dem)\s+(warenkorb|einkaufswagen)|zum\s+warenkorb\s+hinzugefügt|in\s+den\s+warenkorb\s+gelegt|artikel\s+hinzugefügt|added\s+to\s+(cart|basket)|ajouté\s+au\s+panier/i;
+  const ADDED_RE = /(wurde|wurden|ist)\s+(erfolgreich\s+)?(in\s+den|zum|dem)\s+(warenkorb|einkaufswagen)|zum\s+warenkorb\s+hinzugefügt|in\s+den\s+warenkorb\s+gelegt|artikel\s+hinzugefügt|added\s+to\s+(cart|basket)|ajouté\s+au\s+panier|c['’]est\s+dans\s+votre\s+panier/i;
 
   async function runProduct() {
     if (SHOP.shopify) return runShopify();
@@ -1344,7 +1363,23 @@
         if (ADDED_RE.test(document.body.innerText || '')) return 'Bestätigung angezeigt';
         return null;
       }, 10000, 300);
-      if (ok) log(`Hinzufügen bestätigt (${ok})`, 'ok');
+      let ok2 = ok;
+      // MediaMarkt/Saturn (live gesehen): solange die Seite noch nachlädt, verpufft der Klick → einmal erneut klicken.
+      // Eine doppelte Menge wird im Warenkorb automatisch auf 1 korrigiert.
+      if (!ok2 && SHOP.retryAdd && noHashUrl(location.href) === noHashUrl(before)) {
+        const again = findBuyButton();
+        if (again && !isDisabled(again)) {
+          log('Klick ist nicht angekommen (Seite lud noch) – klicke erneut', 'warn');
+          clickEl(again);
+          ok2 = await waitFor(() => {
+            const c = cartCountAny();
+            if (countBefore !== null && c !== null && c > countBefore) return `Zähler ${countBefore} → ${c}`;
+            if (ADDED_RE.test(document.body.innerText || '')) return 'Bestätigung angezeigt';
+            return null;
+          }, 12000, 300);
+        }
+      }
+      if (ok2) log(`Hinzufügen bestätigt (${ok2})`, 'ok');
       else { log('Keine Bestätigung vom Shop gesehen – warte zur Sicherheit noch 3 s', 'warn'); await sleep(3000); }
     }
     if (SHOP.dismiss) {
@@ -1376,8 +1411,7 @@
 
     // Shop leitet evtl. selbst weiter (z. B. Microsoft "Jetzt kaufen") – kurz abwarten
     // (nur echte Seitenwechsel zählen – Otto hängt z. B. nur „#oc-sheet…“ für die Hinzugefügt-Ebene an)
-    const noHash = (u) => String(u).split('#')[0];
-    const moved = await waitFor(() => noHash(location.href) !== noHash(before), 4000);
+    const moved = await waitFor(() => noHashUrl(location.href) !== noHashUrl(before), 4000);
     if (moved && SHOP.isBasket(location.pathname)) return runBasket();
     if (moved && SHOP.isCheckout(location.pathname)) { S.set('stage', 'checkout'); return runCheckout(); }
     if (!moved || !(SHOP.isBasket(location.pathname) || SHOP.isCheckout(location.pathname))) location.href = SHOP.basketUrl;
@@ -1460,7 +1494,7 @@
 
     // Warten bis der Warenkorb wirklich geladen ist (MediaMarkt lädt langsam nach)
     if (SHOP.cartReady) {
-      const ready = await waitFor(() => SHOP.cartReady(), 30000, 300);
+      const ready = await waitFor(() => SHOP.cartReady(), 60000, 300);   // MediaMarkt-Warenkorb brauchte live bis zu 30 s
       if (!ready) return restartLoop('Warenkorb lädt nicht', false);
       await sleep(800);
     } else {
@@ -1532,11 +1566,10 @@
       }
 
       // Nur den Eintrag des Zielprodukts auf "nicht verfügbar" prüfen
-      const t = norm(item.box.innerText);
-      const hit = COMMON.cartOos.find((p) => p.test(t));
+      const hit = oosIn(item.box.innerText);
       if (hit) {
         // Artikel bleibt im Warenkorb (wird NICHT entfernt und NICHT erneut hinzugefügt) – weiter beobachten
-        return restartLoop(`Im Warenkorb noch „${t.match(hit)[0]}“`, false);
+        return restartLoop(`Im Warenkorb noch „${hit}“`, false);
       }
     } else {
       await uncheckAddons('Warenkorb');
@@ -1559,11 +1592,10 @@
       }
       const box = targetCartBox();
       if (box) {
-        const t = norm(box.innerText);
-        const hit = COMMON.cartOos.find((p) => p.test(t));
+        const hit = oosIn(box.innerText);
         if (hit) {
           const rm = [...box.querySelectorAll('button, a, [role="button"]')].find((b) => COMMON.remove.some((r) => r.test(elText(b)) || r.test(b.getAttribute('aria-label') || '')));
-          return restartLoop(`Warenkorb meldet „${t.match(hit)[0]}“`, true, { remove: rm || null });
+          return restartLoop(`Warenkorb meldet „${hit}“`, true, { remove: rm || null });
         }
       } else {
         const oos = cartOosText();
