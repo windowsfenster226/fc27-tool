@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.13.2
+// @version      3.13.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1798,7 +1798,8 @@
     }
     return null;
   }
-  const ANY_PAY = /visa|mastercard|kreditkarte|rechnung|klarna|paypal|vorkasse|überweisung|lastschrift|ratenkauf|raten|apple\s*pay|google\s*pay|sofort/i;
+  // (live PlayStation: gespeicherte Karten stehen nur als „****5822 Standardzahlungsmethode“ da – Marke nur als Logo)
+  const ANY_PAY = /visa|mastercard|kreditkarte|rechnung|klarna|paypal|vorkasse|überweisung|lastschrift|ratenkauf|raten|apple\s*pay|google\s*pay|sofort|[*•·]{2,}\s*\d{4}/i;
   function radioLabel(r) {
     if (r.getAttribute('role') === 'radio') return elText(r);
     const l = (r.labels && r.labels[0]) || r.closest('label');
