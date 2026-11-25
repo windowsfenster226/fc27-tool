@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.6
+// @version      3.19.7
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -388,8 +388,16 @@
       prepare: () => { const r = document.querySelector('input[name="payment-method"][value="Carte bancaire"]'); if (r && !r.checked) clickEl(r.closest('label') || r); },
       msg: 'Karte eingeben und auf „Payer“ klicken',
     },
-    // Lagerstatus im Seitencode (JSON-LD) – live geprüft: InStock ↔ „Ajouter au panier“ vorhanden, OutOfStock ↔ kein Button
+    // Lagerstatus aus den Seitendaten „availabilityType“ (live geprüft 25.11.): in-stock ↔ Button „Ajouter au panier“ da;
+    // out-of-stock / discontinued ↔ kein Button. Das JSON-LD meldet bei „Bientôt en stock“ fälschlich LimitedAvailability.
     bgCheck: true,
+    bgParse: (html) => {
+      const m = html.match(/"availabilityType"\s*:\s*"([^"]+)"/);
+      if (!m) return null;
+      if (/^in-?stock$|pre-?order|pr[eé]commande/i.test(m[1])) return 'in';
+      if (/out-?of-?stock|discontinued|unavailable|indisponible|soon/i.test(m[1])) return 'out';
+      return null;
+    },
     addToCart: [/^ajouter\s+au\s+panier$/i],
     // Mengenfeld der Produktseite (gesehen: name="products[<Artikelnr>].Quantity")
     qtyInput: () => document.querySelector('input[name^="products["][name$="].Quantity"]'),

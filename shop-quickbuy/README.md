@@ -58,3 +58,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - 3.19.4: Discord-Bot sendet eine Bot-Kennung (User-Agent) mit – behebt Discord-Fehler 40333.
 - 3.19.5: Amazon-Verkäufer richtig erkannt: „Verkauft und versandt von Amazon“ = Amazon; Business-Angebote „Verkauft … von Amazon. Versandt und bezogen von <Händler>“ = Händler (nicht kaufen); Amazon Retourenkauf/Seconde main zählt nicht als Amazon.
 - 3.19.6: HTTP 429 (zu viele Abrufe) im Prüf-Zentrum → kein Kontroll-Tab mehr, sondern 2–15 Min. Pause für MediaMarkt+Saturn und Captcha-Bremse.
+- 3.19.7: FNAC Pro – Lagerstatus aus „availabilityType“ der Seite (JSON-LD meldete bei „Bientôt en stock“ fälschlich verfügbar → Tab ging alle paar Minuten auf).
