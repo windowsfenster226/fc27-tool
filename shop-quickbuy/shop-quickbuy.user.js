@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.18.1
+// @version      3.19.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
 // @match        https://www.saturn.de/*
 // @match        https://www.amazon.de/*
+// @match        https://www.amazon.fr/*
 // @match        https://www.fnacpro.com/*
 // @match        https://fnacpro.com/*
 // @match        https://secure.fnacpro.com/*
@@ -52,6 +53,7 @@
 // @connect      mediamarkt.de
 // @connect      saturn.de
 // @connect      amazon.de
+// @connect      amazon.fr
 // @connect      fnacpro.com
 // @connect      microsoft.com
 // @connect      playstation.com
@@ -283,17 +285,18 @@
   // Amazon (live geprüft 24.11.2026, auch mit Business-Konto). NUR „In den Einkaufswagen“ – nie „Jetzt kaufen“ (1-Click bestellt sofort!)
   SHOPS.amazon = {
     name: 'Amazon',
-    host: /(^|\.)amazon\.de$/,
-    productUrl: /^https:\/\/www\.amazon\.de\/(?:[^?#]*\/)?(?:dp|gp\/product)\/[A-Z0-9]{10}/i,
-    productHint: 'https://www.amazon.de/dp/XXXXXXXXXX',
+    // amazon.de und amazon.fr (auch mit englischer/französischer Oberfläche, z. B. amazon.fr/-/en/…)
+    host: /(^|\.)amazon\.(de|fr)$/,
+    productUrl: /^https:\/\/www\.amazon\.(de|fr)\/(?:[^?#]*\/)?(?:dp|gp\/product)\/[A-Z0-9]{10}/i,
+    productHint: 'https://www.amazon.de/dp/XXXXXXXXXX (oder amazon.fr)',
     productKey: (u) => { const m = u.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i); return m ? m[1].toLowerCase() : stripUrl(u); },
     addToCart: [/^in\s+den\s+einkaufswagen$/i],
     buyFilter: (el) => el.id === 'add-to-cart-button' || !!el.closest('#addToCart_feature_div, #add-to-cart-button'),
     // (live gesehen: im Privatkonto hat der Button weder Text noch value → nur über die ID auffindbar)
     buySelector: '#add-to-cart-button',
     availableFn: () => !!document.querySelector('#add-to-cart-button') &&
-      !/derzeit\s+nicht\s+verfügbar|nicht\s+auf\s+lager|currently\s+unavailable/i.test((document.querySelector('#availability') || {}).innerText || ''),
-    oos: [/derzeit\s+nicht\s+verfügbar/i, /nicht\s+auf\s+lager/i],
+      !/derzeit\s+nicht\s+verfügbar|nicht\s+auf\s+lager|currently\s+unavailable|temporarily\s+out\s+of\s+stock|actuellement\s+indisponible|temporairement\s+en\s+rupture/i.test((document.querySelector('#availability') || {}).innerText || ''),
+    oos: [/derzeit\s+nicht\s+verfügbar/i, /nicht\s+auf\s+lager/i, /currently\s+unavailable/i, /temporarily\s+out\s+of\s+stock/i, /actuellement\s+indisponible/i, /temporairement\s+en\s+rupture\s+de\s+stock/i],
     // Preis immer inkl. MwSt. (Business-Konten zeigen groß den Nettopreis)
     priceFn: () => {
       const inp = document.getElementById('items[0.base][customerVisiblePrice][amount]');
@@ -306,19 +309,22 @@
       const t = norm([...document.querySelectorAll('#merchant-info, #merchantInfoFeature_feature_div, #tabular-buybox, #shipsFromSoldByODF_feature_div, #offerDisplayFeatures_desktop, [offer-display-feature-name="desktop-merchant-info"]')]
         .map((e) => e.innerText || '').join(' '));
       if (!t) return null;
-      if (/verkauft?\b[^.]{0,50}?durch\s+amazon|verkäufer\s*:?\s*amazon/i.test(t)) return 'Amazon';
-      const m = t.match(/(?:verkäufer|verkauft\s+(?:von|durch))\s*:?\s*([^\n.]{2,40}?)(?=\s{2,}|\s+(rückgaben|zahlung|versand|und)|\.|$)/i);
+      // live (amazon.fr, englisch): „Shipper / Seller Amazon“, „Sold by Amazon …“; französisch: „Expéditeur / Vendeur Amazon“, „Vendu par Amazon“.
+      // „Amazon Seconde main / Retourenkauf / Warehouse“ = gebrauchte Ware → NICHT als Amazon werten
+      if (/(?:verkauft?\b[^.]{0,50}?durch|verkäufer\s*:?|sold\s+by|shipper\s*\/\s*seller|vendu\s+par|expéditeur\s*\/\s*vendeur|vendeur\s*:?)\s*amazon(?!\s*(?:seconde|retourenkauf|warehouse|resale|renewed))/i.test(t)) return 'Amazon';
+      const m = t.match(/(?:verkäufer|verkauft\s+(?:von|durch)|sold\s+by|shipper\s*\/\s*seller|seller|vendu\s+par|vendeur)\s*:?\s*([^\n.]{2,40}?)(?=\s{2,}|\s+(rückgaben|zahlung|versand|und|returns|payment|and|retours|paiement|et)\b|\.|$)/i);
       return m ? norm(m[1]) : null;
     },
     sellerRequired: true,     // Verkäufer nicht erkennbar → nicht kaufen
-    limitText: /mengenbegrenzung[^.]{0,60}erreicht|maximale\s+(bestell)?menge[^.]{0,40}erreicht|kauflimit[^.]{0,30}erreicht/i,
+    limitText: /mengenbegrenzung[^.]{0,60}erreicht|maximale\s+(bestell)?menge[^.]{0,40}erreicht|kauflimit[^.]{0,30}erreicht|quantity\s+limit[^.]{0,40}(reached|exceeded)|limite\s+de\s+quantité[^.]{0,40}atteinte/i,
     // Fehlerseite nach „In den Einkaufswagen“/„Jetzt kaufen“ (gesehen): „Ein Problem ist aufgetreten. Leider ist der Artikel … nicht mehr
     // über den von dir gewählten Anbieter erhältlich.“ → von vorne beginnen
-    failText: /ein\s+problem\s+ist\s+aufgetreten|nicht\s+mehr\s+über\s+den\s+von\s+(dir|ihnen)\s+gewählten\s+anbieter\s+erhältlich/i,
+    failText: /ein\s+problem\s+ist\s+aufgetreten|nicht\s+mehr\s+über\s+den\s+von\s+(dir|ihnen)\s+gewählten\s+anbieter\s+erhältlich|there\s+was\s+a\s+problem|no\s+longer\s+available\s+from\s+the\s+seller|un\s+problème\s+est\s+survenu|n['’]est\s+plus\s+disponible\s+auprès\s+du\s+vendeur/i,
     ownSeller: /^amazon/i,
     declineWarranty: true,    // „Schutzplan hinzufügen?“ → „Nein, danke“
     cartCount: () => { const e = document.querySelector('#nav-cart-count'); const n = e && parseInt(e.innerText, 10); return Number.isFinite(n) ? n : null; },
-    basketUrl: 'https://www.amazon.de/gp/cart/view.html',
+    // Warenkorb des jeweiligen Landes (im Dashboard: amazon.de)
+    get basketUrl() { return /(^|\.)amazon\.fr$/.test(location.hostname) ? 'https://www.amazon.fr/gp/cart/view.html' : 'https://www.amazon.de/gp/cart/view.html'; },
     basketRedirect: (p) => /\/cart\/smart-wagon|\/cart\/add-to-cart|\/gp\/huc\//i.test(p),   // Zwischenseite nach dem Hinzufügen
     isBasket: (p) => /^\/gp\/cart\/view|^\/cart\/?$|\/cart\/smart-wagon|\/gp\/huc\//i.test(p),
     isCheckout: (p) => /^\/checkout\/|\/gp\/buy\//i.test(p),
@@ -336,10 +342,11 @@
     checkoutSelector: '[name="proceedToRetailCheckout"]',
     // Zwischenseite „Benötigst du noch etwas?“ (/checkout/byg) → „Zur Kasse gehen“
     nextSelector: '[name="checkout-byg-ptc-button"]',
-    nextStep: [/^zur\s+kasse\s+gehen$/i, /^weiter\s+zur\s+kasse$/i],
-    toCheckout: [/^zur\s+kasse(\s+gehen)?$/i, /^proceed\s+to\s+checkout$/i],
+    nextStep: [/^zur\s+kasse\s+gehen$/i, /^weiter\s+zur\s+kasse$/i, /^proceed\s+to\s+checkout$/i, /^passer\s+la\s+commande$/i, /^use\s+this\s+(address|payment\s+method)$/i, /^utiliser\s+cette\s+(adresse|méthode\s+de\s+paiement)$/i],
+    toCheckout: [/^zur\s+kasse(\s+gehen)?$/i, /^proceed\s+to\s+checkout$/i, /^passer\s+la\s+commande$/i, /^valider\s+mon\s+panier$/i],
     // Kasse (eine Seite, /checkout/p/…/spc): Button input#placeOrder „Jetzt kaufen“
-    finalOrder: [/^jetzt\s+kaufen$/i, /^bestellung\s+aufgeben$/i, /^bestellung\s+abschicken$/i],
+    // (nur auf der Kassen-Seite gesucht – „Jetzt kaufen“/„Buy now“ auf der Produktseite wird nie benutzt)
+    finalOrder: [/^jetzt\s+kaufen$/i, /^bestellung\s+aufgeben$/i, /^bestellung\s+abschicken$/i, /^place\s+your\s+order$/i, /^buy\s+now$/i, /^passer\s+(votre|la)\s+commande$/i, /^acheter\s+maintenant$/i, /^valider\s+(votre|la)\s+commande$/i],
     minInterval: 30,
     beta: true,
   };
@@ -467,7 +474,7 @@
               /leider\s+nicht\s+mehr/i, /bestand\s+reicht\s+nicht/i, /nicht\s+in\s+der\s+gewünschten\s+menge/i],
     remove: [/^entfernen$/i, /^löschen$/i, /^entferne\b/i, /(artikel|produkt)\s+entfernen/i, /aus\s+dem\s+warenkorb\s+entfernen/i],
     confirmRemove: [/^entfernen$/i, /^ja/i, /^löschen$/i],
-    success: /vielen\s+dank|danke\s+für\s+deine\s+bestellung|bestellung\s+(ist\s+)?(eingegangen|bestätigt|aufgegeben)|bestellbestätigung|bestellnummer/i,
+    success: /vielen\s+dank|danke\s+für\s+deine\s+bestellung|bestellung\s+(ist\s+)?(eingegangen|bestätigt|aufgegeben)|bestellbestätigung|bestellnummer|order\s+placed|thank\s+you,?\s+your\s+order|commande\s+(validée|confirmée|passée)|merci,?\s+votre\s+commande/i,
     variantOpener: [/größe\s+wählen/i, /variante\s+wählen/i, /bitte\s+wählen/i],
   };
 
@@ -512,7 +519,7 @@
     while (/^(w-\d+|a\d{5,}|mp\d{5,}|buy-now|kaufen|product|p)$/i.test(slug) && parts.length > 2) slug = parts.pop();   // FNAC /a123/w-4 · Sony /ps5-pro/buy-now/
     if (/^[a-z0-9]{10,14}$/i.test(slug) && parts.length) {   // Microsoft: /d/<name>/<id> · Amazon: /<name>/dp/<ASIN>
       const id = slug; slug = parts.pop();
-      if (/^(dp|product)$/i.test(slug)) { if (parts[parts.length - 1] === 'gp') parts.pop(); slug = parts.length > 2 ? parts.pop() : `Amazon ${id}`; }
+      if (/^(dp|product)$/i.test(slug)) { if (parts[parts.length - 1] === 'gp') parts.pop(); slug = parts.length > 2 && !/^(-|[a-z]{2})$/i.test(parts[parts.length - 1]) ? parts.pop() : `Amazon ${id}`; }   // amazon.fr/-/en/dp/<ASIN>
     }
     if (/^[A-Z0-9_-]{14,}$/.test(slug) && parts.length) { slug = parts.pop(); if (/^product$/i.test(slug) && parts.length) slug = parts.pop(); }   // PlayStation: /<name>/product/<ID>
     return decodeURIComponent(slug).replace(/\.html$/, '').replace(/^_/, '').replace(/-\d{5,}$/, '').replace(/[-_]+/g, ' ').slice(0, 42);
@@ -1347,7 +1354,7 @@
   }
 
   /* ---------- Geräteschutz / Garantie-Angebote immer ablehnen ---------- */
-  const DECLINE_RE = /ich\s+verzichte|kein(en)?\s+(zusätzlichen\s+)?schutz|ohne\s+(zusätzlichen\s+)?(schutz|garantie|versicherung)|nein,?\s+danke/i;
+  const DECLINE_RE = /ich\s+verzichte|kein(en)?\s+(zusätzlichen\s+)?schutz|ohne\s+(zusätzlichen\s+)?(schutz|garantie|versicherung)|nein,?\s+danke|^no,?\s+thanks?$|^non,?\s+merci$/i;
   // Angehakte Garantie-/Service-Kästchen auf der aktuellen Seite abwählen
   async function uncheckAddons(where) {
     if (!SHOP.cartUncheck) return 0;
@@ -2892,7 +2899,7 @@
     sv(id, 'running', true);
     pushLog(id, `Vom Dashboard gestartet${gv(id, 'autoOrder', false) ? ' – AUTO-BESTELLUNG AN' : ''}`, 'buy');
     sv(id, 'cLast', 0); sv(id, 'cIdx', 0); sv(id, 'cFails', 0); sv(id, 'centralOff', 0); sv(id, 'cHit', null);
-    if (!tabOpen(id) && !centralOK(id)) openTab(list[0].url);
+    if (!tabOpen(id) && !centralOK(id)) { sv(id, 'heartbeat', Date.now()); openTab(list[0].url); }   // Herzschlag vorstellen: Wächter gibt dem neuen Tab 2,5 Min.
     return true;
   }
   // Tampermonkey-Tab (wird nicht vom Popup-Blocker gestoppt, auch bei "Alle starten")
