@@ -44,3 +44,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **Startklar-Check** (Einstellungen): prüft je Shop den zentralen Abruf, die Anmeldung und fremde Artikel im Warenkorb – ohne etwas zu ändern.
 - Das Dashboard (example.com) sollte im Browser auf „immer aktiv“ stehen.
 - 3.17.1: Shop-Domains als @connect eingetragen → keine Tampermonkey-Rückfrage mehr beim Prüf-Zentrum.
+- 3.17.2: Prüf-Zentrum wiederholt bei HTTP 400/431 ohne Cookies (Otto) und merkt sich das je Shop.

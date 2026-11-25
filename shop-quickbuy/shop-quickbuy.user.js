@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.17.1
+// @version      3.17.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2701,16 +2701,23 @@
     if (gv(id, 'captchaSince', 0) || gv(id, 'queueSince', 0) || gv(id, 'loginWait', 0)) return true;
     return hitAge < 120000;
   }
-  function gmFetch(url) {
+  function gmFetch(url, anon) {
     return new Promise((res) => {
       try {
-        GM_xmlhttpRequest({ method: 'GET', url, timeout: 20000, headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        GM_xmlhttpRequest({ method: 'GET', url, timeout: 20000, anonymous: !!anon, headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
           onload: (r) => res(r), onerror: () => res(null), ontimeout: () => res(null), onabort: () => res(null) });
       } catch (e) { res(null); }
     });
   }
   async function centralStatus(id, url) {
-    const r = await gmFetch(url);
+    let anon = !!gv(id, 'cAnon', false);
+    let r = await gmFetch(url, anon);
+    // HTTP 400/431: manche Shops (z. B. Otto) lehnen die Anfrage mit allen Cookies ab → ohne Cookies wiederholen und merken.
+    // Für den Lagerstatus ist keine Anmeldung nötig.
+    if (r && (r.status === 400 || r.status === 431) && !anon) {
+      const r2 = await gmFetch(url, true);
+      if (r2 && r2.status >= 200 && r2.status < 300) { sv(id, 'cAnon', true); anon = true; r = r2; }
+    }
     if (!r) return { st: 'err', why: 'keine Antwort' };
     if (r.status === 404 || r.status === 410) return { st: 'out' };
     const html = String(r.responseText || '');
