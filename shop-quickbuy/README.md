@@ -38,3 +38,8 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **Schlafende Tabs** werden erkannt (Protokoll + Discord), Anleitung für Chrome/Edge im Dashboard; der Tab-Wächter greift nach 2,5 statt 5 Min.
 - Läuft ein Shop schon in einem anderen Tab, wartet ein zweiter Tab und übernimmt nur, wenn der erste ausfällt (kein doppeltes Prüfen mehr).
 - 3.16.1: Doppelte Shop-Tabs (z. B. nach nächtlichem Standby) schließen sich selbst; nur ein Tab prüft pro Shop. Tab-Wächter wartet nach dem Aufwachen 90 s, bevor er Tabs neu öffnet.
+
+## Neu in 3.17.0 – Prüf-Zentrum & Startklar-Check
+- **Prüf-Zentrum:** Nur noch das Dashboard prüft (Otto, MediaMarkt, Saturn, PlayStation, Microsoft, FNAC) im Hintergrund. Ein Shop-Tab öffnet sich erst bei einem Treffer, legt in den Warenkorb, geht zur Kasse und schließt sich danach. Ein Shop-Tab, den du selbst offen lässt, dient als Bereitschafts-Tab (übernimmt Treffer ohne Öffnen). Amazon und Drop-Modus prüfen weiter im eigenen Tab. Klappt der zentrale Abruf 3× nicht, prüft der Shop 6 Std. wieder im eigenen Tab. Abschaltbar unter Einstellungen.
+- **Startklar-Check** (Einstellungen): prüft je Shop den zentralen Abruf, die Anmeldung und fremde Artikel im Warenkorb – ohne etwas zu ändern.
+- Das Dashboard (example.com) sollte im Browser auf „immer aktiv“ stehen.

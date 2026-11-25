@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.16.1
+// @version      3.17.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -127,8 +127,8 @@
       // (PS5 Pro/Xbox: OutOfStock, Kabel: InStock). Nur Marktplatz-Angebot („onlineStatus“: MP_OFFER) zählt als nicht verfügbar,
       // wenn „Nur Shop selbst“ an ist. Prüfung dauerte live 70–140 ms statt >10 s Neuladen.
       bgCheck: true,
-      bgParse: (html) => {
-        if (S.get('onlyOwn') && /\\?"onlineStatus\\?"\s*:\s*\\?"MP_OFFER/.test(html) && !/\\?"onlineStatus\\?"\s*:\s*\\?"AVAILABLE/.test(html)) return 'out';
+      bgParse: (html, get = (k) => S.get(k)) => {
+        if (get('onlyOwn') && /\\?"onlineStatus\\?"\s*:\s*\\?"MP_OFFER/.test(html) && !/\\?"onlineStatus\\?"\s*:\s*\\?"AVAILABLE/.test(html)) return 'out';
         // Produktdaten stecken als escaptes JSON im Seitenzustand (kein eigenes JSON-LD-Skript) → erstes Vorkommen = Hauptartikel
         const m = html.match(/\\?"availability\\?"\s*:\s*\\?"https?:\/\/schema\.org\/(\w+)/);
         if (!m) return null;
@@ -1023,20 +1023,24 @@
       lastBgHtml = html;
       // Weiterleitung auf eine andere Seite (Suche, anderes Produkt) → Seite laden und dort entscheiden
       if (r.redirected && keyOf(r.url) !== keyOf(url)) return 'err';
-      if (SHOP.bgParse) { const v = SHOP.bgParse(html); if (v) return v; }
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      for (const sc of doc.querySelectorAll('script[type="application/ld+json"]')) {
-        let d; try { d = JSON.parse(sc.textContent); } catch (e) { continue; }
-        for (const it of [].concat(d, (d && d['@graph']) || [])) {
-          if (!it || !/product/i.test([].concat(it['@type']).join())) continue;
-          const offers = [].concat(it.offers || []).flatMap((o) => [o].concat((o && o.offers) || []));
-          const av = offers.map((o) => String((o && o.availability) || '')).join(' ');
-          if (/InStock|PreOrder|LimitedAvailability|OnlineOnly/i.test(av)) return 'in';
-          if (/OutOfStock|SoldOut|Discontinued/i.test(av)) return 'out';
-        }
-      }
-      return 'err';
+      return parseStock(SHOP, html) || 'err';
     } catch (e) { return 'err'; }
+  }
+  // Lagerstatus aus dem HTML einer Produktseite: erst der Shop-eigene Parser, dann JSON-LD. null = unklar
+  function parseStock(sh, html, get) {
+    if (sh.bgParse) { const v = sh.bgParse(html, get); if (v) return v; }
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    for (const sc of doc.querySelectorAll('script[type="application/ld+json"]')) {
+      let d; try { d = JSON.parse(sc.textContent); } catch (e) { continue; }
+      for (const it of [].concat(d, (d && d['@graph']) || [])) {
+        if (!it || !/product/i.test([].concat(it['@type']).join())) continue;
+        const offers = [].concat(it.offers || []).flatMap((o) => [o].concat((o && o.offers) || []));
+        const av = offers.map((o) => String((o && o.availability) || '')).join(' ');
+        if (/InStock|PreOrder|LimitedAvailability|OnlineOnly/i.test(av)) return 'in';
+        if (/OutOfStock|SoldOut|Discontinued/i.test(av)) return 'out';
+      }
+    }
+    return null;
   }
   let lastBgHtml = '';
   // Preis aus dem Hintergrund-Abruf (erstes Angebot = Hauptartikel; auch als escaptes JSON) – nur zur Vorab-Prüfung,
@@ -1052,6 +1056,7 @@
     let rounds = 0;
     try {
       while (S.get('running') && !yielded) {
+        if (centralOK(SHOP_ID)) { park('Prüf-Zentrum übernimmt die Prüfung'); return; }
         if (dropActive() && !S.get('dropReloaded')) {
           S.set('dropReloaded', true);
           log('Drop-Modus aktiv – lade Seite neu (Login prüfen) und prüfe ab jetzt schneller', 'buy');
@@ -1097,6 +1102,7 @@
     const list = S.get('products');
     const n = Math.max(1, list.length);
     log(`[${(S.get('idx') % n) + 1}/${n} ${shortName(cur().url)}] ${reason || 'OOS (' + oosReason() + ')'}`);
+    if (centralOK(SHOP_ID)) return handBack();
     if (SHOP.bgCheck) return bgLoop();          // Sony/Microsoft: im Hintergrund weiterprüfen, nicht neu laden
     if (dropActive() && !S.get('dropReloaded')) { S.set('dropReloaded', true); log('Drop-Modus aktiv – prüfe ab jetzt schneller', 'buy'); }
 
@@ -2160,10 +2166,15 @@
       if (S.get('running') && String(S.get('stage')).startsWith('ps-')) { busy = true; renderPanel(); return psWatcher(); }
     }
     if (window.top !== window) return;   // in iFrames sonst nichts tun
+    if (PREFLIGHT) return runPreflight();
     renderPanel();
     if (!S.get('running')) return;
     busy = true;
     if (otherOwner()) return retireTab('Shop läuft schon in einem anderen Tab');
+    if (centralOK(SHOP_ID) && S.get('stage') === 'product' && !S.get('loginWait')) {
+      const hit = S.get('cHit');
+      if (!(hit && Date.now() - hit.at < 60000)) return park('Prüf-Zentrum prüft im Hintergrund – dieser Tab wartet auf einen Treffer');
+    }
     claimOwner();
     if (captchaPresent()) return handleCaptcha();
     if (queuePresent()) return handleQueue();
@@ -2634,7 +2645,7 @@
   // Shops der Gruppe, die gerade wirklich prüfen
   function groupShops(g) {
     return SHOP_IDS().filter((id) => SHOPS[id].rateGroup === g && gv(id, 'running', false) && gv(id, 'products', []).length
-      && Date.now() - (gv(id, 'heartbeat', 0) || 0) < 60000);
+      && (centralOK(id) || Date.now() - (gv(id, 'heartbeat', 0) || 0) < 60000));
   }
   // Sekunden zwischen zwei Runden (eine Runde = jedes Produkt einmal prüfen) – inkl. Gruppen-Limit und Captcha-Bremse
   function effRoundSec(id) {
@@ -2649,6 +2660,120 @@
     if (Date.now() < (gv(id, 'slowUntil', 0) || 0)) base *= 2;      // direkt nach einem Captcha 1 Std. zusätzlich langsamer
     return base;
   }
+  /* ---------- Prüf-Zentrum ----------
+   * Ein einziger Tab (das Dashboard, sonst ein Shop-Tab) prüft alle Shops im Hintergrund. Shop-Tabs öffnen sich erst bei einem
+   * Treffer, legen in den Warenkorb, gehen zur Kasse und schließen sich danach wieder. Bei Problemen (Captcha, Seite nicht
+   * lesbar) öffnet sich der Shop-Tab zur Kontrolle; klappt es 3× hintereinander nicht, prüft der Shop 6 Std. im eigenen Tab. */
+  const centralCapable = (id) => !!(SHOPS[id] && SHOPS[id].bgCheck && !SHOPS[id].shopify && !SHOPS[id].internal);
+  const dropOn = (id) => { const t = Date.parse(gv(id, 'dropAt', '') || ''); const now = Date.now(); return !isNaN(t) && now >= t - 3 * 60000 && now <= t + 20 * 60000; };
+  // Drop-Modus läuft weiter im eigenen Tab (schnelle Abfragen + frische Anmeldung)
+  function centralOK(id) { return !!G.get('central', true) && centralCapable(id) && !gv(id, 'dryRun', false) && Date.now() >= (gv(id, 'centralOff', 0) || 0) && !dropOn(id); }
+  const ownerFresh = (id) => { const o = gv(id, 'owner', null); return !!(o && Date.now() - o.at < 15000); };
+  // Ein Shop-Tab kümmert sich gerade (Treffer, Captcha, Warenkorb, Kasse) → das Prüf-Zentrum wartet so lange
+  function handledByTab(id) {
+    const hitAge = Date.now() - ((gv(id, 'cHit', null) || {}).at || 0);
+    if (hitAge < 30000) return true;                 // Shop-Tab öffnet sich gerade
+    if (!ownerFresh(id)) return false;
+    if (String(gv(id, 'stage', 'product')) !== 'product') return true;
+    if (gv(id, 'captchaSince', 0) || gv(id, 'queueSince', 0) || gv(id, 'loginWait', 0)) return true;
+    return hitAge < 120000;
+  }
+  function gmFetch(url) {
+    return new Promise((res) => {
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url, timeout: 20000, headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+          onload: (r) => res(r), onerror: () => res(null), ontimeout: () => res(null), onabort: () => res(null) });
+      } catch (e) { res(null); }
+    });
+  }
+  async function centralStatus(id, url) {
+    const r = await gmFetch(url);
+    if (!r) return { st: 'err', why: 'keine Antwort' };
+    if (r.status === 404 || r.status === 410) return { st: 'out' };
+    const html = String(r.responseText || '');
+    const captcha = html.length < 80000 && /captcha-delivery\.com|px-captcha|cf-chl-|\/errors\/validateCaptcha/i.test(html);
+    if (r.status === 403 || r.status === 429 || captcha) return { st: 'block', why: captcha ? 'Captcha' : `HTTP ${r.status}` };
+    if (r.status < 200 || r.status >= 300) return { st: 'err', why: `HTTP ${r.status}` };
+    if (r.finalUrl && keyOf2(id, r.finalUrl) !== keyOf2(id, url)) return { st: 'err', why: 'Weiterleitung' };
+    let v = null; try { v = parseStock(SHOPS[id], html, (k) => gv(id, k)); } catch (e) {}
+    return v ? { st: v, html } : { st: 'err', why: 'Lagerstatus nicht lesbar' };
+  }
+  // Treffer → Shop-Tab übernimmt (Bereitschafts-Tab im Hintergrund, sonst neuer Tab)
+  function centralHit(id, i, msg, type) {
+    const it = gv(id, 'products', [])[i]; if (!it) return;
+    sv(id, 'idx', i); sv(id, 'stage', 'product'); sv(id, 'navAt', Date.now()); sv(id, 'owner', null);
+    sv(id, 'cHit', { at: Date.now(), url: it.url });
+    pushLog(id, msg, type);
+    const open = () => { if (!ownerFresh(id)) openTab(it.url); };
+    if (Date.now() - (gv(id, 'parkBeat', 0) || 0) < 6000) later(1500, open); else open();
+  }
+  async function centralCheck(id, i) {
+    const list = gv(id, 'products', []); const it = list[i]; if (!it) return;
+    const tag = `[${i + 1}/${list.length} ${shortName(it.url)}]`;
+    const t0 = Date.now();
+    const r = await centralStatus(id, it.url);
+    sv(id, 'cBeat', Date.now());
+    if (!gv(id, 'running', false) || handledByTab(id)) return;
+    if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (Prüf-Zentrum, ${Date.now() - t0} ms)`, 'oos'); return; }
+    if (r.st === 'in') {
+      sv(id, 'cFails', 0);
+      const bp = bgPrice(r.html); const mx = Number(it.maxPrice) || 0;
+      if (bp && mx && bp > mx * 1.02) { pushLog(id, `${tag} verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos'); return; }
+      return centralHit(id, i, `${tag} Prüf-Zentrum: verfügbar! → Shop-Tab legt in den Warenkorb`, 'ok');
+    }
+    const f = (gv(id, 'cFails', 0) || 0) + 1; sv(id, 'cFails', f);
+    if (f >= 3) {
+      sv(id, 'cFails', 0); sv(id, 'centralOff', Date.now() + 6 * 3600e3);
+      pushLog(id, `Prüf-Zentrum klappt bei ${SHOPS[id].name} gerade nicht (${r.why}) → prüft 6 Std. wieder im eigenen Tab`, 'warn');
+      return;
+    }
+    centralHit(id, i, `${tag} Prüf-Zentrum: ${r.why} → öffne Shop-Tab zur Kontrolle`, 'warn');
+  }
+  const cBusy = {}; const cMode = {}; let cLastTick = 0;
+  function centralTick() {
+    const now = Date.now();
+    const slept = cLastTick && now - cLastTick > 60000; cLastTick = now;
+    for (const id of SHOP_IDS()) {
+      if (!gv(id, 'running', false)) { delete cMode[id]; continue; }
+      const list = gv(id, 'products', []); if (!list.length) continue;
+      const central = centralOK(id);
+      if (slept && central) pushLog(id, `Prüf-Zentrum hat geschlafen (${Math.round((now - (gv(id, 'cBeat', 0) || now)) / 60000)} Min. ohne Prüfung) – Dashboard-Tab im Browser auf „immer aktiv“ stellen`, 'warn');
+      // Shop wechselt in den eigenen Tab (Drop-Modus oder Zentrale klappt nicht) → Tab bereitstellen
+      if (cMode[id] === true && !central && !tabOpen(id)) { pushLog(id, 'Prüft jetzt im eigenen Tab', 'info'); openTab(list[gv(id, 'idx', 0) % list.length].url); }
+      cMode[id] = central;
+      if (!central || cBusy[id] || handledByTab(id)) continue;
+      if (ownerFresh(id)) {      // ein Tab prüft noch selbst / hängt nach einem Treffer → abmelden, Zentrale übernimmt
+        sv(id, 'owner', null); sv(id, 'kick', now);
+      }
+      const step = Math.max(2000, (effRoundSec(id) * 1000) / list.length);
+      if (now - (gv(id, 'cLast', 0) || 0) < step) continue;
+      sv(id, 'cLast', now);
+      const i = (gv(id, 'cIdx', 0) || 0) % list.length;
+      sv(id, 'cIdx', i + 1);
+      if (i === list.length - 1) {
+        const r = (gv(id, 'attempts', 0) || 0) + 1; sv(id, 'attempts', r);
+        const mx = Number(gv(id, 'maxAttempts', 0)) || 0;
+        if (mx > 0 && r >= mx) { sv(id, 'running', false); pushLog(id, `Gestoppt: Maximale Runden (${mx}) erreicht`, 'warn'); continue; }
+      }
+      cBusy[id] = true;
+      centralCheck(id, i).catch((e) => console.error('[QuickBuy] Prüf-Zentrum:', e)).finally(() => { cBusy[id] = false; });
+    }
+  }
+  // Genau ein Tab führt das Prüf-Zentrum: das Dashboard, sonst ein Shop-Tab (Absprache über GM-Storage, 6 s gültig)
+  function centralLeader() {
+    const now = Date.now(); const L = GM_getValue('global:centralLease', null);
+    const fresh = !!(L && now - L.at < 6000);
+    const mine = fresh && L.id === TAB_ID;
+    if (mine || !fresh || (STANDALONE && !L.dash)) GM_setValue('global:centralLease', { id: TAB_ID, at: now, dash: !!STANDALONE });
+    return mine;          // nach der Übernahme erst im nächsten Durchgang handeln (gleichzeitiger Zugriff)
+  }
+  let centralStarted = false;
+  function startCentral() {
+    if (centralStarted) return; centralStarted = true;
+    const t = () => later(1000, () => { try { if (centralLeader()) centralTick(); } catch (e) { console.error('[QuickBuy] Prüf-Zentrum:', e); } t(); });
+    t();
+  }
+
   // Abrufe pro Minute (ungefähr) – für die Anzeige im Dashboard
   function ratePerMin(ids) { return ids.reduce((a, id) => a + (gv(id, 'products', []).length * 60) / Math.max(1, effRoundSec(id)), 0); }
   function logFor(id) {
@@ -2668,7 +2793,8 @@
     if (SHOPS[id].stopAfterAdd || SHOPS[id].psFlow) sv(id, 'inCart', {});
     sv(id, 'running', true);
     pushLog(id, `Vom Dashboard gestartet${gv(id, 'autoOrder', false) ? ' – AUTO-BESTELLUNG AN' : ''}`, 'buy');
-    if (!tabOpen(id)) openTab(list[0].url);
+    sv(id, 'cLast', 0); sv(id, 'cIdx', 0); sv(id, 'cFails', 0); sv(id, 'centralOff', 0); sv(id, 'cHit', null);
+    if (!tabOpen(id) && !centralOK(id)) openTab(list[0].url);
     return true;
   }
   // Tampermonkey-Tab (wird nicht vom Popup-Blocker gestoppt, auch bei "Alle starten")
@@ -2910,7 +3036,7 @@
     const out = [];
     for (const id of SHOP_IDS()) {
       for (const e of logFor(id).slice(0, 15)) {
-        const isNeed = /kasse erreicht|bitte selbst|anmeldung klappt nicht|manuell|nicht bestätigt|über limit|nicht im warenkorb|weitere artikel|nicht angemeldet|verfügbar – alarm|schlafen gelegt|captcha-bremse/i.test(e.msg);
+        const isNeed = /kasse erreicht|bitte selbst|anmeldung klappt nicht|manuell|nicht bestätigt|über limit|nicht im warenkorb|weitere artikel|nicht angemeldet|verfügbar – alarm|schlafen gelegt|captcha-bremse|prüf-zentrum klappt|prüf-zentrum hat geschlafen/i.test(e.msg);
         if (!(e.type === 'err' || (e.type === 'warn' && isNeed) || isNeed)) continue;
         if (/gestoppt:\s*(manuell|vom dashboard)|probelauf erfolgreich/i.test(e.msg)) continue;   // selbst gestoppt = kein Problem
         if (!e.at || e.at <= dismissed || Date.now() - e.at > 3 * 3600e3) continue;
@@ -2929,12 +3055,14 @@
       const p = [];
       const dg = gv(id, 'diag', null);
       if (run) {
-        if (Date.now() - (gv(id, 'heartbeat', 0) || 0) > 180000) p.push('Tab reagiert nicht');
+        const cen = centralOK(id) && !handledByTab(id);
+        if (cen && Date.now() - (gv(id, 'cBeat', 0) || 0) > 300000) p.push('Prüf-Zentrum prüft nicht (Dashboard zu oder eingeschlafen?)');
+        if (!cen && Date.now() - (gv(id, 'heartbeat', 0) || 0) > 180000) p.push('Tab reagiert nicht');
         if (gv(id, 'captchaSince', 0)) p.push('Captcha offen');
         { const sl = (gv(id, 'sleeps', []) || []).filter((t) => Date.now() - t < 86400e3).length; if (sl) p.push(`Tab ${sl}× schlafen gelegt (24 Std.)`); }
         { const ci = capInfo(id); if (ci.h24) p.push(`${ci.h24}× Captcha (24 Std.)`); }
         if (gv(id, 'queueSince', 0)) p.push('in der Warteschlange');
-        if (!dg) p.push('noch keine Produktprüfung');
+        if (!dg && !cen) p.push('noch keine Produktprüfung');
         else {
           if (Date.now() - dg.t > 3600e3) p.push(`letzte Produktprüfung vor ${Math.round((Date.now() - dg.t) / 60000)} Min.`);
           if ((gv(id, 'diagBad', 0) || 0) >= 3) p.push('Produktseite wird nicht erkannt');
@@ -2979,6 +3107,7 @@
     for (const id of SHOP_IDS()) {
       if (!gv(id, 'running', false)) continue;
       const list = gv(id, 'products', []); if (!list.length) continue;
+      if (centralOK(id) && !handledByTab(id)) continue;          // Prüf-Zentrum prüft – kein Tab nötig
       if (Date.now() - (gv(id, 'heartbeat', 0) || 0) < 150000) continue;      // 2,5 Min. kein Lebenszeichen (Herzschlag läuft im Worker, wird nicht gedrosselt)
       if (Date.now() - (gv(id, 'reopenAt', 0) || 0) < 600000) continue;       // höchstens alle 10 Min.
       sv(id, 'reopenAt', Date.now()); sv(id, 'stage', 'product');
@@ -3248,6 +3377,11 @@
     if (!gv(id, 'running', false)) return { k: 'off', t: 'Gestoppt' };
     if (gv(id, 'captchaSince', 0)) return { k: 'warn', t: 'Captcha' };
     if (gv(id, 'queueSince', 0)) return { k: 'queue', t: 'Warteschlange' };
+    if (centralOK(id) && !handledByTab(id)) {
+      const n = Math.max(1, gv(id, 'products', []).length);
+      const late = Date.now() - (gv(id, 'cBeat', 0) || gv(id, 'cLast', 0) || Date.now()) > Math.max(90000, (effRoundSec(id) * 3000) / n + 30000);
+      return late ? { k: 'warn', t: 'Zentrale steht?' } : { k: 'on', t: 'Aktiv · Zentrale' };
+    }
     { const age = Date.now() - (gv(id, 'heartbeat', 0) || 0);
       if (age > 150000) return { k: 'warn', t: 'Kein Tab' };
       if (age > 20000) return { k: 'warn', t: 'Tab schläft?' }; }
@@ -3467,6 +3601,52 @@
   }
 
   /* ---------- Dashboard: Captcha-Schutz & schlafende Tabs ---------- */
+  /* ---------- Startklar-Check (Dashboard) ---------- */
+  let skRunning = false; let skAt = 0;
+  async function startklar() {
+    if (skRunning) return; skRunning = true; skAt = Date.now();
+    const ids = SHOP_IDS().filter((id) => gv(id, 'products', []).length && !SHOPS[id].internal);
+    const out = {};
+    for (const id of ids) {
+      out[id] = { central: null, why: '' };
+      if (SHOPS[id].basketUrl) { sv(id, 'preflightRes', null); sv(id, 'preflight', { at: Date.now() }); openTab(SHOPS[id].basketUrl); await sleep(800); }
+    }
+    G.set('startklar', { at: skAt, out }); renderDash(true);
+    await Promise.all(ids.filter(centralCapable).map(async (id) => {
+      const r = await centralStatus(id, gv(id, 'products', [])[0].url);
+      out[id] = { central: r.st, why: r.why || '' };
+      G.set('startklar', { at: skAt, out });
+    }));
+    const t0 = Date.now();
+    while (Date.now() - t0 < 70000 && ids.some((id) => SHOPS[id].basketUrl && !((gv(id, 'preflightRes', null) || {}).at > skAt))) { await sleep(1500); renderDash(true); }
+    skRunning = false; renderDash(true);
+  }
+  function startklarBlock() {
+    const sk = G.get('startklar', null);
+    const yes = '<span class="green">✔</span>'; const no = (t) => `<span class="red">✖ ${esc(t)}</span>`; const wait = skRunning ? '<span class="muted">prüft …</span>' : '<span class="muted">–</span>';
+    let rows = '';
+    if (sk) {
+      for (const id of Object.keys(sk.out || {})) {
+        if (!SHOPS[id]) continue;
+        const o = sk.out[id] || {};
+        const pf = gv(id, 'preflightRes', null); const pfOk = pf && pf.at > sk.at;
+        const cen = !centralCapable(id) ? '<span class="muted">eigener Tab</span>' : o.central === null ? wait
+          : o.central === 'in' || o.central === 'out' ? `${yes} ${o.central === 'in' ? 'verfügbar' : 'ausverkauft'}` : no(o.why || 'klappt nicht');
+        const login = !SHOPS[id].basketUrl ? '<span class="muted">–</span>' : !pfOk ? wait : pf.login === false ? no('nicht angemeldet') : yes;
+        const cart = !SHOPS[id].basketUrl ? '<span class="muted">–</span>' : !pfOk ? wait
+          : pf.foreign.length ? no(`fremd: ${pf.foreign.join(', ')}`) : `${yes} ${pf.n === null ? '' : pf.n ? `${pf.n} eigene(r)` : 'leer'}${pf.note ? ` <span class="muted">(${esc(pf.note)})</span>` : ''}`;
+        const pm = PAY[gv(id, 'payMethod', SHOPS[id].defaultPay || 'default')];
+        rows += `<tr><td><b>${esc(SHOPS[id].name)}</b></td><td>${cen}</td><td class="c">${login}</td><td>${cart}</td><td>${esc(pm ? pm.label : 'Standard')}${gv(id, 'autoOrder', false) ? ' · <span class="red">Auto</span>' : ''}</td></tr>`;
+      }
+    }
+    return `
+      <h3>🚦 Startklar-Check</h3>
+      <div class="row" style="gap:10px;align-items:center"><button class="sm" id="d-sk" ${skRunning ? 'disabled' : ''}>${skRunning ? '⏳ prüft …' : '▶ Jetzt prüfen'}</button>
+        <span class="muted">${sk ? `zuletzt ${agoText(sk.at)}` : 'Vor einem Drop einmal prüfen: Abruf, Anmeldung, Warenkorb.'}</span></div>
+      ${rows ? `<div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th>Abruf (Prüf-Zentrum)</th><th class="c">Angemeldet</th><th>Warenkorb</th><th>Zahlung</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
+      <div class="hint">Öffnet je Shop kurz den Warenkorb im Hintergrund, liest ihn nur aus und schließt ihn wieder. Fremde Artikel bitte selbst entfernen, sonst stoppt der Kauf an der Kasse.</div>`;
+  }
+
   function protectBlock() {
     const used = SHOP_IDS().filter((id) => gv(id, 'products', []).length || gv(id, 'running', false));
     const f = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
@@ -3500,7 +3680,7 @@
       <div class="hint">Damit Chrome/Edge die Shop-Tabs nie einfrieren:<br>
         <b>Chrome:</b> Einstellungen → <i>Leistung</i> → bei „Speicher sparen“ unter <i>Diese Websites immer aktiv lassen</i> auf <i>Hinzufügen</i> und die Shops eintragen.<br>
         <b>Edge:</b> Einstellungen → <i>System und Leistung</i> → <i>Schlafende Tabs</i> → <i>Diese Websites nie in den Standbymodus versetzen</i> → Hinzufügen.<br>
-        ${hosts.length ? `Einzutragen: <code>${hosts.map(esc).join('</code> <code>')}</code><br>` : ''}
+        Einzutragen: <code>example.com</code> (das Dashboard – wichtig fürs Prüf-Zentrum)${hosts.length ? ` <code>${hosts.map(esc).join('</code> <code>')}</code>` : ''}<br>
         Außerdem: Energiesparmodus/Standby des PCs aus, solange das Tool läuft. Erkennt das Script eine Pause, meldet es sich im Protokoll und in Discord; reagiert ein Tab 2,5 Min. nicht, öffnet das Dashboard ihn neu.</div>`;
   }
 
@@ -3537,18 +3717,7 @@
       const s = Math.max(0, Math.round((Date.now() - t) / 1000));
       return s < 60 ? `vor ${s} s` : s < 3600 ? `vor ${Math.round(s / 60)} Min.` : s < 86400 ? `vor ${Math.round(s / 3600)} Std.` : new Date(t).toLocaleDateString('de-DE');
     };
-    const shopState = (id) => {
-      if (!gv(id, 'running', false)) return { k: 'off', t: 'Gestoppt' };
-      if (gv(id, 'captchaSince', 0)) return { k: 'warn', t: 'Captcha' };
-      if (gv(id, 'queueSince', 0)) return { k: 'queue', t: 'Warteschlange' };
-      { const age = Date.now() - (gv(id, 'heartbeat', 0) || 0);
-        if (age > 150000) return { k: 'warn', t: 'Kein Tab' };
-        if (age > 20000) return { k: 'warn', t: 'Tab schläft?' }; }
-      const st = String(gv(id, 'stage', 'product'));
-      if (st === 'basket' || st === 'ps-cart') return { k: 'buy', t: 'Warenkorb' };
-      if (st !== 'product') return { k: 'buy', t: 'Kasse' };
-      return { k: 'on', t: 'Aktiv' };
-    };
+    const shopState = shopStateOf;
     const hue = (id) => { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
     const logo = (id) => `<span class="logo" style="background:linear-gradient(135deg,hsl(${hue(id)} 70% 52%),hsl(${(hue(id) + 40) % 360} 70% 42%))">${esc(SHOPS[id].name.replace(/[^A-Za-zÄÖÜ]/g, '').slice(0, 1).toUpperCase() || '?')}</span>`;
     const shopStrip = used.map((id) => {
@@ -3664,11 +3833,13 @@
       <div class="dcg">
         <label class="ck">Tagesbudget (alle Shops zusammen): <input type="text" id="g-budget" style="width:90px;flex:none" value="${Number(G.get('budgetDay', 0)) ? fmtEur(G.get('budgetDay', 0)) : ''}" placeholder="aus"> €</label>
         <span class="muted">heute ausgegeben: ${fmtEur(spentToday())} €</span>
+<label class="ck" title="Ein Tab (das Dashboard) prüft alle Shops im Hintergrund; Shop-Tabs öffnen sich nur bei einem Treffer. Gilt für Otto, MediaMarkt, Saturn, PlayStation, Microsoft, FNAC – Amazon prüft weiter im eigenen Tab."><input type="checkbox" data-gs="central" ${G.get('central', true) ? 'checked' : ''}> Prüf-Zentrum (nur ein Tab prüft, Shop-Tabs nur bei Treffer)</label>
         <label class="ck"><input type="checkbox" data-gs="autoReopen" ${G.get('autoReopen', true) ? 'checked' : ''}> Abgestürzte Shop-Tabs automatisch neu öffnen</label>
         <label class="ck"><input type="checkbox" data-gs="reportOn" ${G.get('reportOn', true) ? 'checked' : ''}> Täglicher Selbsttest an Discord um</label>
         <input type="time" id="g-rtime" value="${esc(G.get('reportTime', '09:00'))}" style="flex:none">
         <button class="sm" data-g="selftest">🩺 Selbsttest jetzt</button>
       </div>
+      ${startklarBlock()}
       ${protectBlock()}
       <div class="hint">Budget: Ist es erreicht, bestellt kein Shop mehr automatisch (zählt erfolgreiche Käufe seit 0 Uhr). Selbsttest, Tab-Wächter und Radar laufen, solange dieser Dashboard-Tab offen ist.</div>
       <h3>🔔 Discord</h3>
@@ -3876,6 +4047,7 @@
     if (rt) rt.onchange = () => { G.set('reportTime', rt.value || '09:00'); };
     d.querySelectorAll('[data-gs]').forEach((c) => { c.onchange = () => G.set(c.dataset.gs, c.checked); });
     d.querySelectorAll('[data-rate]').forEach((c) => { c.onchange = () => { const v = Math.max(0, Math.round(parseEur(c.value) || 0)); G.set(`rateMax:${c.dataset.rate}`, v); dashToast(v ? `${RATE_GROUPS[c.dataset.rate].name}: max. ${v} Abrufe/Min` : 'Gemeinsames Limit aus'); renderDash(true); }; });
+    { const b = d.querySelector('#d-sk'); if (b) b.onclick = () => { startklar().catch((e) => { skRunning = false; console.error('[QuickBuy] Startklar:', e); }); }; }
     d.querySelectorAll('[data-capreset]').forEach((b) => { b.onclick = () => { const k = b.dataset.capreset; const o = G.get(`cap:${k}`, null) || {}; G.set(`cap:${k}`, { lvl: 0, last: 0, hits: o.hits || [] }); dashToast('Captcha-Bremse zurückgesetzt'); renderDash(true); }; });
     // Discord-Bot
     const bTok = d.querySelector('#b-token');
@@ -3935,6 +4107,76 @@
   // Darf dieser Tab sich selbst schließen? Nur Tabs, die das Script geöffnet hat oder die schon für den Shop geprüft haben
   const isWorkerTab = () => ssGet('qbAuto') === '1' || ssGet('qbWorker') === SHOP_ID;
   function claimOwner() { S.set('owner', { id: TAB_ID, at: Date.now() }); ssSet('qbWorker', SHOP_ID); }
+
+  /* Prüf-Zentrum aktiv → Shop-Tab prüft nicht selbst, sondern „parkt“. Vom Script geöffnete Hintergrund-Tabs schließen sich;
+   * ein Tab, den du selbst offen hast, bleibt und dient als Bereitschafts-Tab (übernimmt Treffer sofort, solange er im Hintergrund liegt). */
+  let parked = false; let kickSeen = 0;
+  function closeSelf() {
+    yielded = true; busy = true;
+    setTimeout(() => { try { window.close(); } catch (e) {} setTimeout(() => { if (document.hidden) location.replace('about:blank'); }, 1500); }, 300);
+  }
+  function park(msg) {
+    const o = S.get('owner'); if (o && o.id === TAB_ID) S.set('owner', null);
+    if (parked) return;
+    parked = true; busy = true;
+    if (msg) log(msg, 'info');
+    // nur schließen, wenn ein anderer Tab das Prüf-Zentrum führt (sonst würde am Ende niemand mehr prüfen)
+    { const L = GM_getValue('global:centralLease', null);
+      if (isWorkerTab() && document.hidden && L && L.id !== TAB_ID && Date.now() - L.at < 6000) return closeSelf(); }
+    const st = document.getElementById('qb-cd'); if (st) st.textContent = '🛰️ Prüf-Zentrum prüft im Hintergrund – dieser Tab steht bereit';
+    const poll = () => later(400, () => {
+      if (!parked) return;
+      if (!S.get('running')) { parked = false; busy = false; renderPanel(); return; }
+      if (document.hidden) S.set('parkBeat', Date.now());
+      const hit = S.get('cHit');
+      const mustRun = !centralOK(SHOP_ID);
+      if (!ownerFresh(SHOP_ID) && (mustRun || (document.hidden && hit && Date.now() - hit.at < 10000))) {
+        parked = false; claimOwner(); S.set('navAt', Date.now());
+        log(mustRun ? 'Shop prüft wieder im eigenen Tab – dieser Tab übernimmt' : 'Treffer vom Prüf-Zentrum → Bereitschafts-Tab übernimmt', mustRun ? 'info' : 'buy');
+        location.href = (hit && !mustRun && hit.url) || cur().url;
+        return;
+      }
+      poll();
+    });
+    poll();
+  }
+  /* ---------- Startklar-Check (Shop-Tab) ----------
+   * Das Dashboard öffnet die Warenkorb-Seite im Hintergrund; der Tab prüft Anmeldung und fremde Artikel, meldet das Ergebnis
+   * und schließt sich. Er kauft nichts und ändert nichts. */
+  const PREFLIGHT = (() => {
+    if (window.top !== window || !SHOP || SHOP.internal || !SHOP.isBasket || !SHOP.isBasket(location.pathname)) return false;
+    const pf = S.get('preflight');
+    return !!(pf && Date.now() - pf.at < 120000 && ssGet('qbAuto') === '1');
+  })();
+  async function runPreflight() {
+    yielded = true; busy = true;           // prüft nicht mit, beansprucht den Shop nicht
+    const t0 = Date.now();
+    const ready = () => (SHOP.cartReady ? SHOP.cartReady() : document.readyState === 'complete' && Date.now() - t0 > 6000);
+    while (Date.now() - t0 < 45000 && !ready()) await sleep(1000);
+    await sleep(1500);
+    const res = { at: Date.now(), login: null, n: null, foreign: [], note: '' };
+    try { res.login = !loggedOutHint(); } catch (e) {}
+    try {
+      if (SHOP.cartItems) {
+        const items = SHOP.cartItems();
+        const keys = (S.get('products') || []).map((x) => keyOf(x.url)).filter((k) => k && k.length >= 5);
+        res.n = items.length;
+        res.foreign = items.filter((it) => !keys.some((k) => (it.href || (it.box && it.box.innerHTML) || '').toLowerCase().includes(k))).map((it) => it.title || '?').slice(0, 5);
+      } else {
+        const c = cartCountAny(); res.n = c === null || c === undefined ? null : c;
+      }
+    } catch (e) { res.note = 'Warenkorb nicht lesbar'; }
+    if (!ready()) res.note = 'Warenkorb lud nicht vollständig';
+    S.set('preflightRes', res); S.set('preflight', null);
+    log(`Startklar-Check: ${res.login === false ? 'NICHT angemeldet' : 'angemeldet'}, Warenkorb ${res.n === null ? '?' : res.n} Artikel${res.foreign.length ? ` (fremd: ${res.foreign.join(', ')})` : ''}`, res.login === false || res.foreign.length ? 'warn' : 'ok');
+    setTimeout(() => { try { window.close(); } catch (e) {} setTimeout(() => { if (document.hidden) location.replace('about:blank'); }, 1500); }, 300);
+  }
+
+  // Treffer-Tab ist fertig (nicht kaufbar o. Ä.) → zurück an das Prüf-Zentrum
+  function handBack() {
+    S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
+    park('Zurück an das Prüf-Zentrum');
+  }
   // Ein anderer Tab prüft diesen Shop schon → dieser hört auf (Hintergrund-Tab des Scripts: schließt sich ganz)
   function retireTab(why) {
     if (yielded) return;
@@ -3961,7 +4203,11 @@
     const now = Date.now();
     if (lastBeat && now - lastBeat > 60000) sleepDetected(now - lastBeat, 'Pause erkannt');
     lastBeat = now;
-    if (yielded) return;
+    if (yielded || PREFLIGHT) return;
+    if (parked) { S.set('heartbeat', now); return; }
+    // Prüf-Zentrum hat diesen Tab abgemeldet (prüfte noch selbst oder hing nach einem Treffer)
+    { const k = S.get('kick') || 0;
+      if (k > kickSeen && k > TAB_START && S.get('running') && S.get('stage') === 'product') { kickSeen = k; return park('Prüf-Zentrum übernimmt die Prüfung'); } }
     if (S.get('running') && otherOwner()) {
       // Zwei Tabs prüfen denselben Shop (z. B. alter Tab ist nach dem Schlafen wieder aufgewacht) → dieser tritt zurück.
       // Mitten im Bezahlen nie abbrechen.
@@ -4055,11 +4301,13 @@
     const loop = (ms, fn) => { const tick = () => later(ms, () => { Promise.resolve().then(fn).catch((e) => console.error('[QuickBuy]', e)).finally(tick); }); tick(); };
     setTimeout(chores, 5000); loop(20000, chores);
     loop(4000, botPoll);
+    startCentral();
     console.log('[QuickBuy] Dashboard-Tab aktiv');
     return;
   }
   if (SHOP_ID === '__queue') { queuePage(); return; }
   startRemoteWatch();
+  if (window.top === window) startCentral();      // übernimmt nur, wenn kein Dashboard offen ist
 
   console.log(`[QuickBuy] Version ${(GM_info && GM_info.script && GM_info.script.version) || '?'} aktiv auf ${location.hostname} → Shop: ${SHOP.name}`);
   main().catch((e) => { console.error('[QuickBuy] Fehler:', e); try { log(`Interner Fehler: ${e && e.message}`, 'err'); } catch (e2) {} });
