@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.4
+// @version      3.19.5
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -307,10 +307,14 @@
       const t = norm([...document.querySelectorAll('#merchant-info, #merchantInfoFeature_feature_div, #tabular-buybox, #shipsFromSoldByODF_feature_div, #offerDisplayFeatures_desktop, [offer-display-feature-name="desktop-merchant-info"]')]
         .map((e) => e.innerText || '').join(' '));
       if (!t) return null;
-      // live (amazon.fr, englisch): „Shipper / Seller Amazon“, „Sold by Amazon …“; französisch: „Expéditeur / Vendeur Amazon“, „Vendu par Amazon“.
+      // Amazon Business (live 25.11.): „Verkauft und in Rechnung gestellt von Amazon. Versandt und bezogen von resupplied.“
+      // → Ware kommt von einem Händler (oft zu Wucherpreisen) → Verkäufer = dieser Händler, NICHT Amazon
+      const src = t.match(/bezogen\s+von\s+([^.]{2,40}?)\s*(?:\.|$)/i);
+      if (src && !/^amazon\b/i.test(norm(src[1]))) return norm(src[1]);
+      // „Verkauf und Versand durch Amazon“, „Verkauft und versandt von Amazon“, „Verkäufer: Amazon“, englisch/französisch;
       // „Amazon Seconde main / Retourenkauf / Warehouse“ = gebrauchte Ware → NICHT als Amazon werten
-      if (/(?:verkauft?\b[^.]{0,50}?durch|verkäufer\s*:?|sold\s+by|shipper\s*\/\s*seller|vendu\s+par|expéditeur\s*\/\s*vendeur|vendeur\s*:?)\s*amazon(?!\s*(?:seconde|retourenkauf|warehouse|resale|renewed))/i.test(t)) return 'Amazon';
-      const m = t.match(/(?:verkäufer|verkauft\s+(?:von|durch)|sold\s+by|shipper\s*\/\s*seller|seller|vendu\s+par|vendeur)\s*:?\s*([^\n.]{2,40}?)(?=\s{2,}|\s+(rückgaben|zahlung|versand|und|returns|payment|and|retours|paiement|et)\b|\.|$)/i);
+      if (/(?:verkauft?\b[^.]{0,60}?(?:durch|von)|verkäufer\s*:?|sold\s+by|shipper\s*\/\s*seller|vendu\s+par|expéditeur\s*\/\s*vendeur|vendeur\s*:?)\s*amazon(?!\s*(?:seconde|retourenkauf|warehouse|resale|renewed))/i.test(t)) return 'Amazon';
+      const m = t.match(/(?:verkäufer|verkauft?\b[^.]{0,40}?\s(?:von|durch)|sold\s+by|shipper\s*\/\s*seller|vendu\s+par|vendeur)\s*:?\s*([^\n.]{2,40}?)(?=\s{2,}|\s+(rückgaben|zahlung|versand|und|returns|payment|and|retours|paiement|et)\b|\.|$)/i);
       return m ? norm(m[1]) : null;
     },
     sellerRequired: true,     // Verkäufer nicht erkennbar → nicht kaufen
@@ -318,7 +322,7 @@
     // Fehlerseite nach „In den Einkaufswagen“/„Jetzt kaufen“ (gesehen): „Ein Problem ist aufgetreten. Leider ist der Artikel … nicht mehr
     // über den von dir gewählten Anbieter erhältlich.“ → von vorne beginnen
     failText: /ein\s+problem\s+ist\s+aufgetreten|nicht\s+mehr\s+über\s+den\s+von\s+(dir|ihnen)\s+gewählten\s+anbieter\s+erhältlich|there\s+was\s+a\s+problem|no\s+longer\s+available\s+from\s+the\s+seller|un\s+problème\s+est\s+survenu|n['’]est\s+plus\s+disponible\s+auprès\s+du\s+vendeur/i,
-    ownSeller: /^amazon/i,
+    ownSeller: /^amazon(?!\s*(?:seconde|retourenkauf|warehouse|resale|renewed))/i,   // gebrauchte Amazon-Ware zählt nicht
     declineWarranty: true,    // „Schutzplan hinzufügen?“ → „Nein, danke“
     cartCount: () => { const e = document.querySelector('#nav-cart-count'); const n = e && parseInt(e.innerText, 10); return Number.isFinite(n) ? n : null; },
     basketUrl: 'https://www.amazon.de/gp/cart/view.html',
