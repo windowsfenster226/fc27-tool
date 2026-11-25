@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.5
+// @version      3.19.6
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2829,6 +2829,16 @@
         } }
       return centralHit(id, i, `${tag} Prüf-Zentrum: verfügbar! → Shop-Tab legt in den Warenkorb`, 'ok');
     }
+    // HTTP 429 = „zu viele Anfragen“: kein Tab öffnen, sondern Pause (gilt für MediaMarkt+Saturn gemeinsam) + Captcha-Bremse
+    if (r.st === 'block' && /429/.test(r.why || '')) {
+      const k = capKey(id); const prev = G.get(`c429:${k}`, null);
+      const n = prev && Date.now() - prev.at < 3600e3 ? prev.n + 1 : 1;
+      const mins = Math.min(15, 2 * n);
+      G.set(`c429:${k}`, { n, at: Date.now(), until: Date.now() + mins * 60000 });
+      if (n === 1 || n % 3 === 0) capRecord(id);
+      pushLog(id, `${tag} ${SHOPS[id].rateGroup ? RATE_GROUPS[SHOPS[id].rateGroup].name : SHOPS[id].name} bremst (HTTP 429, zu viele Abrufe) → ${mins} Min. Pause, danach langsamer`, 'warn');
+      return;
+    }
     const f = (gv(id, 'cFails', 0) || 0) + 1; sv(id, 'cFails', f);
     if (f >= 3) {
       sv(id, 'cFails', 0); sv(id, 'centralOff', Date.now() + 6 * 3600e3);
@@ -2850,6 +2860,7 @@
       if (cMode[id] === true && !central && !tabOpen(id)) { pushLog(id, 'Prüft jetzt im eigenen Tab', 'info'); openTab(list[gv(id, 'idx', 0) % list.length].url); }
       cMode[id] = central;
       if (!central || cBusy[id] || handledByTab(id)) continue;
+      { const p429 = G.get(`c429:${capKey(id)}`, null); if (p429 && now < p429.until) continue; }   // Shop hat „zu viele Abrufe“ gemeldet
       if (ownerFresh(id)) {      // ein Tab prüft noch selbst / hängt nach einem Treffer → abmelden, Zentrale übernimmt
         sv(id, 'owner', null); sv(id, 'kick', now);
       }
