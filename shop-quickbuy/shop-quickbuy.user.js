@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.16.0
+// @version      3.16.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -44,6 +44,7 @@
 // @grant        GM_info
 // @grant        GM_openInTab
 // @grant        GM_addStyle
+// @grant        window.close
 // @connect      discord.com
 // @connect      discordapp.com
 // @connect      *
@@ -1050,7 +1051,7 @@
     if (bgActive) return; bgActive = true;
     let rounds = 0;
     try {
-      while (S.get('running')) {
+      while (S.get('running') && !yielded) {
         if (dropActive() && !S.get('dropReloaded')) {
           S.set('dropReloaded', true);
           log('Drop-Modus aktiv – lade Seite neu (Login prüfen) und prüfe ab jetzt schneller', 'buy');
@@ -1068,7 +1069,7 @@
           if (!S.get('running')) break;
           countdown(step);
           await wait(step);
-          if (!S.get('running')) break;
+          if (!S.get('running') || yielded) break;
           const st = await bgStatus(list[i].url);
           const tag = `[${i + 1}/${list.length} ${shortName(list[i].url)}]`;
           if (st === 'in') {
@@ -1111,7 +1112,7 @@
       wait = Math.round((Math.max(2, Number(S.get('stepDelaySec')) || 3) + Math.random() * 2) * 1000);
     }
     countdown(wait);
-    later(wait, () => { if (S.get('running')) { S.set('navAt', Date.now()); location.href = cur().url; } });
+    later(wait, () => { if (S.get('running') && !yielded) { S.set('navAt', Date.now()); location.href = cur().url; } });
   }
 
   // Nach erfolgreicher Bestellung: stoppen oder mit restlichen Produkten weitermachen
@@ -2162,8 +2163,8 @@
     renderPanel();
     if (!S.get('running')) return;
     busy = true;
-    if (otherOwner()) return yieldTab();
-    S.set('owner', { id: TAB_ID, at: Date.now() });
+    if (otherOwner()) return retireTab('Shop läuft schon in einem anderen Tab');
+    claimOwner();
     if (captchaPresent()) return handleCaptcha();
     if (queuePresent()) return handleQueue();
     if (S.get('queueSince')) queuePassed();
@@ -2672,7 +2673,9 @@
   }
   // Tampermonkey-Tab (wird nicht vom Popup-Blocker gestoppt, auch bei "Alle starten")
   function openTab(url, active) {
-    try { GM_openInTab(url, { active: !!active, insert: true, setParent: true }); } catch (e) { window.open(url, '_blank'); }
+    // #qb-auto markiert Tabs, die das Script selbst öffnet → darf sie später auch wieder schließen
+    const u = url === DASH_URL ? url : `${String(url).split('#')[0]}#qb-auto`;
+    try { GM_openInTab(u, { active: !!active, insert: true, setParent: true }); } catch (e) { window.open(u, '_blank'); }
   }
   function dashStop(id) { sv(id, 'running', false); sv(id, 'stage', 'product'); sv(id, 'dryRun', false); pushLog(id, 'Gestoppt: vom Dashboard', 'warn'); }
 
@@ -2966,7 +2969,12 @@
   }
 
   /* ---------- Abgestürzte Shop-Tabs neu öffnen ---------- */
+  let watchLast = 0; let watchGrace = 0;
   function watchdog() {
+    const now = Date.now();
+    if (watchLast && now - watchLast > 60000) watchGrace = now + 90000;   // war selbst eingeschlafen → 90 s Schonfrist
+    watchLast = now;
+    if (now < watchGrace) return;
     if (!G.get('autoReopen', true)) return;
     for (const id of SHOP_IDS()) {
       if (!gv(id, 'running', false)) continue;
@@ -3921,6 +3929,23 @@
    * Chrome („Speicher sparen“) und Edge („Schlafende Tabs“) frieren Hintergrund-Tabs ein oder entladen sie → keine Prüfung.
    * Erkennung: Lücke im Herzschlag (läuft im Worker, wird also nicht gedrosselt), document.wasDiscarded, freeze/resume. */
   let yielded = false; let lastBeat = 0;
+  const ssGet = (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
+  const ssSet = (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} };
+  if (/#qb-auto$/.test(location.hash)) { ssSet('qbAuto', '1'); try { history.replaceState(null, '', location.href.replace(/#qb-auto$/, '')); } catch (e) {} }
+  // Darf dieser Tab sich selbst schließen? Nur Tabs, die das Script geöffnet hat oder die schon für den Shop geprüft haben
+  const isWorkerTab = () => ssGet('qbAuto') === '1' || ssGet('qbWorker') === SHOP_ID;
+  function claimOwner() { S.set('owner', { id: TAB_ID, at: Date.now() }); ssSet('qbWorker', SHOP_ID); }
+  // Ein anderer Tab prüft diesen Shop schon → dieser hört auf (Hintergrund-Tab des Scripts: schließt sich ganz)
+  function retireTab(why) {
+    if (yielded) return;
+    if (isWorkerTab() && document.hidden) {
+      yielded = true; busy = true;
+      log(`${why} – doppelter Tab schließt sich`, 'info');
+      setTimeout(() => { try { window.close(); } catch (e) {} setTimeout(() => { if (!document.hidden) return; location.replace('about:blank'); }, 1500); }, 300);
+      return;
+    }
+    yieldTab();
+  }
   function sleepDetected(gapMs, how) {
     if (!S.get('running')) return;
     const l = (S.get('sleeps') || []).filter((t) => Date.now() - t < 7 * 86400e3);
@@ -3937,18 +3962,27 @@
     if (lastBeat && now - lastBeat > 60000) sleepDetected(now - lastBeat, 'Pause erkannt');
     lastBeat = now;
     if (yielded) return;
+    if (S.get('running') && otherOwner()) {
+      // Zwei Tabs prüfen denselben Shop (z. B. alter Tab ist nach dem Schlafen wieder aufgewacht) → dieser tritt zurück.
+      // Mitten im Bezahlen nie abbrechen.
+      if (/^(product|basket)$/.test(S.get('stage'))) return retireTab('Shop läuft schon in einem anderen Tab');
+      return;
+    }
     S.set('heartbeat', now);
-    if (S.get('running') && !otherOwner()) S.set('owner', { id: TAB_ID, at: now });
+    if (S.get('running')) claimOwner();
   }
   // Läuft der Shop schon in einem anderen Tab? Dann wartet dieser hier, statt doppelt zu prüfen
   function otherOwner() { const o = S.get('owner'); return !!(o && o.id !== TAB_ID && Date.now() - o.at < 15000); }
   function yieldTab() {
     yielded = true; busy = true;
-    log('Shop läuft schon in einem anderen Tab – dieser Tab wartet (übernimmt, falls der andere ausfällt)', 'info');
+    const worker = isWorkerTab();
+    log(worker ? 'Shop läuft schon in einem anderen Tab – dieser Tab wartet (übernimmt, falls der andere ausfällt)'
+      : 'Shop läuft schon in einem anderen Tab – dieser Tab bleibt normal bedienbar und prüft nicht mit', 'info');
+    if (!worker) return;          // von dir selbst geöffneter Tab: nichts tun, nie wegnavigieren
     const poll = () => later(5000, () => {
       if (!S.get('running')) { yielded = false; busy = false; return; }
       if (otherOwner()) return poll();
-      yielded = false; S.set('owner', { id: TAB_ID, at: Date.now() });
+      yielded = false; claimOwner();
       log('Anderer Tab antwortet nicht mehr – dieser Tab übernimmt', 'info');
       S.set('navAt', Date.now()); location.href = cur().url || location.href;
     });
@@ -3969,8 +4003,7 @@
     setInterval(() => {
       // Das Dashboard hat diesen Tab für abgestürzt gehalten und einen neuen geöffnet → dieser Tab tritt zurück (sonst laufen zwei)
       if ((S.get('reopenAt') || 0) > TAB_START && S.get('running') && /^(product|basket)$/.test(S.get('stage'))) {
-        log('Ersatz-Tab ist aktiv – dieser alte Tab beendet sich', 'info');
-        location.replace('about:blank');
+        if (!yielded) { log('Ersatz-Tab ist aktiv – dieser alte Tab beendet sich', 'info'); yielded = true; busy = true; setTimeout(() => { try { window.close(); } catch (e) {} setTimeout(() => location.replace('about:blank'), 1500); }, 300); }
         return;
       }
       if (!yielded) S.set('heartbeat', Date.now());
