@@ -1,13 +1,12 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.0
+// @version      3.19.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
 // @match        https://www.saturn.de/*
 // @match        https://www.amazon.de/*
-// @match        https://www.amazon.fr/*
 // @match        https://www.fnacpro.com/*
 // @match        https://fnacpro.com/*
 // @match        https://secure.fnacpro.com/*
@@ -53,7 +52,6 @@
 // @connect      mediamarkt.de
 // @connect      saturn.de
 // @connect      amazon.de
-// @connect      amazon.fr
 // @connect      fnacpro.com
 // @connect      microsoft.com
 // @connect      playstation.com
@@ -285,10 +283,10 @@
   // Amazon (live geprüft 24.11.2026, auch mit Business-Konto). NUR „In den Einkaufswagen“ – nie „Jetzt kaufen“ (1-Click bestellt sofort!)
   SHOPS.amazon = {
     name: 'Amazon',
-    // amazon.de und amazon.fr (auch mit englischer/französischer Oberfläche, z. B. amazon.fr/-/en/…)
-    host: /(^|\.)amazon\.(de|fr)$/,
-    productUrl: /^https:\/\/www\.amazon\.(de|fr)\/(?:[^?#]*\/)?(?:dp|gp\/product)\/[A-Z0-9]{10}/i,
-    productHint: 'https://www.amazon.de/dp/XXXXXXXXXX (oder amazon.fr)',
+    // nur amazon.de (Links anderer Amazon-Länder werden auf amazon.de/dp/<ASIN> umgestellt)
+    host: /(^|\.)amazon\.de$/,
+    productUrl: /^https:\/\/www\.amazon\.de\/(?:[^?#]*\/)?(?:dp|gp\/product)\/[A-Z0-9]{10}/i,
+    productHint: 'https://www.amazon.de/dp/XXXXXXXXXX',
     productKey: (u) => { const m = u.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i); return m ? m[1].toLowerCase() : stripUrl(u); },
     addToCart: [/^in\s+den\s+einkaufswagen$/i],
     buyFilter: (el) => el.id === 'add-to-cart-button' || !!el.closest('#addToCart_feature_div, #add-to-cart-button'),
@@ -323,8 +321,7 @@
     ownSeller: /^amazon/i,
     declineWarranty: true,    // „Schutzplan hinzufügen?“ → „Nein, danke“
     cartCount: () => { const e = document.querySelector('#nav-cart-count'); const n = e && parseInt(e.innerText, 10); return Number.isFinite(n) ? n : null; },
-    // Warenkorb des jeweiligen Landes (im Dashboard: amazon.de)
-    get basketUrl() { return /(^|\.)amazon\.fr$/.test(location.hostname) ? 'https://www.amazon.fr/gp/cart/view.html' : 'https://www.amazon.de/gp/cart/view.html'; },
+    basketUrl: 'https://www.amazon.de/gp/cart/view.html',
     basketRedirect: (p) => /\/cart\/smart-wagon|\/cart\/add-to-cart|\/gp\/huc\//i.test(p),   // Zwischenseite nach dem Hinzufügen
     isBasket: (p) => /^\/gp\/cart\/view|^\/cart\/?$|\/cart\/smart-wagon|\/gp\/huc\//i.test(p),
     isCheckout: (p) => /^\/checkout\/|\/gp\/buy\//i.test(p),
@@ -3135,7 +3132,21 @@
 
   let dashTab = 'home';
   let logShop = 'all'; let logImportant = false;
+  // Amazon läuft nur auf amazon.de: Links aus anderen Amazon-Ländern (amazon.fr, .it, .es, .com …) → amazon.de/dp/<ASIN>
+  function amazonToDe(u) {
+    const m = String(u || '').match(/^https?:\/\/(?:www\.)?amazon\.(?!de\/)[a-z.]{2,6}\/(?:[^?#]*\/)?(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+    return m ? `https://www.amazon.de/dp/${m[1].toUpperCase()}` : null;
+  }
   function shopOfUrl(url) { return SHOP_IDS().find((id) => SHOPS[id].productUrl.test(url)) || null; }
+  // einmalig beim Dashboard-Start: vorhandene Amazon-Produkte anderer Länder umstellen (Duplikate fallen weg)
+  function migrateAmazonDe() {
+    const l = gv('amazon', 'products', []); let n = 0; const seen = new Set(); const out = [];
+    for (const x of l) {
+      const de = amazonToDe(x.url); if (de) { x.url = de; n++; }
+      const k = keyOf2('amazon', x.url); if (seen.has(k)) continue; seen.add(k); out.push(x);
+    }
+    if (n || out.length !== l.length) { sv('amazon', 'products', out); pushLog('amazon', `${n} Amazon-Link(s) aus anderen Ländern auf amazon.de umgestellt`, 'warn'); }
+  }
   function attentionItems() {
     const dismissed = GM_getValue('global:dismissed', 0);
     const out = [];
@@ -3729,8 +3740,9 @@
         else if (qty === null && /^\d{1,3}$/.test(tok)) qty = parseInt(tok, 10);   // zweite (ganze) Zahl = Stückzahl
       }
       for (const raw of urls) {
-        const u = stripUrl(raw.replace(/[),.]+$/, ''));
-        out.push({ url: u, id: shopOfUrl(u), maxPrice: max !== null ? max : defMax, qty: qty !== null ? qty : defQty });
+        let u = stripUrl(raw.replace(/[),.]+$/, '')); let conv = false;
+        const de = amazonToDe(u); if (de) { u = de; conv = true; }
+        out.push({ url: u, id: shopOfUrl(u), maxPrice: max !== null ? max : defMax, qty: qty !== null ? qty : defQty, conv });
       }
     }
     return out;
@@ -3763,7 +3775,7 @@
         seen.add(k);
         const ex = gv(it.id, 'products', []).find((x) => keyOf2(it.id, x.url) === keyOf2(it.id, it.url));
         if (ex) return { ...it, st: upd ? 'upd' : 'skip', note: upd ? `vorhanden → ${ex.maxPrice ? fmtEur(ex.maxPrice) : '–'} € wird ${it.maxPrice ? fmtEur(it.maxPrice) : '–'} €` : 'schon eingetragen' };
-        return { ...it, st: 'new', note: 'neu' };
+        return { ...it, st: 'new', note: it.conv ? 'neu (auf amazon.de umgestellt)' : 'neu' };
       });
       const nNew = items.filter((x) => x.st === 'new').length; const nUpd = items.filter((x) => x.st === 'upd').length;
       prev.innerHTML = items.length ? `<div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th>Produkt</th><th class="r">Max. €</th><th class="c">Stück</th><th></th></tr></thead><tbody>${items.map((x) => `<tr>
@@ -4105,7 +4117,8 @@
       const g = b.dataset.g;
       if (g === 'close') return closeDashboard();
       if (g === 'add') {
-        const u = stripUrl(norm(d.querySelector('#d-url').value)); const id = shopOfUrl(u);
+        let u = stripUrl(norm(d.querySelector('#d-url').value)); { const de = amazonToDe(u); if (de) { u = de; dashToast('Amazon-Link auf amazon.de umgestellt'); } }
+        const id = shopOfUrl(u);
         if (!id) { alert('Keine Produkt-URL eines unterstützten Shops erkannt.'); return; }
         const l = gv(id, 'products', []);
         if (l.some((x) => keyOf2(id, x.url) === keyOf2(id, u))) { alert(`Dieses Produkt ist bei ${SHOPS[id].name} schon eingetragen.`); return; }
@@ -4502,6 +4515,7 @@
     const loop = (ms, fn) => { const tick = () => later(ms, () => { Promise.resolve().then(fn).catch((e) => console.error('[QuickBuy]', e)).finally(tick); }); tick(); };
     setTimeout(chores, 5000); loop(20000, chores);
     loop(4000, botPoll);
+    try { migrateAmazonDe(); } catch (e) { console.error('[QuickBuy] Amazon-Umstellung:', e); }
     startCentral();
     console.log('[QuickBuy] Dashboard-Tab aktiv');
     return;
