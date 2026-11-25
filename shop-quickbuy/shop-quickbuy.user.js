@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.1
+// @version      3.19.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2811,6 +2811,8 @@
     const r = await centralStatus(id, it.url);
     sv(id, 'cBeat', Date.now());
     if (!gv(id, 'running', false) || handledByTab(id)) return;
+    // Abruf klappt und kein Tab hängt im Captcha → alten Captcha-Merker löschen (sonst bleibt „Captcha“ stehen)
+    if ((r.st === 'out' || r.st === 'in') && gv(id, 'captchaSince', 0) && !ownerFresh(id)) sv(id, 'captchaSince', 0);
     if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (Prüf-Zentrum, ${Date.now() - t0} ms)`, 'oos'); return; }
     if (r.st === 'in') {
       sv(id, 'cFails', 0);
@@ -3491,7 +3493,7 @@
   const autoOn = (id) => gv(id, 'autoOrder', false) && !SHOPS[id].alertOnly && !SHOPS[id].stopAfterAdd;
   function shopStateOf(id) {
     if (!gv(id, 'running', false)) return { k: 'off', t: 'Gestoppt' };
-    if (gv(id, 'captchaSince', 0)) return { k: 'warn', t: 'Captcha' };
+    if (gv(id, 'captchaSince', 0) && (!centralOK(id) || ownerFresh(id))) return { k: 'warn', t: 'Captcha' };
     if (gv(id, 'queueSince', 0)) return { k: 'queue', t: 'Warteschlange' };
     if (centralOK(id) && !handledByTab(id)) {
       const n = Math.max(1, gv(id, 'products', []).length);
@@ -4389,6 +4391,7 @@
       fh[k] = { n: o.n + 1, at: Date.now() }; S.set('falseHits', fh);
     }
     S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
+    S.set('captchaSince', 0);          // Seite lud normal → kein Captcha (mehr)
     park('Zurück an das Prüf-Zentrum');
   }
   // Ein anderer Tab prüft diesen Shop schon → dieser hört auf (Hintergrund-Tab des Scripts: schließt sich ganz)
