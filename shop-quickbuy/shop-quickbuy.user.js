@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.17.3
+// @version      3.18.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -343,16 +343,35 @@
     productUrl: /^https:\/\/(www\.)?fnacpro\.com\/(?:[^?#]*\/)?(?:a|mp)\d{5,}/i,
     productHint: 'https://www.fnacpro.com/…/a12345678/…',
     productKey: (u) => { const m = u.match(/\/(a|mp)(\d{5,})/i); return m ? m[2] : stripUrl(u).replace(/^https:\/\/(www\.)?fnacpro\.com\//i, '').replace(/\/+$/, '').toLowerCase(); },
-    // Warenkorb liegt auf secure.fnacpro.com (Schritte: 1 Panier → 2 Livraison → 3 Paiement)
-    basketUrl: 'https://secure.fnacpro.com/orderpipe/pop/panier',
-    isBasket: (p) => /\/orderpipe\/pop\/panier|panier|basket|cart|warenkorb/i.test(p), isCheckout: (p) => /livraison|paiement|commande|checkout|kasse/i.test(p),
-    cartReady: () => !!document.querySelector('button[data-testid^="remove"]') || /votre\s+panier\s+est\s+vide|panier\s*\(0\s+produit/i.test(document.body.innerText),
-    // live: <li> je Artikel, Löschen-Button data-testid="remove-item" bzw. "remove-unavailable-item"
-    cartItems: () => [...document.querySelectorAll('button[data-testid^="remove"]')].map((del) => {
+    /* Kasse auf secure.fnacpro.com (live geprüft 25.11.): 1 Panier → „Choisir ma livraison“ → 2 Livraison (Adresse/Versand
+     * vorausgewählt) → „Passer à l'étape suivante“ → 3 Paiement. Beide Buttons: data-testid="basketSubmitBtn".
+     * Bezahlt wird mit Karte, die bei FNAC eingegeben werden muss → das Script hält auf der Zahlungsseite an (gibt nie Kartendaten ein).
+     * Achtung: Nicht lieferbare Artikel im Warenkorb blockieren „Choisir ma livraison“ (Seite lädt nur neu).
+     * Warenkorb immer über „?pipe=pop&reset=1“ öffnen – die direkte /panier-Adresse zeigte einen veralteten Stand. */
+    basketUrl: 'https://secure.fnacpro.com/orderpipe?pipe=pop&reset=1',
+    isBasket: (p) => /^\/orderpipe(\/pop\/panier)?\/?$/i.test(p),
+    isCheckout: (p) => /^\/orderpipe\/pop\/(livraison|paiement)/i.test(p),
+    cartReady: () => !!document.querySelector('button[data-testid^="remove"], button[data-testid="btn-delete-product"]') || /panier\s+est\s+(tristement\s+)?vide/i.test(document.body.innerText),
+    // <li> je Artikel; Löschen: data-testid="btn-delete-product" (lieferbar) bzw. "remove-unavailable-item"
+    cartItems: () => [...document.querySelectorAll('button[data-testid="btn-delete-product"], button[data-testid^="remove"]')].map((del) => {
       const box = del.closest('li') || del.parentElement;
       const link = [...box.querySelectorAll('a')].find((a) => /\/(a|mp)\d{5,}/i.test(a.href));
-      return { box, href: link ? link.href : '', remove: del, title: norm(link ? link.innerText : box.innerText.slice(0, 80)), qty: 1, unitPrice: 0, minus: null };
+      const pr = box.querySelector('[data-testid="product-price-value"]');
+      const qs = box.querySelector('select[data-testid="productQuantityDropdown"]');
+      return { box, href: link ? link.href : '', remove: del, title: norm(link ? link.innerText : box.innerText.slice(0, 80)),
+        qty: qs ? parseInt(qs.value, 10) || 1 : 1, unitPrice: pr ? parsePrice(pr.innerText) || 0 : 0, minus: null };
     }),
+    totalSelector: '[data-testid="summaryTotal"]',
+    checkoutSelector: '[data-testid="basketSubmitBtn"]',
+    nextSelector: '[data-testid="basketSubmitBtn"]',
+    nextStep: [/^passer\s+à\s+l['’]étape\s+suivante$/i, /^choisir\s+ma\s+livraison$/i],
+    toCheckout: [/^choisir\s+ma\s+livraison$/i],
+    // Zahlungsseite: „Carte bancaire“ wählen, dann anhalten – Karte + „Payer“ macht der Nutzer
+    manualPay: {
+      at: () => /^\/orderpipe\/pop\/paiement/i.test(location.pathname) && !!document.querySelector('[data-testid="summaryPaymentBtn"]'),
+      prepare: () => { const r = document.querySelector('input[name="payment-method"][value="Carte bancaire"]'); if (r && !r.checked) clickEl(r.closest('label') || r); },
+      msg: 'Karte eingeben und auf „Payer“ klicken',
+    },
     // Lagerstatus im Seitencode (JSON-LD) – live geprüft: InStock ↔ „Ajouter au panier“ vorhanden, OutOfStock ↔ kein Button
     bgCheck: true,
     addToCart: [/^ajouter\s+au\s+panier$/i],
@@ -364,8 +383,8 @@
     signInButton: () => [...document.querySelectorAll('a, button')].find((e) => /^me\s+connecter$/i.test(norm(e.innerText)) && visible(e)),
     oos: [/rupture\s+de\s+stock/i, /indisponible/i, /épuisé/i, /plus\s+disponible/i, /ausverkauft/i, /nicht\s+verfügbar/i, /out\s+of\s+stock/i],
     hardOos: [/rupture\s+de\s+stock/i, /article\s+indisponible/i, /produit\s+indisponible/i, /stock\s+en\s+ligne\s+épuisé/i],
-    toCheckout: [], finalOrder: [],
-    stopAfterAdd: true,    // in den Warenkorb + Alarm (Kasse folgt, sobald Warenkorb/Kasse analysiert sind)
+    finalOrder: [/^payer$/i],
+    unavailBlocks: /article\s+indisponible/i,
     minInterval: 45,
     beta: true,
   };
@@ -1715,6 +1734,16 @@
         }
         if (!others.length) log('Warenkorb aufgeräumt – nur noch das Zielprodukt drin ✔', 'ok');
       }
+      // FNAC: ein nicht lieferbarer Artikel im Warenkorb blockiert den Weg zur Kasse
+      if (SHOP.unavailBlocks) {
+        const bad = others.filter((o) => SHOP.unavailBlocks.test(o.box.innerText || ''));
+        if (bad.length) {
+          const names = bad.map((o) => o.title.slice(0, 40)).join(', ');
+          discord('error', `Im Warenkorb liegt ein nicht lieferbarer Artikel (${names}) – damit lässt ${SHOP.name} nicht zur Kasse. **Bitte entfernen und selbst weitermachen.**`);
+          notify(`QuickBuy ${SHOP.name}`, `Nicht lieferbarer Artikel blockiert die Kasse: ${names}`);
+          return stop(`Nicht lieferbarer Artikel im Warenkorb blockiert die Kasse: ${names} – bitte entfernen`);
+        }
+      }
       if (others.length) {
         const names = others.map((o) => o.title.slice(0, 40)).join(', ');
         if (S.get('autoOrder')) {
@@ -1832,6 +1861,18 @@
         if (pay.msg && !pay.none) { if (!S.get('payOk')) log(pay.msg, 'info'); S.set('payOk', true); }
       }
       if (location.pathname !== lastPathSeen) { lastPathSeen = location.pathname; log(`Kasse: Seite ${lastPathSeen}`, 'info'); }
+      // Shops, bei denen die Karte auf der Seite eingegeben werden muss (FNAC Pro): hier anhalten, nie selbst bezahlen
+      if (SHOP.manualPay && SHOP.manualPay.at()) {
+        await sleep(1500);
+        try { SHOP.manualPay.prepare(); } catch (e) {}
+        const pb = document.querySelector('[data-testid="summaryPaymentBtn"]');
+        if (pb) { pb.style.outline = '4px solid #e60000'; pb.scrollIntoView({ block: 'center' }); }
+        const total = getTotalPrice();
+        if (S.get('dryRun')) return stop('🧪 Probelauf erfolgreich – bis zur Zahlungsseite ✔ (Artikel bitte wieder aus dem Warenkorb nehmen)');
+        notify(`QuickBuy ${SHOP.name}`, `Zahlungsseite erreicht – ${SHOP.manualPay.msg}!`);
+        discord('checkout', `Artikel liegt bereit${total ? ` (Gesamt ${fmtEur(total)} €)` : ''} – jetzt nur noch **${SHOP.manualPay.msg}**!`);
+        return stop(`Zahlungsseite erreicht – ${SHOP.manualPay.msg}`);
+      }
       const f = findClickable(SHOP.finalOrder);
       if (f && !isDisabled(f)) {
         // Zahlungsseite wurde übersprungen (Shop merkt sich die letzte Zahlungsart) → auf der Übersicht prüfen
@@ -3645,6 +3686,93 @@
   }
 
   /* ---------- Dashboard: Captcha-Schutz & schlafende Tabs ---------- */
+  /* ---------- Mehrere Produkte auf einmal ----------
+   * Je Zeile: Link, dahinter optional Höchstpreis und Stückzahl – in beliebiger Schreibweise, z. B.
+   *   https://…/ps5-123   449,99   2
+   *   https://…/xbox-456 ; 399 € ; x1        (auch direkt aus Excel/Google Sheets kopiert, mit Tab getrennt)
+   * Mehrere Links in einer Zeile bekommen denselben Preis. */
+  function parseBulk(text, defMax, defQty) {
+    const out = [];
+    for (const line of String(text || '').split(/\r?\n/)) {
+      const urls = line.match(/https?:\/\/[^\s;"'<>|]+/gi);
+      if (!urls) continue;
+      const rest = line.replace(/https?:\/\/[^\s;"'<>|]+/gi, ' ');
+      let max = null; let qty = null;
+      for (const tok of rest.split(/[\s;\t|]+/).map((t) => t.trim()).filter(Boolean)) {
+        let m;
+        if ((m = tok.match(/^(?:x|×)(\d+)$/i) || tok.match(/^(\d+)(?:x|×|stk\.?|stück)$/i))) { qty = parseInt(m[1], 10); continue; }
+        if (/^(∞|alle)$/i.test(tok)) { qty = 0; continue; }
+        if (/^(€|eur|euro|max\.?|preis:?|stk\.?|stück)$/i.test(tok)) continue;
+        const v = parseEur(tok.replace(/€|eur$/i, ''));
+        if (!(v > 0)) continue;
+        if (max === null) max = v;                                    // erste Zahl = Höchstpreis
+        else if (qty === null && /^\d{1,3}$/.test(tok)) qty = parseInt(tok, 10);   // zweite (ganze) Zahl = Stückzahl
+      }
+      for (const raw of urls) {
+        const u = stripUrl(raw.replace(/[),.]+$/, ''));
+        out.push({ url: u, id: shopOfUrl(u), maxPrice: max !== null ? max : defMax, qty: qty !== null ? qty : defQty });
+      }
+    }
+    return out;
+  }
+  function bulkAddDialog(d) {
+    const box = document.createElement('div'); box.className = 'toast'; box.style.width = 'min(760px,94vw)'; box.style.maxHeight = '86vh'; box.style.overflow = 'auto';
+    box.innerHTML = `<div style="margin-bottom:6px;font-weight:700">📋 Mehrere Produkte einfügen</div>
+      <div class="muted" style="margin-bottom:6px">Je Zeile ein Link, dahinter optional Höchstpreis und Stückzahl, z. B. <code>https://…/ps5 449,99 2</code> – auch direkt aus Excel kopierbar.</div>
+      <textarea id="bk-t" style="min-height:160px" placeholder="https://www.mediamarkt.de/de/product/_…  449,99  1&#10;https://www.saturn.de/de/product/_…  449,99&#10;https://www.fnacpro.com/…/a20901133/…  ; 420 € ; x2"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0">
+        <span class="muted">Ohne Angabe:</span>
+        <input type="text" id="bk-max" placeholder="Max. €" style="width:90px"> <input type="text" id="bk-qty" placeholder="Stück" value="1" style="width:64px">
+        <label class="ck"><input type="checkbox" id="bk-upd" checked> schon eingetragene Produkte: Preis/Stück aktualisieren</label>
+      </div>
+      <div id="bk-prev"></div>
+      <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px"><button data-x>Abbrechen</button><button class="go" data-ok disabled>Hinzufügen</button></div>`;
+    d.appendChild(box);
+    const ta = box.querySelector('#bk-t'); const prev = box.querySelector('#bk-prev'); const ok = box.querySelector('[data-ok]');
+    let items = [];
+    const qOf = (v) => { const t = norm(v); return t === '' ? 1 : /^(∞|0|alle)$/i.test(t) ? 0 : Math.max(1, parseInt(t, 10) || 1); };
+    const refresh = () => {
+      const defMax = parseEur(box.querySelector('#bk-max').value) || 0;
+      const defQty = qOf(box.querySelector('#bk-qty').value);
+      const upd = box.querySelector('#bk-upd').checked;
+      const seen = new Set();
+      items = parseBulk(ta.value, defMax, defQty).map((it) => {
+        if (!it.id) return { ...it, st: 'bad', note: 'kein unterstützter Shop / keine Produktseite' };
+        const k = `${it.id}|${keyOf2(it.id, it.url)}`;
+        if (seen.has(k)) return { ...it, st: 'skip', note: 'doppelt in der Liste' };
+        seen.add(k);
+        const ex = gv(it.id, 'products', []).find((x) => keyOf2(it.id, x.url) === keyOf2(it.id, it.url));
+        if (ex) return { ...it, st: upd ? 'upd' : 'skip', note: upd ? `vorhanden → ${ex.maxPrice ? fmtEur(ex.maxPrice) : '–'} € wird ${it.maxPrice ? fmtEur(it.maxPrice) : '–'} €` : 'schon eingetragen' };
+        return { ...it, st: 'new', note: 'neu' };
+      });
+      const nNew = items.filter((x) => x.st === 'new').length; const nUpd = items.filter((x) => x.st === 'upd').length;
+      prev.innerHTML = items.length ? `<div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th>Produkt</th><th class="r">Max. €</th><th class="c">Stück</th><th></th></tr></thead><tbody>${items.map((x) => `<tr>
+          <td>${x.id ? esc(SHOPS[x.id].name) : '<span class="red">?</span>'}</td><td>${esc(shortName(x.url))}</td>
+          <td class="r">${x.maxPrice ? fmtEur(x.maxPrice) : '<span class="muted">egal</span>'}</td><td class="c">${x.qty === 0 ? '∞' : x.qty}</td>
+          <td class="${x.st === 'bad' ? 'red' : x.st === 'skip' ? 'muted' : 'green'}">${esc(x.note)}</td></tr>`).join('')}</tbody></table></div>
+        ${items.some((x) => x.st === 'new' && !x.maxPrice) ? '<div class="hint bad">Mindestens ein Produkt hat keinen Höchstpreis – es würde zu jedem Preis gekauft.</div>' : ''}` : '';
+      ok.disabled = !(nNew + nUpd);
+      ok.textContent = nNew + nUpd ? `${nNew ? `${nNew} hinzufügen` : ''}${nNew && nUpd ? ' + ' : ''}${nUpd ? `${nUpd} aktualisieren` : ''}` : 'Hinzufügen';
+    };
+    ta.oninput = refresh; box.querySelector('#bk-max').oninput = refresh; box.querySelector('#bk-qty').oninput = refresh; box.querySelector('#bk-upd').onchange = refresh;
+    box.querySelector('[data-x]').onclick = () => box.remove();
+    ok.onclick = () => {
+      let a = 0; let u = 0; const shops = new Set();
+      for (const it of items) {
+        if (it.st !== 'new' && it.st !== 'upd') continue;
+        const l = gv(it.id, 'products', []);
+        const ex = l.find((x) => keyOf2(it.id, x.url) === keyOf2(it.id, it.url));
+        if (ex) { ex.maxPrice = it.maxPrice; ex.qty = it.qty; u++; } else { l.push({ url: it.url, variant: '', maxPrice: it.maxPrice, qty: it.qty, bought: 0 }); a++; }
+        sv(it.id, 'products', l); shops.add(it.id);
+      }
+      shops.forEach((id) => pushLog(id, 'Produkte per Liste eingefügt/aktualisiert (Dashboard)', 'info'));
+      box.remove();
+      dashToast(`${a ? `${a} Produkt(e) hinzugefügt` : ''}${a && u ? ', ' : ''}${u ? `${u} aktualisiert` : ''} – ${[...shops].map((id) => SHOPS[id].name).join(', ')}`);
+      renderDash(true);
+    };
+    ta.focus();
+  }
+
   /* ---------- Startklar-Check (Dashboard) ---------- */
   let skRunning = false; let skAt = 0;
   async function startklar() {
@@ -3811,6 +3939,7 @@
           <input type="text" id="d-max" placeholder="Max. €" style="width:96px;flex:none">
           <input type="text" id="d-qty" placeholder="Stück" title="Stückzahl (∞ = so viele wie möglich)" style="width:72px;flex:none">
           <button class="go" data-g="add">Hinzufügen</button>
+          <button data-g="bulk" title="Viele Links auf einmal einfügen – mit Preis und Stückzahl je Zeile">📋 Mehrere</button>
         </div>
         <div class="hint" id="d-hint"></div>
         ${used.length ? `<h3>Shops <span class="muted">${runIds.length} von ${used.length} aktiv</span></h3><div class="shops">${shopStrip}</div>` : ''}
@@ -3972,6 +4101,7 @@
         if (autos.length && !confirm(`Starten – mit AUTO-BESTELLUNG bei: ${autos.join(', ')}.\n\nFortfahren?`)) return;
         todo.forEach(dashStart);
       }
+      if (g === 'bulk') return bulkAddDialog(d);
       if (g === 'stopall') ids.forEach((id) => { if (gv(id, 'running', false)) dashStop(id); });
       if (g === 'dismiss') GM_setValue('global:dismissed', Date.now());
       if (g === 'export') return exportAll();

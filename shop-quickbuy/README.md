@@ -46,3 +46,7 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - 3.17.1: Shop-Domains als @connect eingetragen → keine Tampermonkey-Rückfrage mehr beim Prüf-Zentrum.
 - 3.17.2: Prüf-Zentrum wiederholt bei HTTP 400/431 ohne Cookies (Otto) und merkt sich das je Shop.
 - 3.17.3: FNAC Pro im Prüf-Zentrum (JSON-LD, live geprüft) und im Startklar-Check (Warenkorb auf secure.fnacpro.com). Kasse bei FNAC weiterhin nur Alarm.
+
+## Neu in 3.18.0
+- **FNAC Pro: automatische Kasse** bis zur Zahlungsseite (Warenkorb → Lieferung → Zahlung, live getestet). Dort wählt das Script „Carte bancaire“ und hält an – Karte eingeben und „Payer“ machst du (das Script gibt nie Kartendaten ein). Ein nicht lieferbarer Artikel im Warenkorb blockiert bei FNAC die Kasse → klare Meldung.
+- **📋 Mehrere Produkte auf einmal** einfügen (Übersicht → „Mehrere“): je Zeile Link + optional Höchstpreis + Stückzahl, auch aus Excel kopierbar; vorhandene Produkte können dabei aktualisiert werden.
