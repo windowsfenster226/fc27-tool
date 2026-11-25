@@ -54,3 +54,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - 3.19.0: Amazon.fr (auch englische/französische Oberfläche) – Prüfung, Verkäufer-Erkennung (inkl. Ausschluss „Amazon Seconde main“), Warenkorb, Kasse. Neuer Tab bekommt nach „Starten“ 2,5 Min. Schonfrist (kein doppelter Tab mehr).
 - 3.19.1: Amazon wieder nur amazon.de. Links anderer Amazon-Länder (amazon.fr, .it, .co.uk …) werden beim Einfügen und einmal beim Dashboard-Start automatisch auf amazon.de/dp/<ASIN> umgestellt.
 - 3.19.2: Veralteter Captcha-Status wird gelöscht, sobald der Abruf wieder klappt (FNAC blieb sonst auf „Captcha“ stehen).
+- 3.19.3: „Verbindung testen“ (Discord-Bot) übernimmt die richtige Kanal-ID automatisch aus dem Webhook und sagt, ob der Bot auf dem richtigen Server ist.

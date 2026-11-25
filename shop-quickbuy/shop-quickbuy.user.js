@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.2
+// @version      3.19.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -3412,9 +3412,53 @@
       } catch (e) { res({ status: 0, json: null }); }
     });
   }
+  // Webhook-Infos (ohne Anmeldung abrufbar): in welchem Kanal/Server landen die Meldungen?
+  function webhookInfo() {
+    const url = String(dc('webhook') || '').trim();
+    if (!WEBHOOK_RE.test(url)) return Promise.resolve(null);
+    return new Promise((res) => {
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url, timeout: 15000,
+          onload: (r) => { let j = null; try { j = JSON.parse(r.responseText); } catch (e) {} res(r.status === 200 ? j : null); },
+          onerror: () => res(null), ontimeout: () => res(null) });
+      } catch (e) { res(null); }
+    });
+  }
+  // „Verbindung testen“: prüft Token und Kanal; ist der Kanal falsch, wird die Kanal-ID des Webhooks übernommen
+  async function botTest() {
+    let ch = String(G.get('botChannel', '')).trim();
+    if (!G.get('botToken', '')) { alert('Bitte den Bot-Token eintragen.'); return; }
+    botBackoff = 0;
+    const u = await botReq('GET', '/users/@me');
+    if (u.status !== 200) return dashToast(`✖ ${botErr(u)}`);
+    const name = u.json.username;
+    let c = ch ? await botReq('GET', `/channels/${ch}`) : { status: 404, json: null };
+    if (c.status !== 200) {
+      const wh = await webhookInfo();
+      if (wh && wh.channel_id && wh.channel_id !== ch) {
+        G.set('botChannel', wh.channel_id); G.set('botLast', ''); ch = wh.channel_id;
+        c = await botReq('GET', `/channels/${ch}`);
+        if (c.status === 200) { botState = { ok: true, msg: 'verbunden', at: Date.now() }; renderDash(true); return dashToast(`✔ Kanal-ID war falsch – übernommen aus deinem Webhook: #${c.json.name}. Bot „${name}“ ist verbunden.`); }
+        renderDash(true);
+      }
+      if (c.status !== 200) {
+        let hint = '';
+        if (wh && wh.guild_id) {
+          const gq = await botReq('GET', `/guilds/${wh.guild_id}`);
+          if (gq.status !== 200) hint = ' – der Bot ist NICHT auf dem Server, in den deine Meldungen gehen (Einladungslink erneut öffnen und diesen Server wählen)';
+          else hint = ` – Bot ist auf „${gq.json.name}“, aber der Kanal sperrt ihn (Kanal-Rechte für den Bot speichern)`;
+        }
+        botState = { ok: false, msg: botErr(c), at: Date.now() }; renderDash(true);
+        return dashToast(`✖ Bot „${name}“ ok, aber Kanal ${ch}: ${botErr(c)}${hint}`);
+      }
+    }
+    botState = { ok: true, msg: 'verbunden', at: Date.now() }; renderDash(true);
+    dashToast(`✔ Bot „${name}“ sieht den Kanal #${c.json.name}`);
+  }
+
   function botErr(r) {
     if (r.status === 401) return 'Bot-Token ungültig';
-    if (r.status === 403) return 'Bot darf den Kanal nicht lesen/schreiben (Rechte prüfen)';
+    if (r.status === 403) return `Bot darf den Kanal nicht lesen/schreiben (Rechte prüfen)${r.json && r.json.code ? ` [Discord ${r.json.code}]` : ''}`;
     if (r.status === 404) return 'Kanal nicht gefunden (Kanal-ID prüfen, Bot auf dem Server?)';
     if (r.status === 0) return 'Discord nicht erreichbar (Tampermonkey-Erlaubnis?)';
     return `Discord-Fehler HTTP ${r.status}`;
@@ -4159,16 +4203,7 @@
       if (g === 'clearlogs') { if (!confirm('Protokolle aller Shops leeren?')) return; ids.forEach((id) => sv(id, 'log', [])); }
       if (g === 'clearhist') { if (!confirm('Kaufhistorie wirklich leeren?')) return; GM_setValue('global:history', []); }
       if (g === 'csv') return exportCsv();
-      if (g === 'bottest') {
-        const ch = String(G.get('botChannel', '')).trim();
-        if (!G.get('botToken', '') || !ch) { alert('Bitte Bot-Token und Kanal-ID eintragen.'); return; }
-        Promise.all([botReq('GET', '/users/@me'), botReq('GET', `/channels/${ch}`)]).then(([u, c]) => {
-          if (u.status !== 200) return dashToast(`✖ ${botErr(u)}`);
-          if (c.status !== 200) return dashToast(`✖ Bot „${u.json.username}“ ok, aber Kanal: ${botErr(c)}`);
-          dashToast(`✔ Bot „${u.json.username}“ sieht den Kanal #${c.json.name}`);
-        });
-        return;
-      }
+      if (g === 'bottest') { botTest(); return; }
       if (g === 'selftest') {
         const r = selfTest();
         const box = document.createElement('div'); box.className = 'toast'; box.style.width = 'min(640px,92vw)';
