@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.7
+// @version      3.19.8
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -3254,8 +3254,13 @@
       sv(id, 'reopenAt', Date.now()); sv(id, 'stage', 'product');
       sv(id, 'owner', null);
       openTab(list[gv(id, 'idx', 0) % list.length].url);
-      pushLog(id, 'Tab reagierte 2,5 Min. nicht (geschlafen/abgestürzt) – vom Dashboard neu geöffnet', 'warn');
-      discord('error', `Der Tab von **${SHOPS[id].name}** reagierte nicht mehr (vom Browser schlafen gelegt oder abgestürzt) und wurde neu geöffnet. Tipp: Shop-Seiten im Browser auf „immer aktiv“ stellen – Anleitung im Dashboard unter Einstellungen.`, { title: '', shop: SHOPS[id].name });
+      if (centralOK(id)) {      // Prüf-Zentrum-Shop: das war ein Treffer-/Kontroll-Tab, der hing (z. B. Captcha, Seite lud nicht)
+        pushLog(id, 'Treffer-/Kontroll-Tab hing 2,5 Min. (Captcha? Seite lud nicht?) – vom Dashboard neu geöffnet', 'warn');
+        discord('error', `Der Treffer-Tab von **${SHOPS[id].name}** hing 2,5 Min. (z. B. Captcha oder Seite lud nicht) und wurde neu geöffnet. Falls ein Captcha zu sehen ist: bitte lösen.`, { title: '', shop: SHOPS[id].name });
+      } else {
+        pushLog(id, 'Tab reagierte 2,5 Min. nicht (geschlafen/abgestürzt) – vom Dashboard neu geöffnet', 'warn');
+        discord('error', `Der Tab von **${SHOPS[id].name}** reagierte nicht mehr (vom Browser schlafen gelegt oder abgestürzt) und wurde neu geöffnet. Tipp: Shop-Seiten im Browser auf „immer aktiv“ stellen – Anleitung im Dashboard unter Einstellungen.`, { title: '', shop: SHOPS[id].name });
+      }
     }
   }
 
