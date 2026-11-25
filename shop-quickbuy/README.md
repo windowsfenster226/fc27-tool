@@ -50,3 +50,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 ## Neu in 3.18.0
 - **FNAC Pro: automatische Kasse** bis zur Zahlungsseite (Warenkorb → Lieferung → Zahlung, live getestet). Dort wählt das Script „Carte bancaire“ und hält an – Karte eingeben und „Payer“ machst du (das Script gibt nie Kartendaten ein). Ein nicht lieferbarer Artikel im Warenkorb blockiert bei FNAC die Kasse → klare Meldung.
 - **📋 Mehrere Produkte auf einmal** einfügen (Übersicht → „Mehrere“): je Zeile Link + optional Höchstpreis + Stückzahl, auch aus Excel kopierbar; vorhandene Produkte können dabei aktualisiert werden.
+- 3.18.1: PlayStation – Lagerstatus aus dem Kauf-Bereich der Seite statt JSON-LD (JSON-LD meldete fälschlich „InStock“ → Tab ging jede Runde auf). Fehlalarm-Schutz: meldet der Abruf 2× „verfügbar“, die Shop-Seite aber nicht, wird 10 Min. nur noch jede 5. Runde nachgesehen.

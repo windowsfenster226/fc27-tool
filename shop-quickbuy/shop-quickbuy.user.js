@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.18.0
+// @version      3.18.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -254,6 +254,14 @@
       // Sony: Einkaufswagen + Kasse laufen in einer Seitenleiste (ggf. iFrame) → eigener Ablauf
       psFlow: true,
       bgCheck: true,
+      // Lagerstatus aus dem fertig gerenderten Kauf-Bereich im Seitencode (live geprüft 25.11.): dort steht entweder der Preis
+      // oder „Nicht zum Kauf erhältlich“. Das JSON-LD meldet auf Konsolen-Seiten fälschlich „InStock“ → nicht verwenden.
+      bgParse: (html) => {
+        const m = html.match(/data-qa=\\?"mfeCtaMain#offer0#finalPrice\\?"[^>]*>([^<]{1,80})</);
+        if (!m) return null;
+        if (/nicht\s+zum\s+kauf|ausverkauft|nicht\s+(verfügbar|vorrätig|erhältlich)/i.test(m[1])) return 'out';
+        return /\d/.test(m[1]) && /mfeCtaMain#cta#action/.test(html) ? 'in' : null;   // Preis + Button „In den Einkaufswagen“
+      },
       psCheckout: [/^weiter\s+zur\s+kasse$/i, /^zur\s+kasse$/i],
       psOrder: [/^bestellen\s+und\s+bezahlen$/i, /^jetzt\s+bezahlen$/i, /^zahlungspflichtig\s+bestellen$/i],
       minInterval: 30,
@@ -2804,6 +2812,11 @@
       sv(id, 'cFails', 0);
       const bp = bgPrice(r.html); const mx = Number(it.maxPrice) || 0;
       if (bp && mx && bp > mx * 1.02) { pushLog(id, `${tag} verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos'); return; }
+      // Schon 2× „verfügbar“ gemeldet, aber die Shop-Seite sagte „nicht kaufbar“ → 10 Min. nur jede 5. Meldung nachsehen
+      { const fh = (gv(id, 'falseHits', {}) || {})[keyOf2(id, it.url)];
+        if (fh && fh.n >= 2 && Date.now() - fh.at < 600000 && (gv(id, 'attempts', 0) || 0) % 5) {
+          pushLog(id, `${tag} Abruf meldet verfügbar, Shop-Seite zuletzt ${fh.n}× nicht kaufbar → nächste Kontrolle später`, 'oos'); return;
+        } }
       return centralHit(id, i, `${tag} Prüf-Zentrum: verfügbar! → Shop-Tab legt in den Warenkorb`, 'ok');
     }
     const f = (gv(id, 'cFails', 0) || 0) + 1; sv(id, 'cFails', f);
@@ -4348,6 +4361,13 @@
 
   // Treffer-Tab ist fertig (nicht kaufbar o. Ä.) → zurück an das Prüf-Zentrum
   function handBack() {
+    // Prüf-Zentrum meldete „verfügbar“, die Shop-Seite aber nicht → merken (verhindert, dass jede Runde ein Tab aufgeht)
+    const hit = S.get('cHit');
+    if (hit && hit.url && Date.now() - hit.at < 300000) {
+      const fh = { ...(S.get('falseHits') || {}) }; const k = keyOf(hit.url);
+      const o = fh[k] && Date.now() - fh[k].at < 1800e3 ? fh[k] : { n: 0 };
+      fh[k] = { n: o.n + 1, at: Date.now() }; S.set('falseHits', fh);
+    }
     S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
     park('Zurück an das Prüf-Zentrum');
   }
