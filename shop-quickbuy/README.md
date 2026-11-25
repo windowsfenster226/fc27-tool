@@ -43,3 +43,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **Prüf-Zentrum:** Nur noch das Dashboard prüft (Otto, MediaMarkt, Saturn, PlayStation, Microsoft, FNAC) im Hintergrund. Ein Shop-Tab öffnet sich erst bei einem Treffer, legt in den Warenkorb, geht zur Kasse und schließt sich danach. Ein Shop-Tab, den du selbst offen lässt, dient als Bereitschafts-Tab (übernimmt Treffer ohne Öffnen). Amazon und Drop-Modus prüfen weiter im eigenen Tab. Klappt der zentrale Abruf 3× nicht, prüft der Shop 6 Std. wieder im eigenen Tab. Abschaltbar unter Einstellungen.
 - **Startklar-Check** (Einstellungen): prüft je Shop den zentralen Abruf, die Anmeldung und fremde Artikel im Warenkorb – ohne etwas zu ändern.
 - Das Dashboard (example.com) sollte im Browser auf „immer aktiv“ stehen.
+- 3.17.1: Shop-Domains als @connect eingetragen → keine Tampermonkey-Rückfrage mehr beim Prüf-Zentrum.

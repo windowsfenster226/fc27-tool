@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.17.0
+// @version      3.17.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -47,6 +47,29 @@
 // @grant        window.close
 // @connect      discord.com
 // @connect      discordapp.com
+// @connect      otto.de
+// @connect      mediamarkt.de
+// @connect      saturn.de
+// @connect      amazon.de
+// @connect      fnacpro.com
+// @connect      microsoft.com
+// @connect      playstation.com
+// @connect      alternate.de
+// @connect      cyberport.de
+// @connect      notebooksbilliger.de
+// @connect      galaxus.de
+// @connect      proshop.de
+// @connect      euronics.de
+// @connect      expert.de
+// @connect      mueller.de
+// @connect      smythstoys.com
+// @connect      kaufland.de
+// @connect      lidl.de
+// @connect      gamestop.de
+// @connect      zalando.de
+// @connect      nike.com
+// @connect      snipes.com
+// @connect      solebox.com
 // @connect      *
 // @updateURL    https://raw.githubusercontent.com/windowsfenster226/fc27-tool/quickbuy/shop-quickbuy/shop-quickbuy.user.js
 // @downloadURL  https://raw.githubusercontent.com/windowsfenster226/fc27-tool/quickbuy/shop-quickbuy/shop-quickbuy.user.js
