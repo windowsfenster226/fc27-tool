@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.17.2
+// @version      3.17.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -9,6 +9,7 @@
 // @match        https://www.amazon.de/*
 // @match        https://www.fnacpro.com/*
 // @match        https://fnacpro.com/*
+// @match        https://secure.fnacpro.com/*
 // @match        https://www.microsoft.com/de-de/*
 // @match        https://www.playstation.com/de-de/*
 // @match        https://checkout.playstation.com/*
@@ -342,7 +343,18 @@
     productUrl: /^https:\/\/(www\.)?fnacpro\.com\/(?:[^?#]*\/)?(?:a|mp)\d{5,}/i,
     productHint: 'https://www.fnacpro.com/…/a12345678/…',
     productKey: (u) => { const m = u.match(/\/(a|mp)(\d{5,})/i); return m ? m[2] : stripUrl(u).replace(/^https:\/\/(www\.)?fnacpro\.com\//i, '').replace(/\/+$/, '').toLowerCase(); },
-    basketUrl: '', isBasket: (p) => /panier|basket|cart|warenkorb/i.test(p), isCheckout: (p) => /commande|checkout|kasse|paiement/i.test(p),
+    // Warenkorb liegt auf secure.fnacpro.com (Schritte: 1 Panier → 2 Livraison → 3 Paiement)
+    basketUrl: 'https://secure.fnacpro.com/orderpipe/pop/panier',
+    isBasket: (p) => /\/orderpipe\/pop\/panier|panier|basket|cart|warenkorb/i.test(p), isCheckout: (p) => /livraison|paiement|commande|checkout|kasse/i.test(p),
+    cartReady: () => !!document.querySelector('button[data-testid^="remove"]') || /votre\s+panier\s+est\s+vide|panier\s*\(0\s+produit/i.test(document.body.innerText),
+    // live: <li> je Artikel, Löschen-Button data-testid="remove-item" bzw. "remove-unavailable-item"
+    cartItems: () => [...document.querySelectorAll('button[data-testid^="remove"]')].map((del) => {
+      const box = del.closest('li') || del.parentElement;
+      const link = [...box.querySelectorAll('a')].find((a) => /\/(a|mp)\d{5,}/i.test(a.href));
+      return { box, href: link ? link.href : '', remove: del, title: norm(link ? link.innerText : box.innerText.slice(0, 80)), qty: 1, unitPrice: 0, minus: null };
+    }),
+    // Lagerstatus im Seitencode (JSON-LD) – live geprüft: InStock ↔ „Ajouter au panier“ vorhanden, OutOfStock ↔ kein Button
+    bgCheck: true,
     addToCart: [/^ajouter\s+au\s+panier$/i],
     // Mengenfeld der Produktseite (gesehen: name="products[<Artikelnr>].Quantity")
     qtyInput: () => document.querySelector('input[name^="products["][name$="].Quantity"]'),
@@ -2241,6 +2253,8 @@
       return scheduleReload(`Produktseite nicht gefunden (weitergeleitet auf ${path}) – Original-URL wird weiter aufgerufen`);
     }
     if (stage === 'checkout' && SHOP.isCheckout(path)) return runCheckout();
+    // Shops ohne automatische Kasse (z. B. FNAC Pro): Warenkorb/Kasse nie anfassen
+    if (SHOP.stopAfterAdd && (SHOP.isBasket(path) || SHOP.isCheckout(path))) return;
     if (SHOP.isBasket(path)) {
       if (stage === 'checkout') { log(`Shop hat von der Kasse zurück zum Warenkorb geleitet (${path})`, 'warn'); S.set('skipDirect', true); }
       return runBasket();

@@ -45,3 +45,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - Das Dashboard (example.com) sollte im Browser auf „immer aktiv“ stehen.
 - 3.17.1: Shop-Domains als @connect eingetragen → keine Tampermonkey-Rückfrage mehr beim Prüf-Zentrum.
 - 3.17.2: Prüf-Zentrum wiederholt bei HTTP 400/431 ohne Cookies (Otto) und merkt sich das je Shop.
+- 3.17.3: FNAC Pro im Prüf-Zentrum (JSON-LD, live geprüft) und im Startklar-Check (Warenkorb auf secure.fnacpro.com). Kasse bei FNAC weiterhin nur Alarm.
