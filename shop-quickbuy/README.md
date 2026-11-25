@@ -55,3 +55,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - 3.19.1: Amazon wieder nur amazon.de. Links anderer Amazon-Länder (amazon.fr, .it, .co.uk …) werden beim Einfügen und einmal beim Dashboard-Start automatisch auf amazon.de/dp/<ASIN> umgestellt.
 - 3.19.2: Veralteter Captcha-Status wird gelöscht, sobald der Abruf wieder klappt (FNAC blieb sonst auf „Captcha“ stehen).
 - 3.19.3: „Verbindung testen“ (Discord-Bot) übernimmt die richtige Kanal-ID automatisch aus dem Webhook und sagt, ob der Bot auf dem richtigen Server ist.
+- 3.19.4: Discord-Bot sendet eine Bot-Kennung (User-Agent) mit – behebt Discord-Fehler 40333.

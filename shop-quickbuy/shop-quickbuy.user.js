@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.3
+// @version      3.19.4
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -3403,7 +3403,8 @@
       try {
         GM_xmlhttpRequest({
           method, url: BOT_API + path, timeout: 15000,
-          headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+          // Discord blockt Bot-Anfragen mit Browser-Kennung teils mit Fehler 40333 → eigene Bot-Kennung mitsenden
+          headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json', 'User-Agent': 'DiscordBot (https://github.com/windowsfenster226/fc27-tool, 3.19)' },
           data: body ? JSON.stringify(body) : undefined,
           onload: (r) => { let j = null; try { j = JSON.parse(r.responseText); } catch (e) {} res({ status: r.status, json: j }); },
           onerror: () => res({ status: 0, json: null }),
@@ -3445,7 +3446,9 @@
         let hint = '';
         if (wh && wh.guild_id) {
           const gq = await botReq('GET', `/guilds/${wh.guild_id}`);
-          if (gq.status !== 200) hint = ' – der Bot ist NICHT auf dem Server, in den deine Meldungen gehen (Einladungslink erneut öffnen und diesen Server wählen)';
+          const gcode = gq.json && gq.json.code;
+          if (gcode === 40333 || c.json && c.json.code === 40333) hint = ' – Discord blockt die Anfrage (Fehler 40333, keine Rechte-Frage) – bitte Claude Bescheid geben';
+          else if (gq.status !== 200) hint = ' – der Bot ist NICHT auf dem Server, in den deine Meldungen gehen (Einladungslink erneut öffnen und diesen Server wählen)';
           else hint = ` – Bot ist auf „${gq.json.name}“, aber der Kanal sperrt ihn (Kanal-Rechte für den Bot speichern)`;
         }
         botState = { ok: false, msg: botErr(c), at: Date.now() }; renderDash(true);
