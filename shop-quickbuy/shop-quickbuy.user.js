@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.21.0
+// @version      3.22.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1150,7 +1150,7 @@
         const list = S.get('products');
         // Abrufe gleichmäßig über die Runde verteilen (kein Schwall direkt hintereinander → weniger Captchas); ⭐ öfter
         const step = Math.max(2000, Math.round(currentIntervalMs() / Math.max(1, list.length)));
-        for (const i of slotOrder(list)) {
+        for (const i of slotOrder(list, SHOP_ID)) {
           if (!S.get('running')) break;
           countdown(step);
           await wait(step);
@@ -1187,7 +1187,7 @@
     if (SHOP.bgCheck) return bgLoop();          // Sony/Microsoft: im Hintergrund weiterprüfen, nicht neu laden
     if (dropActive() && !S.get('dropReloaded')) { S.set('dropReloaded', true); log('Drop-Modus aktiv – prüfe ab jetzt schneller', 'buy'); }
 
-    const slots = slotOrder(list);
+    const slots = slotOrder(list, SHOP_ID);
     const sl = ((S.get('slot') || 0) + 1) % slots.length;
     S.set('slot', sl);
     const next = slots[sl];               // ⭐ Produkte kommen öfter dran
@@ -2805,9 +2805,36 @@
    * Markierte Produkte kommen 3× so oft dran wie die anderen – bei gleicher Gesamtzahl an Abrufen (kein Mehr an Captcha-Risiko).
    * Reihenfolge gleichmäßig verteilt (z. B. ⭐A, B, ⭐A, C, ⭐A, D …). */
   const PRIO_W = 3;
-  function slotOrder(list) {
-    const w = list.map((x) => (x && x.prio ? PRIO_W : 1));
-    if (!w.some((v) => v > 1) || w.every((v) => v > 1)) return list.map((_, i) => i);
+  /* 🔥 Auto-Priorität: Produkte, die zuletzt öfter verfügbar waren, kommen von selbst öfter dran.
+   * Punkte je Restock (auch über Höchstpreis, halb gewichtet), halbiert sich alle 7 Tage. ≥ 2 Punkte → 3×, ≥ 0,7 → 2×.
+   * Dazu +1, wenn dieses Produkt schon mind. 2× um diese Uhrzeit (±1 Std.) verfügbar war. Manuelles ⭐ = immer 3×. */
+  let autoCache = { at: 0, map: {} };
+  function autoPrioMap() {
+    if (Date.now() - autoCache.at < 60000) return autoCache.map;
+    const map = {}; const now = Date.now(); const h = new Date().getHours();
+    for (const e of GM_getValue('global:restocks', [])) {
+      const age = now - e.t; if (age > 30 * 86400e3 || !SHOPS[e.shopId]) continue;
+      const k = `${e.shopId}|${keyOf2(e.shopId, e.url)}`;
+      const m = map[k] || (map[k] = { score: 0, n: 0, hour: 0 });
+      m.score += (e.over ? 0.5 : 1) * Math.pow(0.5, age / (7 * 86400e3));
+      m.n++;
+      const eh = new Date(e.t).getHours(); const dh = Math.min(Math.abs(eh - h), 24 - Math.abs(eh - h));
+      if (dh <= 1) m.hour++;
+    }
+    for (const m of Object.values(map)) m.w = Math.min(PRIO_W, (m.score >= 2 ? 3 : m.score >= 0.7 ? 2 : 1) + (m.hour >= 2 ? 1 : 0));
+    autoCache = { at: now, map };
+    return map;
+  }
+  function prioWeight(id, x) {
+    if (!x) return 1;
+    if (x.prio) return PRIO_W;
+    if (!G.get('autoPrio', true) || !id) return 1;
+    const m = autoPrioMap()[`${id}|${keyOf2(id, x.url)}`];
+    return m ? m.w : 1;
+  }
+  function slotOrder(list, id) {
+    const w = list.map((x) => prioWeight(id, x));
+    if (w.every((v) => v === w[0])) return list.map((_, i) => i);      // alle gleich gewichtet → normale Reihenfolge
     const tot = w.reduce((a, b) => a + b, 0); const cur = w.map(() => 0); const out = [];
     for (let k = 0; k < tot; k++) {
       let best = 0;
@@ -2931,7 +2958,7 @@
       const step = Math.max(2000, (effRoundSec(id) * 1000) / list.length);
       if (now - (gv(id, 'cLast', 0) || 0) < step) continue;
       sv(id, 'cLast', now);
-      const slots = slotOrder(list);
+      const slots = slotOrder(list, id);
       const si = (gv(id, 'cIdx', 0) || 0) % slots.length;
       const i = slots[si];
       sv(id, 'cIdx', si + 1);
@@ -4133,7 +4160,7 @@
         ${used.length ? `<h3>Shops <span class="muted">${runIds.length} von ${used.length} aktiv</span></h3><div class="shops">${shopStrip}</div>` : ''}
         ${rows.length ? `<h3>Produkte <span class="muted">${rows.length}</span></h3><table class="pt"><thead><tr><th class="c" title="⭐ Priorität: wird 3× so oft geprüft">⭐</th><th>Shop</th><th>Produkt</th><th>Status</th><th class="c" title="Wie oft war das Produkt in den letzten 30 Tagen verfügbar (je Restock einmal gezählt)">Gefunden</th><th class="r">Max. €</th><th class="c">Stück</th><th class="c">Gekauft</th><th></th></tr></thead><tbody>
           ${rows.map((r) => `<tr class="${r.active ? 'cur' : ''}" data-id="${r.id}" data-i="${r.i}">
-            <td class="c"><button class="x2" data-p="prio" title="${r.x.prio ? 'Priorität an – wird 3× so oft geprüft (klicken zum Ausschalten)' : 'Priorität einschalten: 3× so oft prüfen'}" style="font-size:15px;opacity:${r.x.prio ? 1 : 0.3}">${r.x.prio ? '⭐' : '☆'}</button></td>
+            <td class="c">${(() => { const aw = r.x.prio ? 0 : prioWeight(r.id, r.x); return `<button class="x2" data-p="prio" title="${r.x.prio ? 'Priorität an – wird 3× so oft geprüft (klicken zum Ausschalten)' : aw > 1 ? `🔥 Auto-Priorität: war zuletzt öfter verfügbar → wird ${aw}× so oft geprüft. Klicken = fest ⭐` : 'Priorität einschalten: 3× so oft prüfen'}" style="font-size:15px;opacity:${r.x.prio || aw > 1 ? 1 : 0.3}">${r.x.prio ? '⭐' : aw > 1 ? `🔥<span style="font-size:10px">${aw}×</span>` : '☆'}</button>`; })()}</td>
             <td><span class="tag">${esc(SHOPS[r.id].name)}</span></td>
             <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}</td>
             <td>${status(r)}</td>
@@ -4197,6 +4224,7 @@
         <label class="ck">Tagesbudget (alle Shops zusammen): <input type="text" id="g-budget" style="width:90px;flex:none" value="${Number(G.get('budgetDay', 0)) ? fmtEur(G.get('budgetDay', 0)) : ''}" placeholder="aus"> €</label>
         <span class="muted">heute ausgegeben: ${fmtEur(spentToday())} €</span>
 <label class="ck" title="Ein Tab (das Dashboard) prüft alle Shops im Hintergrund; Shop-Tabs öffnen sich nur bei einem Treffer. Gilt für Otto, MediaMarkt, Saturn, PlayStation, Microsoft, FNAC – Amazon prüft weiter im eigenen Tab."><input type="checkbox" data-gs="central" ${G.get('central', true) ? 'checked' : ''}> Prüf-Zentrum (nur ein Tab prüft, Shop-Tabs nur bei Treffer)</label>
+<label class="ck" title="Produkte, die in letzter Zeit öfter verfügbar waren (oder um diese Uhrzeit oft kommen), werden automatisch öfter geprüft – 🔥 in der Produkttabelle. Gesamtzahl der Abrufe bleibt gleich."><input type="checkbox" data-gs="autoPrio" ${G.get('autoPrio', true) ? 'checked' : ''}> 🔥 Auto-Priorität aus der Restock-Historie</label>
         <label class="ck"><input type="checkbox" data-gs="autoReopen" ${G.get('autoReopen', true) ? 'checked' : ''}> Abgestürzte Shop-Tabs automatisch neu öffnen</label>
         <label class="ck"><input type="checkbox" data-gs="reportOn" ${G.get('reportOn', true) ? 'checked' : ''}> Täglicher Selbsttest an Discord um</label>
         <input type="time" id="g-rtime" value="${esc(G.get('reportTime', '09:00'))}" style="flex:none">
