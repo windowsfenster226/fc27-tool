@@ -68,3 +68,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - „📋 Mehrere“: `⭐` oder `prio` in der Zeile setzt die Priorität direkt.
 - 3.21.0: Spalte „Gefunden“ in der Produkttabelle – wie oft war das Produkt in den letzten 30 Tagen verfügbar (je Restock einmal), dazu wie oft nur teurer, und wann zuletzt. Zählt jetzt auch Funde des Prüf-Zentrums; Fehlalarme werden wieder herausgenommen.
 - 3.22.0: 🔥 Auto-Priorität – Produkte, die in letzter Zeit öfter verfügbar waren (bzw. um die aktuelle Uhrzeit schon öfter kamen), werden automatisch 2–3× so oft geprüft. Manuelles ⭐ hat Vorrang. Abschaltbar unter Einstellungen.
+- 3.22.1: Treffer-Tab öffnet sich im Vordergrund (MediaMarkt/Saturn bauen den Warenkorb im Hintergrund-Tab nicht fertig → „Warenkorb lädt nicht“). Vom Script geöffnete Treffer-Tabs schließen sich danach wieder. Abschaltbar unter Einstellungen.

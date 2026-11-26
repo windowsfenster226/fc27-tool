@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.22.0
+// @version      3.22.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1705,7 +1705,7 @@
     // Warten bis der Warenkorb wirklich geladen ist (MediaMarkt lädt langsam nach)
     if (SHOP.cartReady) {
       const ready = await waitFor(() => SHOP.cartReady(), 60000, 300);   // MediaMarkt-Warenkorb brauchte live bis zu 30 s
-      if (!ready) return restartLoop('Warenkorb lädt nicht', false);
+      if (!ready) return restartLoop(document.hidden ? 'Warenkorb lädt nicht (Tab lag im Hintergrund – dort baut der Shop die Seite nicht fertig)' : 'Warenkorb lädt nicht', false);
       await sleep(800);
     } else {
       await sleep(2500);
@@ -2895,6 +2895,9 @@
     sv(id, 'idx', i); sv(id, 'stage', 'product'); sv(id, 'navAt', Date.now()); sv(id, 'owner', null);
     sv(id, 'cHit', { at: Date.now(), url: it.url });
     pushLog(id, msg, type);
+    // Treffer-Tab in den Vordergrund: Im Hintergrund baut z. B. der MediaMarkt/Saturn-Warenkorb seine Seite nicht fertig
+    // (live 26.11.: „Warenkorb lädt nicht“) → Kauf scheitert. Darum standardmäßig aktiver Tab.
+    if (G.get('hitFocus', true)) { openTab(it.url, true); return; }
     const open = () => { if (!ownerFresh(id)) openTab(it.url); };
     if (Date.now() - (gv(id, 'parkBeat', 0) || 0) < 6000) later(1500, open); else open();
   }
@@ -4225,6 +4228,7 @@
         <span class="muted">heute ausgegeben: ${fmtEur(spentToday())} €</span>
 <label class="ck" title="Ein Tab (das Dashboard) prüft alle Shops im Hintergrund; Shop-Tabs öffnen sich nur bei einem Treffer. Gilt für Otto, MediaMarkt, Saturn, PlayStation, Microsoft, FNAC – Amazon prüft weiter im eigenen Tab."><input type="checkbox" data-gs="central" ${G.get('central', true) ? 'checked' : ''}> Prüf-Zentrum (nur ein Tab prüft, Shop-Tabs nur bei Treffer)</label>
 <label class="ck" title="Produkte, die in letzter Zeit öfter verfügbar waren (oder um diese Uhrzeit oft kommen), werden automatisch öfter geprüft – 🔥 in der Produkttabelle. Gesamtzahl der Abrufe bleibt gleich."><input type="checkbox" data-gs="autoPrio" ${G.get('autoPrio', true) ? 'checked' : ''}> 🔥 Auto-Priorität aus der Restock-Historie</label>
+<label class="ck" title="Bei einem Treffer öffnet sich der Shop-Tab im Vordergrund. Nötig für MediaMarkt/Saturn: im Hintergrund lädt deren Warenkorb nicht fertig."><input type="checkbox" data-gs="hitFocus" ${G.get('hitFocus', true) ? 'checked' : ''}> Treffer-Tab in den Vordergrund holen (empfohlen)</label>
         <label class="ck"><input type="checkbox" data-gs="autoReopen" ${G.get('autoReopen', true) ? 'checked' : ''}> Abgestürzte Shop-Tabs automatisch neu öffnen</label>
         <label class="ck"><input type="checkbox" data-gs="reportOn" ${G.get('reportOn', true) ? 'checked' : ''}> Täglicher Selbsttest an Discord um</label>
         <input type="time" id="g-rtime" value="${esc(G.get('reportTime', '09:00'))}" style="flex:none">
@@ -4508,7 +4512,8 @@
     if (msg) log(msg, 'info');
     // nur schließen, wenn ein anderer Tab das Prüf-Zentrum führt (sonst würde am Ende niemand mehr prüfen)
     { const L = GM_getValue('global:centralLease', null);
-      if (isWorkerTab() && document.hidden && L && L.id !== TAB_ID && Date.now() - L.at < 6000) return closeSelf(); }
+      // vom Script geöffnete Tabs (Treffer-Tab, auch im Vordergrund) schließen sich wieder; eigene Tabs nur im Hintergrund
+      if (isWorkerTab() && (document.hidden || ssGet('qbAuto') === '1') && L && L.id !== TAB_ID && Date.now() - L.at < 6000) return closeSelf(); }
     const st = document.getElementById('qb-cd'); if (st) st.textContent = '🛰️ Prüf-Zentrum prüft im Hintergrund – dieser Tab steht bereit';
     const poll = () => later(400, () => {
       if (!parked) return;
@@ -4516,7 +4521,7 @@
       if (document.hidden) S.set('parkBeat', Date.now());
       const hit = S.get('cHit');
       const mustRun = !centralOK(SHOP_ID);
-      if (!ownerFresh(SHOP_ID) && (mustRun || (document.hidden && hit && Date.now() - hit.at < 10000))) {
+      if (!ownerFresh(SHOP_ID) && (mustRun || (!G.get('hitFocus', true) && document.hidden && hit && Date.now() - hit.at < 10000))) {
         parked = false; claimOwner(); S.set('navAt', Date.now());
         log(mustRun ? 'Shop prüft wieder im eigenen Tab – dieser Tab übernimmt' : 'Treffer vom Prüf-Zentrum → Bereitschafts-Tab übernimmt', mustRun ? 'info' : 'buy');
         location.href = (hit && !mustRun && hit.url) || cur().url;
