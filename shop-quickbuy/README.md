@@ -75,6 +75,11 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.29.3 – Statistik & Captcha-Anzeige
+- „Verfügbar, aber zu teuer“ (z. B. Galaxus-Händlerpreis, dauerhaft verfügbar) zählt höchstens 1× je 6 Std. – vorher alle 15 Min. → 69 „Restocks“ in 24 Std. Alte Einträge werden einmalig ausgedünnt.
+- KPI „Restocks (24 Std.)“, Statistik und Restock-Muster zählen nur noch Restocks zum Höchstpreis oder günstiger.
+- Captcha-Status wird gelöscht, sobald die Seite nach dem Neuladen ohne Captcha lädt (FNAC zeigte im Dashboard weiter „Captcha“, obwohl der Tab normal prüfte).
+
 ## Neu in 3.29.2 – Umgeleitete Produkte
 - Leitet eine Produktseite dauerhaft auf ein anderes Produkt um (z. B. MediaMarkt ersetzt die PS5 Slim Digital durch eine neue Artikelnummer), öffnet das Prüf-Zentrum keinen Kontroll-Tab mehr im Wechsel, sondern pausiert das Produkt nach 2 Weiterleitungen 12 Std., meldet es per Discord und zeigt im Dashboard „umgeleitet“ mit „neues Produkt ansehen“ / „neue URL übernehmen“.
 - Die Weiterleitungen zählen nicht mehr als Fehler des Shops (verhindert, dass MediaMarkt fälschlich 6 Std. in den Tab-Modus wechselt).

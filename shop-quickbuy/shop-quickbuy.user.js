@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.29.2
+// @version      3.29.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1099,7 +1099,8 @@
   function noteRestock(id, url, price, title, over) {
     const now = Date.now(); const k = keyOf2(id, url);
     const r = GM_getValue('global:restocks', []);
-    const prev = r.find((e) => e.shopId === id && keyOf2(id, e.url) === k && now - e.t < 15 * 60000);
+    // dauerhaft verfügbar, aber zu teuer (z. B. Galaxus-Händlerpreis) → höchstens alle 6 Std. zählen, sonst flutet es die Statistik
+    const prev = r.find((e) => e.shopId === id && keyOf2(id, e.url) === k && now - e.t < (over ? 6 * 3600e3 : 15 * 60000));
     if (prev) { if (prev.over && !over) { prev.over = false; prev.price = price || prev.price; GM_setValue('global:restocks', r); } return; }
     r.unshift({ t: now, shopId: id, title: title || shortName(url), url, price: Number(price) || 0, over: !!over });
     GM_setValue('global:restocks', r.slice(0, 1500));
@@ -2398,6 +2399,8 @@
     }
     claimOwner();
     if (captchaPresent()) return handleCaptcha();
+    // Seite lud ohne Captcha (z. B. nach dem Neuladen) → alten Captcha-Status löschen (sonst steht im Dashboard weiter „Captcha“)
+    if (S.get('captchaSince')) { S.set('captchaSince', 0); S.set('slowUntil', Date.now() + 60 * 60000); log('Captcha weg ✔ – prüfe die nächste Stunde langsamer', 'ok'); }
     if (queuePresent()) return handleQueue();
     if (S.get('queueSince')) queuePassed();
     const path = location.pathname;
@@ -3627,7 +3630,18 @@
       + `Gesamt: ${tc.toLocaleString('de-DE')} Prüfungen · ${tr} Restocks · ${tb} Käufe · ${fmtEur(spentToday())} € ausgegeben`
       + (topTxt ? `\n**Verfügbar waren heute:**\n${topTxt}` : '');
   }
+  // einmalig (3.29.3): „zu teuer verfügbar“-Einträge auf höchstens 1 je Produkt und 6 Std. ausdünnen
+  function thinOverRestocks() {
+    if (G.get('rsThin1', false)) return; G.set('rsThin1', true);
+    const r = GM_getValue('global:restocks', []); const last = {}; const out = [];
+    for (const e of r.slice().sort((a, b) => a.t - b.t)) {
+      if (e.over) { const k = `${e.shopId}|${e.url}`; if (last[k] && e.t - last[k] < 6 * 3600e3) continue; last[k] = e.t; }
+      out.push(e);
+    }
+    if (out.length !== r.length) GM_setValue('global:restocks', out.sort((a, b) => b.t - a.t));
+  }
   function summaryTick() {
+    try { thinOverRestocks(); } catch (e) {}
     if (!G.get('sumOn', true)) return;
     const now = new Date(); const key = now.toDateString();
     if (G.get('sumDay', '') === key) return;
@@ -3813,7 +3827,7 @@
    * Fehlalarme sind schon aus global:restocks entfernt (handBack). Zeitraum: 60 Tage. */
   const PAT_DAYS = 60;
   function restockPattern(id) {
-    const rs = GM_getValue('global:restocks', []).filter((r) => SHOPS[r.shopId] && (!id || r.shopId === id) && Date.now() - r.t < PAT_DAYS * 86400e3);
+    const rs = GM_getValue('global:restocks', []).filter((r) => SHOPS[r.shopId] && !r.over && (!id || r.shopId === id) && Date.now() - r.t < PAT_DAYS * 86400e3);
     const cell = DOW.map(() => Array.from({ length: 24 }, () => new Set()));
     const dayN = DOW.map(() => new Set()); const hourN = Array.from({ length: 24 }, () => new Set());
     for (const r of rs) {
@@ -3868,7 +3882,7 @@
     if (hits.length) discord('pattern', `${hits.join('\n')}\n\nIn 15 Min. beginnt ein typisches Restock-Fenster – PC und Chrome anlassen, angemeldet bleiben.`, { title: '', shop: hits.length > 1 ? 'Mehrere Shops' : hits[0].replace(/\*\*(.+?)\*\*.*/, '$1'), embedTitle: '⏰ Restock-Fenster gleich' });
   }
   function statsHtml() {
-    const all = GM_getValue('global:restocks', []);
+    const all = GM_getValue('global:restocks', []).filter((r) => !r.over);       // nur Restocks zum Höchstpreis oder günstiger
     const shopsWith = [...new Set(all.map((r) => r.shopId))].filter((id) => SHOPS[id]);
     const rs = statShop === 'all' ? all : all.filter((r) => r.shopId === statShop);
     const grid = DOW.map(() => Array(24).fill(0));
@@ -4599,7 +4613,7 @@
     const today = spentToday();
     const pct = budget ? Math.min(100, Math.round(today / budget * 100)) : 0;
     const rs = GM_getValue('global:restocks', []);
-    const r24 = rs.filter((r) => Date.now() - r.t < 86400e3).length;
+    const r24 = rs.filter((r) => Date.now() - r.t < 86400e3 && !r.over).length;      // nur zum Höchstpreis oder günstiger
     const spentAll = bought.reduce((a, h) => a + (Number(h.total) || Number(h.price) || 0), 0);
     const kpis = `<div class="kpis">
       <div class="kpi" style="--kc:var(--gr)"><div class="kl">🟢 Aktive Shops</div><div class="kv">${runIds.length}<span>/ ${used.length}</span></div><div class="ks">${rows.length} Produkt${rows.length === 1 ? '' : 'e'} in der Überwachung</div></div>
