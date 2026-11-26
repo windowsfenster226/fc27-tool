@@ -74,3 +74,9 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **📊 Tageszusammenfassung** an Discord (Standard 23:00, Einstellungen): je Shop Prüfungen, Restocks (+ zu teuer), Käufe, Probleme, Warnung wenn ein Shop > 1 Std. nicht geprüft hat; dazu die Produkte, die heute verfügbar waren. Knopf „Jetzt senden“, Discord-Befehl `!zusammenfassung`.
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
+
+## Neu in 3.24.0 – weniger CPU & Speicher
+- **Amazon im Prüf-Zentrum:** Produktseiten werden nur noch als Text abgerufen (Warenkorb-Button + Verkäufer = Amazon, Preis inkl. MwSt.), statt jede Seite komplett zu laden. Live geprüft (Amazon-Artikel = verfügbar, Business-Händlerangebote = nicht). Eigenes Limit 15 Abrufe/Min.
+- **Dashboard zeichnet nur noch neu, wenn sich etwas Wichtiges ändert** (sonst alle 10 s) statt alle 1,5 s.
+- Einzelne Abruf-Fehler öffnen keinen Tab mehr; erst beim 2. Mal hintereinander einen Kontroll-Tab im Hintergrund.
+- Behoben: Selbsttest/täglicher Bericht brach seit dem Prüf-Zentrum ab.

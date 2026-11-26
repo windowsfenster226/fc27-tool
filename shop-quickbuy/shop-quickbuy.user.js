@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.23.0
+// @version      3.24.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -350,6 +350,23 @@
     finalOrder: [/^jetzt\s+kaufen$/i, /^bestellung\s+aufgeben$/i, /^bestellung\s+abschicken$/i, /^place\s+your\s+order$/i, /^buy\s+now$/i, /^passer\s+(votre|la)\s+commande$/i, /^acheter\s+maintenant$/i, /^valider\s+(votre|la)\s+commande$/i],
     minInterval: 30,
     beta: true,
+    /* Hintergrundprüfung (seit 3.24): Produktseite nur als Text abrufen statt ganz laden – spart viel CPU/Speicher.
+     * „verfügbar“ nur, wenn der Warenkorb-Button da ist UND Amazon selbst verkauft (gleiche Verkäufer-Regeln wie im Tab). */
+    bgCheck: true,
+    rateGroup: 'amz',
+    bgParse: (html) => {
+      if (!/id="productTitle"/.test(html)) return null;                 // Captcha/Fehlerseite → Seite laden
+      if (!/id="add-to-cart-button"/.test(html)) return 'out';
+      const blocks = [];
+      for (const id of ['merchant-info', 'shipsFromSoldByODF_feature_div', 'tabular-buybox', 'merchantInfoFeature_feature_div']) {
+        const i = html.indexOf(`id="${id}"`); if (i < 0) continue;
+        blocks.push(html.slice(i, i + 3000).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' '));
+      }
+      if (!blocks.length) return null;
+      const seller = SHOPS.amazon.sellerOf({ querySelectorAll: () => [{ textContent: blocks.join(' ') }] });
+      return seller && SHOPS.amazon.ownSeller.test(seller) ? 'in' : 'out';
+    },
+    bgPriceFn: (html) => { const m = html.match(/name="items\[0\.base\]\[customerVisiblePrice\]\[amount\]"[^>]*value="([\d.]+)"/) || html.match(/value="([\d.]+)"[^>]*name="items\[0\.base\]\[customerVisiblePrice\]\[amount\]"/); return m ? parseFloat(m[1]) : 0; },
   };
 
   // FNAC Pro (Beta): Seitenaufbau noch unbekannt (Captcha-Schutz) → erst einmal Alarm-Modus
@@ -1119,7 +1136,7 @@
   }
   // Lagerstatus aus dem HTML einer Produktseite: erst der Shop-eigene Parser, dann JSON-LD. null = unklar
   function parseStock(sh, html, get) {
-    if (sh.bgParse) { const v = sh.bgParse(html, get); if (v) return v; }
+    if (sh.bgParse) { const v = sh.bgParse(html, get); if (v) return v; if (sh === SHOPS.amazon) return null; }
     const doc = new DOMParser().parseFromString(html, 'text/html');
     for (const sc of doc.querySelectorAll('script[type="application/ld+json"]')) {
       let d; try { d = JSON.parse(sc.textContent); } catch (e) { continue; }
@@ -1136,7 +1153,8 @@
   let lastBgHtml = '';
   // Preis aus dem Hintergrund-Abruf (erstes Angebot = Hauptartikel; auch als escaptes JSON) – nur zur Vorab-Prüfung,
   // die echte Preisprüfung passiert weiterhin auf der Produktseite
-  function bgPrice(html) {
+  function bgPrice(html, sh) {
+    if (sh && sh.bgPriceFn) { const v = sh.bgPriceFn(String(html || '')); if (v > 0) return v; }
     const m = String(html || '').match(/\\?"offers\\?"\s*:\s*\{[^}]*?\\?"price\\?"\s*:\s*\\?"?(\d+(?:\.\d+)?)/);
     const v = m ? parseFloat(m[1]) : NaN;
     return v > 0 ? v : null;
@@ -1169,7 +1187,7 @@
           const st = await bgStatus(list[i].url); dayCount(SHOP_ID, 'c');
           const tag = `[${i + 1}/${list.length} ${shortName(list[i].url)}]`;
           if (st === 'in') {
-            const bp = SHOP.shopify ? null : bgPrice(lastBgHtml);
+            const bp = SHOP.shopify ? null : bgPrice(lastBgHtml, SHOP);
             const mx = Number(list[i].maxPrice) || 0;
             if (bp && mx && bp > mx * 1.02) {      // deutlich über dem Höchstpreis → Seite gar nicht erst laden
               noteRestock(SHOP_ID, list[i].url, bp, null, true);
@@ -2760,7 +2778,7 @@
   const tabOpen = (id) => Date.now() - (gv(id, 'heartbeat', 0) || 0) < 12000;
 
   /* ---------- Captcha-Schutz: gemeinsames Abruf-Limit + dauerhafte Bremse nach Captchas ---------- */
-  const RATE_GROUPS = { mms: { name: 'MediaMarkt + Saturn', def: 4 } };
+  const RATE_GROUPS = { mms: { name: 'MediaMarkt + Saturn', def: 4 }, amz: { name: 'Amazon', def: 15 } };
   const BOOST_STEPS = [1, 1.5, 2, 3];
   const capKey = (id) => (SHOPS[id] && SHOPS[id].rateGroup) || id;
   function capInfo(id) {
@@ -2815,7 +2833,7 @@
     }
     if (!centralCapable(id)) return { st: 'err', why: 'für diesen Shop nicht im Hintergrund prüfbar' };
     const r = await centralStatus(id, url);
-    return { st: r.st === 'block' ? 'err' : r.st, why: r.why, price: r.html ? bgPrice(r.html) : 0 };
+    return { st: r.st === 'block' ? 'err' : r.st, why: r.why, price: r.html ? bgPrice(r.html, SHOPS[id]) : 0 };
   }
 
   /* ---------- „Gefunden“: wie oft war ein Produkt verfügbar? ---------- */
@@ -2930,14 +2948,14 @@
     return v ? { st: v, html } : { st: 'err', why: 'Lagerstatus nicht lesbar' };
   }
   // Treffer → Shop-Tab übernimmt (Bereitschafts-Tab im Hintergrund, sonst neuer Tab)
-  function centralHit(id, i, msg, type) {
+  function centralHit(id, i, msg, type, focus = true) {
     const it = gv(id, 'products', [])[i]; if (!it) return;
     sv(id, 'idx', i); sv(id, 'stage', 'product'); sv(id, 'navAt', Date.now()); sv(id, 'owner', null);
     sv(id, 'cHit', { at: Date.now(), url: it.url });
     pushLog(id, msg, type);
     // Treffer-Tab in den Vordergrund: Im Hintergrund baut z. B. der MediaMarkt/Saturn-Warenkorb seine Seite nicht fertig
     // (live 26.11.: „Warenkorb lädt nicht“) → Kauf scheitert. Darum standardmäßig aktiver Tab.
-    if (G.get('hitFocus', true)) { openTab(it.url, true); return; }
+    if (focus && G.get('hitFocus', true)) { openTab(it.url, true); return; }
     const open = () => { if (!ownerFresh(id)) openTab(it.url); };
     if (Date.now() - (gv(id, 'parkBeat', 0) || 0) < 6000) later(1500, open); else open();
   }
@@ -2950,10 +2968,13 @@
     if (!gv(id, 'running', false) || handledByTab(id)) return;
     // Abruf klappt und kein Tab hängt im Captcha → alten Captcha-Merker löschen (sonst bleibt „Captcha“ stehen)
     if ((r.st === 'out' || r.st === 'in') && gv(id, 'captchaSince', 0) && !ownerFresh(id)) sv(id, 'captchaSince', 0);
+    // Fehlerzähler je Produkt (ein einzelner Ausreißer öffnet keinen Tab)
+    const ek = keyOf2(id, it.url); const pe = { ...(gv(id, 'cErrP', {}) || {}) };
+    if (r.st === 'out' || r.st === 'in') { if (pe[ek]) { delete pe[ek]; sv(id, 'cErrP', pe); } }
     if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (Prüf-Zentrum, ${Date.now() - t0} ms)`, 'oos'); return; }
     if (r.st === 'in') {
       sv(id, 'cFails', 0);
-      const bp = bgPrice(r.html); const mx = Number(it.maxPrice) || 0;
+      const bp = bgPrice(r.html, SHOPS[id]); const mx = Number(it.maxPrice) || 0;
       if (bp && mx && bp > mx * 1.02) { noteRestock(id, it.url, bp, null, true); pushLog(id, `${tag} verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos'); return; }
       // Schon 2× „verfügbar“ gemeldet, aber die Shop-Seite sagte „nicht kaufbar“ → 10 Min. nur jede 5. Meldung nachsehen
       { const fh = (gv(id, 'falseHits', {}) || {})[keyOf2(id, it.url)];
@@ -2973,13 +2994,16 @@
       pushLog(id, `${tag} ${SHOPS[id].rateGroup ? RATE_GROUPS[SHOPS[id].rateGroup].name : SHOPS[id].name} bremst (HTTP 429, zu viele Abrufe) → ${mins} Min. Pause, danach langsamer`, 'warn');
       return;
     }
+    pe[ek] = (pe[ek] || 0) + 1; sv(id, 'cErrP', pe);
+    if (pe[ek] < 2) { pushLog(id, `${tag} Prüf-Zentrum: ${r.why} – nächste Runde erneut`, 'info'); return; }
     const f = (gv(id, 'cFails', 0) || 0) + 1; sv(id, 'cFails', f);
     if (f >= 3) {
       sv(id, 'cFails', 0); sv(id, 'centralOff', Date.now() + 6 * 3600e3);
       pushLog(id, `Prüf-Zentrum klappt bei ${SHOPS[id].name} gerade nicht (${r.why}) → prüft 6 Std. wieder im eigenen Tab`, 'warn');
       return;
     }
-    centralHit(id, i, `${tag} Prüf-Zentrum: ${r.why} → öffne Shop-Tab zur Kontrolle`, 'warn');
+    pe[ek] = 0; sv(id, 'cErrP', pe);
+    centralHit(id, i, `${tag} Prüf-Zentrum: ${r.why} → öffne Shop-Tab zur Kontrolle (im Hintergrund)`, 'warn', false);
   }
   const cBusy = {}; const cMode = {}; let cLastTick = 0;
   function centralTick() {
@@ -3279,7 +3303,23 @@
     }
     const d = document.createElement('div'); d.id = 'qb-dash'; d.className = 'page'; document.body.appendChild(d);
     renderDash(true);
-    setInterval(() => { if (!document.hidden) renderDash(false); }, 1500);
+    // Nur neu zeichnen, wenn sich etwas Wichtiges geändert hat (sonst alle 10 s für Zeitangaben) – spart viel CPU/Speicher
+    let lastSig = ''; let lastDraw = 0;
+    const dashSig = () => {
+      const parts = [dashTab];
+      for (const id of SHOP_IDS()) {
+        const l = gv(id, 'log', []) || []; const imp = l.find((e) => e.type !== 'oos') || {};
+        parts.push(gv(id, 'running', false), gv(id, 'stage', ''), gv(id, 'products', []).length, imp.at || 0, gv(id, 'captchaSince', 0), gv(id, 'queueSince', 0), ownerFresh(id), Math.floor((gv(id, 'heartbeat', 0) || 0) / 30000));
+      }
+      parts.push((GM_getValue('global:history', [])[0] || {}).ts || 0);
+      return parts.join('|');
+    };
+    setInterval(() => {
+      if (document.hidden) return;
+      const sig = dashSig();
+      if (sig === lastSig && Date.now() - lastDraw < 10000) return;
+      lastSig = sig; lastDraw = Date.now(); renderDash(false);
+    }, 1500);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) renderDash(false); });
   }
   function closeDashboard() { if (STANDALONE) window.close(); }
@@ -3333,7 +3373,7 @@
         { const ci = capInfo(id); if (ci.h24) p.push(`${ci.h24}× Captcha (24 Std.)`); }
         if (gv(id, 'queueSince', 0)) p.push('in der Warteschlange');
         if (!dg && !cen) p.push('noch keine Produktprüfung');
-        else {
+        else if (dg && !cen) {
           if (Date.now() - dg.t > 3600e3) p.push(`letzte Produktprüfung vor ${Math.round((Date.now() - dg.t) / 60000)} Min.`);
           if ((gv(id, 'diagBad', 0) || 0) >= 3) p.push('Produktseite wird nicht erkannt');
           else if (!dg.title) p.push('Produkttitel nicht erkannt');
@@ -3343,6 +3383,8 @@
       let txt;
       if (!run) txt = 'gestoppt';
       else if (p.length) txt = p.join(', ');
+      else if (centralOK(id) && !handledByTab(id)) { const lc = gv(id, 'cBeat', 0); txt = `ok – Prüf-Zentrum prüft${lc ? `, zuletzt ${agoText(lc)}` : ''}`; }
+      else if (!dg) txt = 'ok';
       else txt = `ok – Titel ✔ · Preis ${dg.price ? '✔' : '–'} · ${dg.btn ? 'kaufbar' : (dg.oosText || dg.ld === 'out') ? 'ausverkauft erkannt' : 'kein Button (gilt als ausverkauft)'}`;
       rows.push({ id, run, ok: !p.length, text: txt });
     }
