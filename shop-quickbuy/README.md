@@ -75,6 +75,10 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.24.3 – Fix
+- Behoben (seit 3.24.1): der neue Prüfstand für `!test` nutzte denselben Speicher-Schlüssel wie der Takt des Prüf-Zentrums → gelegentlich ein Abruf zu früh. Jetzt eigener Schlüssel.
+- Treffer-Tab schließt sich wieder: Im Log steht jetzt, warum (z. B. „Shop-Seite: nicht kaufbar – …“).
+
 ## Neu in 3.24.2 – Prüf-Zentrum sparsamer
 - JSON-LD-Lagerstatus (Microsoft, Alternate, Galaxus u. a.) per Regex statt kompletter DOM-Aufbau der Seite → weniger CPU im Dashboard.
 - Letzter Prüfstand je Produkt bleibt im Speicher und wird nur alle 30 s gesichert.

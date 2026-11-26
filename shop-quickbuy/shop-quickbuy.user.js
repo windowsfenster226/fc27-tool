@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.24.2
+// @version      3.24.3
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1214,7 +1214,7 @@
     const list = S.get('products');
     const n = Math.max(1, list.length);
     log(`[${(S.get('idx') % n) + 1}/${n} ${shortName(cur().url)}] ${reason || 'OOS (' + oosReason() + ')'}`);
-    if (centralOK(SHOP_ID)) return handBack();
+    if (centralOK(SHOP_ID)) return handBack(reason || 'OOS (' + oosReason() + ')');
     if (SHOP.bgCheck) return bgLoop();          // Sony/Microsoft: im Hintergrund weiterprüfen, nicht neu laden
     if (dropActive() && !S.get('dropReloaded')) { S.set('dropReloaded', true); log('Drop-Modus aktiv – prüfe ab jetzt schneller', 'buy'); }
 
@@ -2836,7 +2836,7 @@
     if (!centralCapable(id)) return { st: 'err', why: 'für diesen Shop nicht im Hintergrund prüfbar' };
     // Shops mit gemeinsamem Abruf-Limit (MediaMarkt + Saturn): frischen Stand vom Prüf-Zentrum nehmen statt neu abzurufen
     if (SHOPS[id].rateGroup) {
-      const last = ((typeof cLastMem !== 'undefined' && cLastMem[id]) || gv(id, 'cLast', {}) || {})[keyOf2(id, url)];
+      const last = ((typeof cLastMem !== 'undefined' && cLastMem[id]) || gv(id, 'cStat', {}) || {})[keyOf2(id, url)];
       const p429 = G.get(`c429:${capKey(id)}`, null);
       const fresh = last && (last.st === 'in' || last.st === 'out') && Date.now() - last.at < 5 * 60000;
       if (fresh) return { st: last.st, price: last.price, note: `Stand Prüf-Zentrum ${agoText(last.at)}` };
@@ -2979,9 +2979,9 @@
     sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
     // letzter Stand je Produkt (für !test: MediaMarkt/Saturn nicht extra abrufen → keine zusätzlichen 429)
     // im Speicher halten, nur alle 30 s je Shop speichern (häufiges Speichern kostet in allen Tabs CPU)
-    { const cl = cLastMem[id] || (cLastMem[id] = { ...(gv(id, 'cLast', {}) || {}) });
+    { const cl = cLastMem[id] || (cLastMem[id] = { ...(gv(id, 'cStat', {}) || {}) });
       cl[keyOf2(id, it.url)] = { st: r.st, why: r.why || '', at: Date.now(), price: r.html ? (bgPrice(r.html, SHOPS[id]) || 0) : 0 };
-      if (Date.now() - (cLastSaved[id] || 0) > 30000) { cLastSaved[id] = Date.now(); sv(id, 'cLast', cl); } }
+      if (Date.now() - (cLastSaved[id] || 0) > 30000) { cLastSaved[id] = Date.now(); sv(id, 'cStat', cl); } }
     if (!gv(id, 'running', false) || handledByTab(id)) return;
     // Abruf klappt und kein Tab hängt im Captcha → alten Captcha-Merker löschen (sonst bleibt „Captcha“ stehen)
     if ((r.st === 'out' || r.st === 'in') && gv(id, 'captchaSince', 0) && !ownerFresh(id)) sv(id, 'captchaSince', 0);
@@ -3040,7 +3040,7 @@
         sv(id, 'owner', null); sv(id, 'kick', now);
       }
       const step = Math.max(2000, (effRoundSec(id) * 1000) / list.length);
-      if (now - (gv(id, 'cLast', 0) || 0) < step) continue;
+      { const cl = gv(id, 'cLast', 0); if (typeof cl === 'number' && now - cl < step) continue; }
       sv(id, 'cLast', now);
       const slots = slotOrder(list, id);
       const si = (gv(id, 'cIdx', 0) || 0) % slots.length;
@@ -4742,7 +4742,7 @@
   }
 
   // Treffer-Tab ist fertig (nicht kaufbar o. Ä.) → zurück an das Prüf-Zentrum
-  function handBack() {
+  function handBack(why) {
     // Prüf-Zentrum meldete „verfügbar“, die Shop-Seite aber nicht → merken (verhindert, dass jede Runde ein Tab aufgeht)
     const hit = S.get('cHit');
     if (hit && hit.url && Date.now() - hit.at < 300000) {
@@ -4756,7 +4756,7 @@
     }
     S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
     S.set('captchaSince', 0);          // Seite lud normal → kein Captcha (mehr)
-    park('Zurück an das Prüf-Zentrum');
+    park(why ? `Shop-Seite: ${String(why).replace(/^OOS \((.*)\)$/, 'nicht kaufbar – $1')} → zurück an das Prüf-Zentrum` : 'Zurück an das Prüf-Zentrum');
   }
   // Ein anderer Tab prüft diesen Shop schon → dieser hört auf (Hintergrund-Tab des Scripts: schließt sich ganz)
   function retireTab(why) {
