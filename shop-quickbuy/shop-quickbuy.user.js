@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.24.0
+// @version      3.24.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -462,6 +462,8 @@
       // live geprüft: Button "In den Warenkorb" im Formular add-to-cart-form
       buyFilter: (el) => /add-to-cart-form/.test(el.id || '') || /add-to-cart/.test(String(el.className || '')),
       ownSeller: /alternate/i,
+      // Artikel aus dem Sortiment genommen: Alternate zeigt eine Hinweisseite ohne Produktdaten (live 26.11.) → als ausverkauft werten
+      bgParse: (html) => (/Der Artikel ist zur Zeit leider nicht verf(ü|&uuml;)gbar/i.test(html) && !/"@type"\s*:\s*"Product"/.test(html) ? 'out' : null),
     }),
     cyberport: std('cyberport', 'Cyberport', 'cyberport.de'),
     notebooksbilliger: std('notebooksbilliger', 'notebooksbilliger', 'notebooksbilliger.de'),
@@ -2832,7 +2834,16 @@
       return { st: 'in', price, seller };
     }
     if (!centralCapable(id)) return { st: 'err', why: 'für diesen Shop nicht im Hintergrund prüfbar' };
+    // Shops mit gemeinsamem Abruf-Limit (MediaMarkt + Saturn): frischen Stand vom Prüf-Zentrum nehmen statt neu abzurufen
+    if (SHOPS[id].rateGroup) {
+      const last = (gv(id, 'cLast', {}) || {})[keyOf2(id, url)];
+      const p429 = G.get(`c429:${capKey(id)}`, null);
+      const fresh = last && (last.st === 'in' || last.st === 'out') && Date.now() - last.at < 5 * 60000;
+      if (fresh) return { st: last.st, price: last.price, note: `Stand Prüf-Zentrum ${agoText(last.at)}` };
+      if (p429 && Date.now() < p429.until) return { st: 'err', why: `Shop bremst gerade (HTTP 429) – Pause bis ${new Date(p429.until).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}, nicht extra abgerufen` };
+    }
     const r = await centralStatus(id, url);
+    if (r.st === 'block' && /429/.test(r.why || '')) return { st: 'err', why: 'Shop bremst (HTTP 429) – nur der Test-Abruf, die Überwachung läuft normal weiter' };
     return { st: r.st === 'block' ? 'err' : r.st, why: r.why, price: r.html ? bgPrice(r.html, SHOPS[id]) : 0 };
   }
 
@@ -2965,6 +2976,9 @@
     const t0 = Date.now();
     const r = await centralStatus(id, it.url);
     sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
+    // letzter Stand je Produkt (für !test: MediaMarkt/Saturn nicht extra abrufen → keine zusätzlichen 429)
+    { const cl = { ...(gv(id, 'cLast', {}) || {}) }; cl[keyOf2(id, it.url)] = { st: r.st, why: r.why || '', at: Date.now(), price: r.html ? (bgPrice(r.html, SHOPS[id]) || 0) : 0 };
+      sv(id, 'cLast', cl); }
     if (!gv(id, 'running', false) || handledByTab(id)) return;
     // Abruf klappt und kein Tab hängt im Captcha → alten Captcha-Merker löschen (sonst bleibt „Captcha“ stehen)
     if ((r.st === 'out' || r.st === 'in') && gv(id, 'captchaSince', 0) && !ownerFresh(id)) sv(id, 'captchaSince', 0);
@@ -3996,9 +4010,15 @@
 
     if (/^(zusammenfassung|summary|tag)$/.test(cmd)) return daySummary();
     if (/^(test|check|prüfen|pruefen)$/.test(cmd)) {
-      const ids = arg ? botShops(arg) : usedShops();
+      let ids = arg ? botShops(arg) : usedShops();
       if (!ids.length) return 'Welchen Shop? z. B. `!test saturn` oder `!test alle`';
       const out = [];
+      // „alle“: nur gestartete Shops (gestoppte wie Otto überspringen – einzeln mit `!test otto` weiter möglich)
+      if (!arg || /^(alle|all|\*)$/i.test(arg)) {
+        const off = ids.filter((id) => !gv(id, 'running', false));
+        ids = ids.filter((id) => gv(id, 'running', false));
+        if (off.length) out.push(`_Übersprungen (gestoppt): ${off.map((id) => SHOPS[id].name).join(', ')}_`);
+      }
       for (const id of ids) {
         const list = gv(id, 'products', []);
         if (!list.length) continue;
@@ -4012,9 +4032,10 @@
             if (r.st === 'in') line = mx && r.price && r.price > mx * 1.02 ? `🟠 verfügbar, aber ${pr} > Max ${fmtEur(mx)} €` : `🟢 **verfügbar**${pr ? ` ${pr}` : ''}${r.seller ? ` · Verkäufer: ${r.seller}` : ''}`;
             else if (r.st === 'out') line = `⚪ ausverkauft${r.seller && r.seller !== 'Amazon' ? ` (nur Händler: ${r.seller}${pr ? ` ${pr}` : ''})` : ''}`;
             else line = `⚠️ ${r.why || 'nicht prüfbar'}`;
+            if (r.note) line += ` _(${r.note})_`;
           } catch (e) { line = `⚠️ Fehler: ${e && e.message}`; }
           out.push(`${it.prio ? '⭐' : ''}\`${i + 1}\` ${shortName(it.url)} – ${line}`);
-          await sleep(1500);         // nicht zu schnell hintereinander (Captcha-Schutz)
+          await sleep(SHOPS[id].rateGroup ? 4000 : 1500);         // nicht zu schnell hintereinander (Captcha-/429-Schutz)
         }
       }
       return out.join('\n') || 'Keine Produkte eingetragen.';

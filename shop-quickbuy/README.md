@@ -75,6 +75,11 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.24.1 – `!test` ohne Nebenwirkungen
+- `!test alle` prüft nur gestartete Shops (gestoppte wie Otto werden übersprungen, einzeln weiter mit `!test otto`).
+- MediaMarkt/Saturn: `!test` nimmt den frischen Stand des Prüf-Zentrums (≤ 5 Min.) statt neu abzurufen → keine zusätzlichen HTTP 429. Läuft gerade eine 429-Pause, wird nicht extra abgerufen.
+- Alternate: aus dem Sortiment genommene Artikel („Der Artikel ist zur Zeit leider nicht verfügbar“) zählen als ausverkauft statt „Lagerstatus nicht lesbar“.
+
 ## Neu in 3.24.0 – weniger CPU & Speicher
 - **Amazon im Prüf-Zentrum:** Produktseiten werden nur noch als Text abgerufen (Warenkorb-Button + Verkäufer = Amazon, Preis inkl. MwSt.), statt jede Seite komplett zu laden. Live geprüft (Amazon-Artikel = verfügbar, Business-Händlerangebote = nicht). Eigenes Limit 15 Abrufe/Min.
 - **Dashboard zeichnet nur noch neu, wenn sich etwas Wichtiges ändert** (sonst alle 10 s) statt alle 1,5 s.
