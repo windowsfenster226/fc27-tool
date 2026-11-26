@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.22.1
+// @version      3.23.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -303,9 +303,9 @@
       const el = document.querySelector('#corePrice_feature_div .a-offscreen, #corePriceDisplay_desktop_feature_div .a-offscreen, #apex_desktop .a-offscreen');
       return el ? parsePrice(norm(el.textContent)) : null;
     },
-    sellerOf: () => {
-      const t = norm([...document.querySelectorAll('#merchant-info, #merchantInfoFeature_feature_div, #tabular-buybox, #shipsFromSoldByODF_feature_div, #offerDisplayFeatures_desktop, [offer-display-feature-name="desktop-merchant-info"]')]
-        .map((e) => e.innerText || '').join(' '));
+    sellerOf: (root) => {
+      const t = norm([...(root || document).querySelectorAll('#merchant-info, #merchantInfoFeature_feature_div, #tabular-buybox, #shipsFromSoldByODF_feature_div, #offerDisplayFeatures_desktop, [offer-display-feature-name="desktop-merchant-info"]')]
+        .map((e) => e.innerText || e.textContent || '').join(' '));
       if (!t) return null;
       // Amazon Business (live 25.11.): „Verkauft und in Rechnung gestellt von Amazon. Versandt und bezogen von resupplied.“
       // → Ware kommt von einem Händler (oft zu Wucherpreisen) → Verkäufer = dieser Händler, NICHT Amazon
@@ -556,6 +556,7 @@
   }
   function log(msg, type) {
     type = type || logType(msg);
+    if ((type === 'warn' || type === 'err') && SHOP && !SHOP.internal) dayCount(SHOP_ID, 'p');
     console.log(`[QuickBuy ${SHOP.name}]`, msg);
     const l = getLog();
     const ts = new Date().toLocaleTimeString('de-DE');
@@ -845,7 +846,7 @@
       content: ping ? '@everyone' : '',
       allowed_mentions: { parse: ping ? ['everyone'] : [] },
       embeds: [{
-        title: k.title,
+        title: o.embedTitle || k.title,
         url: p.url || location.href,
         color: k.color,
         description: `${o.title === '' ? '' : `**${(o.title || S.get('curTitle') || shortName(p.url || location.href)).replace(/[*_`]/g, '')}**`}${description ? (o.title === '' ? '' : '\n') + description : ''}`.slice(0, 4000),
@@ -1006,7 +1007,7 @@
       title: !!(h1 && norm(h1.innerText)), price: !!getProductPrice(), btn: !!findBuyButton(),
       oosText: !!(matchText(SHOP.oos) || (SHOP.hardOos && matchText(SHOP.hardOos))), ld: pageLdAvailability() || '',
     };
-    S.set('diag', d);
+    S.set('diag', d); dayCount(SHOP_ID, 'c');
     const bad = !d.title && !d.btn && !d.price && !d.ld;
     const n = bad ? (S.get('diagBad') || 0) + 1 : 0;
     S.set('diagBad', n);
@@ -1017,6 +1018,16 @@
   }
 
   /* ---------- Restock-Statistik ---------- */
+  /* ---------- Tageszähler für die Zusammenfassung: c = Prüfungen, p = Probleme ---------- */
+  const dayKey = (t) => { const d = new Date(t || Date.now()); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+  function dayCount(id, k) {
+    try {
+      const key = `day:${dayKey()}`; const o = GM_getValue(`global:${key}`, {}) || {};
+      const x = o[id] || (o[id] = { c: 0, p: 0 }); x[k] = (x[k] || 0) + 1;
+      GM_setValue(`global:${key}`, o);
+    } catch (e) {}
+  }
+
   // Restock merken (für Statistik und „Gefunden“-Spalte). Ein Restock = erste Verfügbarkeit; weitere Funde desselben
   // Produkts innerhalb von 15 Min. zählen nicht extra. over = verfügbar, aber über dem Höchstpreis
   function noteRestock(id, url, price, title, over) {
@@ -1155,7 +1166,7 @@
           countdown(step);
           await wait(step);
           if (!S.get('running') || yielded) break;
-          const st = await bgStatus(list[i].url);
+          const st = await bgStatus(list[i].url); dayCount(SHOP_ID, 'c');
           const tag = `[${i + 1}/${list.length} ${shortName(list[i].url)}]`;
           if (st === 'in') {
             const bp = SHOP.shopify ? null : bgPrice(lastBgHtml);
@@ -1796,7 +1807,13 @@
           await sleep(3500);
           return readdNow('Veralteter Warenkorb-Eintrag entfernt');
         }
-        // Artikel bleibt im Warenkorb (wird NICHT entfernt und NICHT erneut hinzugefügt) – weiter beobachten
+        // Zielprodukt liegt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock) → aufräumen. Das Tool legt es
+        // beim nächsten Restock frisch hinein (ein alter Eintrag blockiert bei MediaMarkt/Saturn sonst die Kasse).
+        if (item.remove && G.get('cleanCart', true)) {
+          log(`Zielprodukt liegt nicht kaufbar im Warenkorb („${hit}“) → entferne den Eintrag (wird beim Restock neu hinzugefügt)`, 'info');
+          clickEl(item.remove); await sleep(3000); setInCart(false);
+          return restartLoop('Warenkorb aufgeräumt', false);
+        }
         return restartLoop(`Im Warenkorb noch „${hit}“`, false);
       }
     } else {
@@ -2778,6 +2795,29 @@
     if (Date.now() < (gv(id, 'slowUntil', 0) || 0)) base *= 2;      // direkt nach einem Captcha 1 Std. zusätzlich langsamer
     return base;
   }
+  /* ---------- Einzelprüfung auf Zuruf (!test) ---------- */
+  async function testProduct(id, url) {
+    if (id === 'amazon') {
+      const r = await gmFetch(url);
+      if (!r) return { st: 'err', why: 'keine Antwort' };
+      if (r.status !== 200) return { st: 'err', why: `HTTP ${r.status}` };
+      const html = String(r.responseText || '');
+      const d = new DOMParser().parseFromString(html, 'text/html');
+      if (!d.querySelector('#productTitle')) return { st: 'err', why: /captcha/i.test(html) ? 'Captcha' : 'Seite nicht lesbar' };
+      const inp = d.getElementById('items[0.base][customerVisiblePrice][amount]');
+      const off = d.querySelector('#corePrice_feature_div .a-offscreen, #corePriceDisplay_desktop_feature_div .a-offscreen, #apex_desktop .a-offscreen');
+      const price = (inp && parseFloat(inp.value)) || (off ? parsePrice(off.textContent) : 0) || 0;
+      let seller = null; try { seller = SHOPS.amazon.sellerOf(d); } catch (e) {}
+      const buyable = !!d.querySelector('#add-to-cart-button');
+      if (!buyable) return { st: 'out', price, seller };
+      if (!seller || !SHOPS.amazon.ownSeller.test(seller)) return { st: 'out', price, seller: seller || 'unbekannt' };
+      return { st: 'in', price, seller };
+    }
+    if (!centralCapable(id)) return { st: 'err', why: 'für diesen Shop nicht im Hintergrund prüfbar' };
+    const r = await centralStatus(id, url);
+    return { st: r.st === 'block' ? 'err' : r.st, why: r.why, price: r.html ? bgPrice(r.html) : 0 };
+  }
+
   /* ---------- „Gefunden“: wie oft war ein Produkt verfügbar? ---------- */
   let foundCache = { at: 0, map: null };
   function foundStats() {
@@ -2906,7 +2946,7 @@
     const tag = `[${i + 1}/${list.length} ${shortName(it.url)}]`;
     const t0 = Date.now();
     const r = await centralStatus(id, it.url);
-    sv(id, 'cBeat', Date.now());
+    sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
     if (!gv(id, 'running', false) || handledByTab(id)) return;
     // Abruf klappt und kein Tab hängt im Captcha → alten Captcha-Merker löschen (sonst bleibt „Captcha“ stehen)
     if ((r.st === 'out' || r.st === 'in') && gv(id, 'captchaSince', 0) && !ownerFresh(id)) sv(id, 'captchaSince', 0);
@@ -2996,6 +3036,7 @@
       ? { ts: e.slice(0, 8), msg: e.replace(/^[\d:]+\s+–\s+/, ''), type: logType(e), n: 1 } : e);
   }
   function pushLog(id, msg, type) {
+    if (type === 'warn' || type === 'err') dayCount(id, 'p');
     const l = logFor(id);
     l.unshift({ ts: new Date().toLocaleTimeString('de-DE'), at: Date.now(), msg, type: type || 'info', n: 1 });
     sv(id, 'log', l.slice(0, 60));
@@ -3312,7 +3353,45 @@
     if (!r.rows.length) return 'Keine Shops mit Produkten eingetragen.';
     return r.rows.map((x) => `${!x.run ? '⏸️' : x.ok ? '✅' : '⚠️'} **${SHOPS[x.id].name}:** ${x.text}`).join('\n') + `\n💶 ${r.budget}`;
   }
+  // Tageszusammenfassung je Shop (Prüfungen, Restocks, Käufe, Probleme, letzte Prüfung)
+  function lastCheckAt(id) { return Math.max(gv(id, 'cBeat', 0) || 0, (gv(id, 'diag', null) || {}).t || 0); }
+  function daySummary(t) {
+    const dk = dayKey(t); const cnt = GM_getValue(`global:day:${dk}`, {}) || {};
+    const rs = GM_getValue('global:restocks', []).filter((e) => dayKey(e.t) === dk);
+    const hist = GM_getValue('global:history', []).filter((h) => dayKey(h.ts) === dk);
+    const ids = SHOP_IDS().filter((id) => gv(id, 'products', []).length || gv(id, 'running', false) || cnt[id]);
+    const lines = []; let tc = 0; let tr = 0; let tb = 0;
+    for (const id of ids) {
+      const c = (cnt[id] || {}).c || 0; const p = (cnt[id] || {}).p || 0;
+      const r = rs.filter((e) => e.shopId === id); const rOk = r.filter((e) => !e.over).length; const rOver = r.length - rOk;
+      const b = hist.filter((h) => h.shopId === id && /order|ok|success|bestellt/i.test(String(h.result))).length;
+      tc += c; tr += rOk; tb += b;
+      const run = gv(id, 'running', false); const lc = lastCheckAt(id);
+      const stale = run && (!lc || Date.now() - lc > 3600e3);
+      const icon = !run ? '⏸️' : stale || p > 20 ? '⚠️' : '✅';
+      const parts = [`${c.toLocaleString('de-DE')} Prüfungen`, `${rOk} Restock${rOk === 1 ? '' : 's'}${rOver ? ` (+${rOver} zu teuer)` : ''}`, `${b} ${b === 1 ? 'Kauf' : 'Käufe'}`, `${p} Problem${p === 1 ? '' : 'e'}`];
+      lines.push(`${icon} **${SHOPS[id].name}:** ${parts.join(' · ')}${!run ? ' · gestoppt' : stale ? ` · ⚠️ seit ${lc ? Math.round((Date.now() - lc) / 60000) + ' Min.' : 'Start'} keine Prüfung!` : ''}`);
+    }
+    const top = {};
+    for (const e of rs) if (!e.over) { const k = `${SHOPS[e.shopId] ? SHOPS[e.shopId].name : e.shopId}: ${e.title || shortName(e.url)}`; top[k] = (top[k] || 0) + 1; }
+    const topTxt = Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, n]) => `• ${k} (${n}×)`).join('\n');
+    return `**Tageszusammenfassung ${new Date(t || Date.now()).toLocaleDateString('de-DE')}**\n${lines.join('\n') || 'Keine Shops aktiv.'}\n\n`
+      + `Gesamt: ${tc.toLocaleString('de-DE')} Prüfungen · ${tr} Restocks · ${tb} Käufe · ${fmtEur(spentToday())} € ausgegeben`
+      + (topTxt ? `\n**Verfügbar waren heute:**\n${topTxt}` : '');
+  }
+  function summaryTick() {
+    if (!G.get('sumOn', true)) return;
+    const now = new Date(); const key = now.toDateString();
+    if (G.get('sumDay', '') === key) return;
+    const [hh, mm] = String(G.get('sumTime', '23:00')).split(':').map(Number);
+    if (now.getHours() * 60 + now.getMinutes() < (hh || 0) * 60 + (mm || 0)) return;
+    G.set('sumDay', key);
+    discord('report', daySummary(), { title: '', shop: 'Alle Shops', embedTitle: '📊 QuickBuy Tageszusammenfassung' });
+    // alte Tageszähler aufräumen (älter als 14 Tage)
+    try { for (const k of GM_listValues()) { const m = k.match(/^global:day:(\d+)-(\d+)-(\d+)$/); if (m && Date.now() - new Date(+m[1], +m[2] - 1, +m[3]).getTime() > 14 * 86400e3) GM_deleteValue(k); } } catch (e) {}
+  }
   function reportTick() {
+    try { summaryTick(); } catch (e) { console.error('[QuickBuy] Zusammenfassung:', e); }
     if (!G.get('reportOn', true)) return;
     const now = new Date();
     const key = now.toDateString();
@@ -3732,6 +3811,7 @@
     '`!pause <shop> <sekunden>` – Prüfintervall',
     '`!budget [betrag|aus]` – Tagesbudget',
     '`!heute` – heutige Käufe · `!log [shop]` – letzte Meldungen',
+    '`!test <shop|alle>` – alle Produkte jetzt prüfen · `!zusammenfassung` – Tagesbilanz',
     '`!radar` · `!radar add <such-link> [stichwörter]`',
     '`!selbsttest` · `!hilfe`',
   ].join('\n');
@@ -3870,6 +3950,32 @@
       const h = GM_getValue('global:history', []).filter((x) => x.ts >= d0.getTime());
       if (!h.length) return 'Heute noch keine Käufe oder Alarme.';
       return `**Heute**\n${h.map((x) => `${x.result === 'success' ? '✅' : x.result === 'alert' ? '🔔' : '❓'} ${new Date(x.ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} **${dmd(x.shop)}** ${dmd(x.title).slice(0, 60)} · ${fmtEur(x.total || x.price)} €${x.orderNo ? ` · Nr. ${dmd(x.orderNo)}` : ''}`).join('\n')}\n💶 Summe: ${fmtEur(spentToday())} €`;
+    }
+
+    if (/^(zusammenfassung|summary|tag)$/.test(cmd)) return daySummary();
+    if (/^(test|check|prüfen|pruefen)$/.test(cmd)) {
+      const ids = arg ? botShops(arg) : usedShops();
+      if (!ids.length) return 'Welchen Shop? z. B. `!test saturn` oder `!test alle`';
+      const out = [];
+      for (const id of ids) {
+        const list = gv(id, 'products', []);
+        if (!list.length) continue;
+        out.push(`**${SHOPS[id].name}** (${list.length} Produkt${list.length === 1 ? '' : 'e'}):`);
+        for (let i = 0; i < list.length; i++) {
+          const it = list[i]; const mx = Number(it.maxPrice) || 0;
+          let line;
+          try {
+            const r = await testProduct(id, it.url);
+            const pr = r.price ? `${fmtEur(r.price)} €` : '';
+            if (r.st === 'in') line = mx && r.price && r.price > mx * 1.02 ? `🟠 verfügbar, aber ${pr} > Max ${fmtEur(mx)} €` : `🟢 **verfügbar**${pr ? ` ${pr}` : ''}${r.seller ? ` · Verkäufer: ${r.seller}` : ''}`;
+            else if (r.st === 'out') line = `⚪ ausverkauft${r.seller && r.seller !== 'Amazon' ? ` (nur Händler: ${r.seller}${pr ? ` ${pr}` : ''})` : ''}`;
+            else line = `⚠️ ${r.why || 'nicht prüfbar'}`;
+          } catch (e) { line = `⚠️ Fehler: ${e && e.message}`; }
+          out.push(`${it.prio ? '⭐' : ''}\`${i + 1}\` ${shortName(it.url)} – ${line}`);
+          await sleep(1500);         // nicht zu schnell hintereinander (Captcha-Schutz)
+        }
+      }
+      return out.join('\n') || 'Keine Produkte eingetragen.';
     }
 
     if (/^(log|protokoll)$/.test(cmd)) {
@@ -4229,10 +4335,14 @@
 <label class="ck" title="Ein Tab (das Dashboard) prüft alle Shops im Hintergrund; Shop-Tabs öffnen sich nur bei einem Treffer. Gilt für Otto, MediaMarkt, Saturn, PlayStation, Microsoft, FNAC – Amazon prüft weiter im eigenen Tab."><input type="checkbox" data-gs="central" ${G.get('central', true) ? 'checked' : ''}> Prüf-Zentrum (nur ein Tab prüft, Shop-Tabs nur bei Treffer)</label>
 <label class="ck" title="Produkte, die in letzter Zeit öfter verfügbar waren (oder um diese Uhrzeit oft kommen), werden automatisch öfter geprüft – 🔥 in der Produkttabelle. Gesamtzahl der Abrufe bleibt gleich."><input type="checkbox" data-gs="autoPrio" ${G.get('autoPrio', true) ? 'checked' : ''}> 🔥 Auto-Priorität aus der Restock-Historie</label>
 <label class="ck" title="Bei einem Treffer öffnet sich der Shop-Tab im Vordergrund. Nötig für MediaMarkt/Saturn: im Hintergrund lädt deren Warenkorb nicht fertig."><input type="checkbox" data-gs="hitFocus" ${G.get('hitFocus', true) ? 'checked' : ''}> Treffer-Tab in den Vordergrund holen (empfohlen)</label>
+<label class="ck" title="Liegt das gesuchte Produkt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), entfernt das Tool den Eintrag. Beim nächsten Restock legt es das Produkt frisch hinein."><input type="checkbox" data-gs="cleanCart" ${G.get('cleanCart', true) ? 'checked' : ''}> Nicht kaufbare Zielprodukte aus dem Warenkorb entfernen</label>
         <label class="ck"><input type="checkbox" data-gs="autoReopen" ${G.get('autoReopen', true) ? 'checked' : ''}> Abgestürzte Shop-Tabs automatisch neu öffnen</label>
         <label class="ck"><input type="checkbox" data-gs="reportOn" ${G.get('reportOn', true) ? 'checked' : ''}> Täglicher Selbsttest an Discord um</label>
         <input type="time" id="g-rtime" value="${esc(G.get('reportTime', '09:00'))}" style="flex:none">
         <button class="sm" data-g="selftest">🩺 Selbsttest jetzt</button>
+        <label class="ck"><input type="checkbox" data-gs="sumOn" ${G.get('sumOn', true) ? 'checked' : ''}> 📊 Tageszusammenfassung an Discord um</label>
+        <input type="time" id="g-stime" value="${esc(G.get('sumTime', '23:00'))}" style="flex:none">
+        <button class="sm" data-g="sumnow">📊 Jetzt senden</button>
       </div>
       ${startklarBlock()}
       ${protectBlock()}
@@ -4325,6 +4435,7 @@
         todo.forEach(dashStart);
       }
       if (g === 'bulk') return bulkAddDialog(d);
+      if (g === 'sumnow') { discord('report', daySummary(), { title: '', shop: 'Alle Shops', embedTitle: '📊 QuickBuy Tageszusammenfassung' }); dashToast('📊 Zusammenfassung an Discord gesendet'); return; }
       if (g === 'stopall') ids.forEach((id) => { if (gv(id, 'running', false)) dashStop(id); });
       if (g === 'dismiss') GM_setValue('global:dismissed', Date.now());
       if (g === 'export') return exportAll();
@@ -4435,6 +4546,7 @@
     if (gb) gb.onchange = () => { G.set('budgetDay', parseEur(gb.value) || 0); dashToast(Number(G.get('budgetDay', 0)) ? `Tagesbudget: ${fmtEur(G.get('budgetDay', 0))} €` : 'Tagesbudget aus'); renderDash(true); };
     const rt = d.querySelector('#g-rtime');
     if (rt) rt.onchange = () => { G.set('reportTime', rt.value || '09:00'); };
+    { const st2 = d.querySelector('#g-stime'); if (st2) st2.onchange = () => { G.set('sumTime', st2.value || '23:00'); G.set('sumDay', ''); }; }
     d.querySelectorAll('[data-gs]').forEach((c) => { c.onchange = () => G.set(c.dataset.gs, c.checked); });
     d.querySelectorAll('[data-rate]').forEach((c) => { c.onchange = () => { const v = Math.max(0, Math.round(parseEur(c.value) || 0)); G.set(`rateMax:${c.dataset.rate}`, v); dashToast(v ? `${RATE_GROUPS[c.dataset.rate].name}: max. ${v} Abrufe/Min` : 'Gemeinsames Limit aus'); renderDash(true); }; });
     { const b = d.querySelector('#d-sk'); if (b) b.onclick = () => { startklar().catch((e) => { skRunning = false; console.error('[QuickBuy] Startklar:', e); }); }; }

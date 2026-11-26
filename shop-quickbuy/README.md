@@ -69,3 +69,8 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - 3.21.0: Spalte „Gefunden“ in der Produkttabelle – wie oft war das Produkt in den letzten 30 Tagen verfügbar (je Restock einmal), dazu wie oft nur teurer, und wann zuletzt. Zählt jetzt auch Funde des Prüf-Zentrums; Fehlalarme werden wieder herausgenommen.
 - 3.22.0: 🔥 Auto-Priorität – Produkte, die in letzter Zeit öfter verfügbar waren (bzw. um die aktuelle Uhrzeit schon öfter kamen), werden automatisch 2–3× so oft geprüft. Manuelles ⭐ hat Vorrang. Abschaltbar unter Einstellungen.
 - 3.22.1: Treffer-Tab öffnet sich im Vordergrund (MediaMarkt/Saturn bauen den Warenkorb im Hintergrund-Tab nicht fertig → „Warenkorb lädt nicht“). Vom Script geöffnete Treffer-Tabs schließen sich danach wieder. Abschaltbar unter Einstellungen.
+
+## Neu in 3.23.0
+- **📊 Tageszusammenfassung** an Discord (Standard 23:00, Einstellungen): je Shop Prüfungen, Restocks (+ zu teuer), Käufe, Probleme, Warnung wenn ein Shop > 1 Std. nicht geprüft hat; dazu die Produkte, die heute verfügbar waren. Knopf „Jetzt senden“, Discord-Befehl `!zusammenfassung`.
+- **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
+- **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
