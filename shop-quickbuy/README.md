@@ -75,6 +75,11 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.28.0 – Leichter Amazon-Abruf
+- Das Prüf-Zentrum fragt bei Amazon zuerst die kleine Angebotsliste ab („aodAjaxMain“, 9–130 KB statt 2–2,5 MB Produktseite, live geprüft 26.11.). Maßgeblich ist das Angebot im Kaufkasten: nur „Versand Amazon“ + „Verkäufer Amazon“ zählt als verfügbar.
+- Treffer werden mit der ganzen Produktseite gegengeprüft (Kaufkasten, Preis). Liefert die Angebotsliste 5× nichts Lesbares, nutzt das Tool 1 Std. wieder die ganze Produktseite.
+- Abschaltbar in den Einstellungen („⚡ Amazon: leichter Abruf“).
+
 ## Neu in 3.27.0 – Zeitmessung & täglicher Startklar-Check
 - ⏱ Zeitmessung: Nach jedem Kauf (oder wenn die Kasse für die Bestätigung bereitsteht) eine Zeile im Log, z. B. „Treffer (Prüf-Zentrum) → Produktseite verfügbar 1,8 s → im Warenkorb 3,1 s → zur Kasse 4,0 s → Bestellen geklickt 9,2 s → bestellt 11,5 s“.
 - 🚦 Täglicher Startklar-Check (Standard 08:00, einstellbar): prüft für alle gestarteten Shops Anmeldung, fremde Artikel im Warenkorb und den Abruf und meldet das Ergebnis an Discord. Läuft nur im Zeitfenster bis 2 Std. nach der eingestellten Uhrzeit und nie während eines Kaufs.

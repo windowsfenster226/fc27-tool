@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.27.0
+// @version      3.28.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -382,6 +382,21 @@
       if (!blocks.length) return null;
       const seller = SHOPS.amazon.sellerOf({ querySelectorAll: () => [{ textContent: blocks.join(' ') }] });
       return seller && SHOPS.amazon.ownSeller.test(seller) ? 'in' : 'out';
+    },
+    /* Leichter Abruf (live geprüft 26.11.2026): die Angebotsliste „aodAjaxMain“ ist 9–130 KB statt 2–2,5 MB Produktseite.
+     * Maßgeblich ist das Angebot im Kaufkasten (#aod-pinned-offer): nur „Versand Amazon“ + „Verkäufer Amazon“ zählt als verfügbar
+     * (Business: „Verkäufer Amazon“ mit fremdem Versand = Händlerware). Treffer werden mit der ganzen Produktseite gegengeprüft. */
+    lightUrl: (u) => { const m = u.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i); return m ? `https://www.amazon.de/gp/product/ajax/aodAjaxMain/?asin=${m[1].toUpperCase()}&pc=dp&experienceId=aodAjaxMain` : null; },
+    lightParse: (html) => {
+      const d = new DOMParser().parseFromString(html, 'text/html');
+      if (!d.querySelector('#aod-asin-title-text, #aod-container, [id^="aod-"]')) return null;
+      const p = d.querySelector('#aod-pinned-offer'); if (!p) return 'out';            // kein Angebot im Kaufkasten
+      if (!p.querySelector('[name="submit.addToCart"]')) return 'out';
+      const t = (sel) => { const e = p.querySelector(sel); return e ? e.textContent.replace(/\s+/g, ' ').trim() : ''; };
+      const ships = t('#aod-offer-shipsFrom').replace(/^(Versand|Versender)\s*:?\s*/i, '');
+      const sold = t('#aod-offer-soldBy').replace(/^Verkäufer\s*:?\s*/i, '');
+      if (!ships || !sold) return null;
+      return /^amazon/i.test(ships) && SHOPS.amazon.ownSeller.test(sold) ? 'in' : 'out';
     },
     bgPriceFn: (html) => { const m = html.match(/name="items\[0\.base\]\[customerVisiblePrice\]\[amount\]"[^>]*value="([\d.]+)"/) || html.match(/value="([\d.]+)"[^>]*name="items\[0\.base\]\[customerVisiblePrice\]\[amount\]"/); return m ? parseFloat(m[1]) : 0; },
   };
@@ -3000,6 +3015,26 @@
   const unitCount = (id) => (SHOPS[id].catBatch ? catUnits(id).length : gv(id, 'products', []).length);
   async function centralStatus(id, url) {
     let anon = !!gv(id, 'cAnon', false);
+    // Leichter Abruf (Amazon): erst die kleine Angebotsliste; nur bei „verfügbar“ oder Unklarheit die ganze Produktseite
+    const sh0 = SHOPS[id];
+    if (sh0.lightUrl && G.get('lightOn', true) && Date.now() > (gv(id, 'lightOff', 0) || 0)) {
+      const lu = sh0.lightUrl(url);
+      if (lu) {
+        const lr = await gmFetch(lu, anon);
+        if (lr && (lr.status === 403 || lr.status === 429 || lr.status === 503)) return { st: 'block', why: `HTTP ${lr.status}` };
+        const lh = lr && lr.status === 200 ? String(lr.responseText || '') : '';
+        const captcha = lh && lh.length < 80000 && /\/errors\/validateCaptcha|captcha/i.test(lh) && !/aod-/.test(lh);
+        if (captcha) return { st: 'block', why: 'Captcha' };
+        let v = null; try { v = lh ? sh0.lightParse(lh) : null; } catch (e) {}
+        if (v) sv(id, 'lightFails', 0);
+        else {
+          const n = (gv(id, 'lightFails', 0) || 0) + 1; sv(id, 'lightFails', n);
+          if (n >= 5) { sv(id, 'lightOff', Date.now() + 3600e3); sv(id, 'lightFails', 0); pushLog(id, 'Leichter Abruf liefert nichts Lesbares → 1 Std. wieder ganze Produktseite', 'info'); }
+        }
+        if (v === 'out') return { st: 'out', light: true };
+        // 'in' → mit der ganzen Produktseite bestätigen (Kaufkasten, Preis); null → normaler Abruf
+      }
+    }
     if (SHOPS[id].catBatch) url = bust(url);
     let r = await gmFetch(url, anon);
     // HTTP 400/431: manche Shops (z. B. Otto) lehnen die Anfrage mit allen Cookies ab → ohne Cookies wiederholen und merken.
@@ -3090,7 +3125,7 @@
     // Fehlerzähler je Produkt (ein einzelner Ausreißer öffnet keinen Tab)
     const ek = keyOf2(id, it.url); const pe = { ...(gv(id, 'cErrP', {}) || {}) };
     if (r.st === 'out' || r.st === 'in') { if (pe[ek]) { delete pe[ek]; sv(id, 'cErrP', pe); } }
-    if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (${via}, ${Date.now() - t0} ms)`, 'oos'); return; }
+    if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (${r.light ? `${via}, leicht` : via}, ${Date.now() - t0} ms)`, 'oos'); return; }
     if (r.st === 'in') {
       sv(id, 'cFails', 0);
       const bp = bgPrice(r.html, SHOPS[id]); const mx = Number(it.maxPrice) || 0;
@@ -4614,6 +4649,7 @@
         <label class="ck"><input type="checkbox" data-gs="sumOn" ${G.get('sumOn', true) ? 'checked' : ''}> 📊 Tageszusammenfassung an Discord um</label>
         <input type="time" id="g-stime" value="${esc(G.get('sumTime', '23:00'))}" style="flex:none">
         <button class="sm" data-g="sumnow">📊 Jetzt senden</button>
+        <label class="ck"><input type="checkbox" data-gs="lightOn" ${G.get('lightOn', true) ? 'checked' : ''}> ⚡ Amazon: leichter Abruf (kleine Angebotsliste statt ganzer Produktseite)</label>
         <label class="ck"><input type="checkbox" data-gs="skOn" ${G.get('skOn', true) ? 'checked' : ''}> 🚦 Täglicher Startklar-Check (Anmeldung, Warenkorb) an Discord um</label>
         <input type="time" id="g-sktime" value="${esc(G.get('skTime', '08:00'))}" style="flex:none">
         <label class="ck"><input type="checkbox" data-gs="patWarn" ${G.get('patWarn', true) ? 'checked' : ''}> ⏰ 15 Min. vor einem typischen Restock-Fenster an Discord melden</label>
