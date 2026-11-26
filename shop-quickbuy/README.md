@@ -75,6 +75,13 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.26.0 – Sammelabfrage MediaMarkt/Saturn
+- Eine Kategorieseite (z. B. „PS5 Konsolen“) liefert den Lagerstatus aller ihrer Produkte (`CofrOnlineStatusFeature`, live geprüft 26.11.) → **1 Anfrage statt 1 je Produkt**. Die Kategorie lernt das Tool automatisch aus der Brotkrumen-Navigation der Produktseite; Produkte, die nicht auf Seite 1 der Kategorie stehen, werden weiter einzeln geprüft.
+- Treffer aus der Sammelabfrage werden vor dem Öffnen auf der Produktseite gegengeprüft (Preis + Bestätigung).
+- **Cache-Umgehung:** MediaMarkt/Saturn liefern Seiten bis zu 2 Min. aus dem Cloudflare-Cache. Abrufe und Treffer-Tabs umgehen den Cache jetzt (frischer Stand, weniger Fehlalarme).
+- Abruf-Limit MediaMarkt+Saturn zählt jetzt Anfragen statt Produkte.
+- `!muster`: „1 Tag“ statt „1 Tage“.
+
 ## Neu in 3.25.0 – Restock-Muster
 - Statistik-Tab: Tabelle „Restock-Muster je Shop“ (letzte 60 Tage, gezählt nach Tagen) mit typischen Wochentagen und Uhrzeit, z. B. „meist Do 09–11 Uhr“. Fehlalarme zählen nicht.
 - ⏰ Vorwarnung: 15 Min. vor einem typischen Restock-Fenster (an mind. 2 verschiedenen Tagen gleiche Wochentag+Stunde) kommt eine Discord-Nachricht – je Fenster 1× am Tag, nur für gestartete Shops. Abschaltbar in den Einstellungen.

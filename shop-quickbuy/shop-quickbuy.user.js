@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.25.0
+// @version      3.26.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -151,6 +151,23 @@
       // (PS5 Pro/Xbox: OutOfStock, Kabel: InStock). Nur Marktplatz-Angebot („onlineStatus“: MP_OFFER) zählt als nicht verfügbar,
       // wenn „Nur Shop selbst“ an ist. Prüfung dauerte live 70–140 ms statt >10 s Neuladen.
       bgCheck: true,
+      /* Sammelabfrage (live geprüft 26.11.2026): Kategorieseiten enthalten je Produkt
+       * „CofrOnlineStatusFeature:<Shop>:de:<Artikelnr>“ mit isAvailableAndBuyable + onlineStatus (AVAILABLE / MP_OFFER /
+       * TEMPORARILY_NOT_AVAILABLE …). Eine Anfrage prüft so alle Produkte derselben Kategorie. Die Kategorie lernt das Tool aus
+       * der Brotkrumen-Navigation der Produktseite. Seiten liegen 2 Min. im Cloudflare-Cache → Abruf mit Cache-Umgehung. */
+      catBatch: true,
+      catOf: (html) => {
+        const bc = html.match(/BreadcrumbList[\s\S]{0,3000}?\]/); if (!bc) return '';
+        const all = [...bc[0].matchAll(/https:\/\/www\.(?:mediamarkt|saturn)\.de\/de\/category\/[^"\\]+?\.html/g)].map((m) => m[0]);
+        return all.length ? all[all.length - 1] : '';
+      },
+      catStatus: (html, pid, onlyOwn) => {
+        const m = html.match(new RegExp(`CofrOnlineStatusFeature:[A-Za-z]+:de:${pid}\\\\?"\\s*:\\s*\\{([^}]*)\\}`));
+        if (!m) return null;
+        const t = m[1].replace(/\\"/g, '"');
+        const buy = /"isAvailableAndBuyable"\s*:\s*true/.test(t); const os = (t.match(/"onlineStatus"\s*:\s*"(\w+)"/) || [])[1] || '';
+        return buy && (os === 'AVAILABLE' || (!onlyOwn && os === 'MP_OFFER')) ? 'in' : 'out';
+      },
       bgParse: (html, get = (k) => S.get(k)) => {
         if (get('onlyOwn') && /\\?"onlineStatus\\?"\s*:\s*\\?"MP_OFFER/.test(html) && !/\\?"onlineStatus\\?"\s*:\s*\\?"AVAILABLE/.test(html)) return 'out';
         // Produktdaten stecken als escaptes JSON im Seitenzustand (kein eigenes JSON-LD-Skript) → erstes Vorkommen = Hauptartikel
@@ -2810,7 +2827,7 @@
     const g = sh.rateGroup; const lim = g ? groupLimit(g) : 0;
     if (lim > 0) {
       const ids = groupShops(g); if (!ids.includes(id)) ids.push(id);
-      base = Math.max(base, (60 * ids.reduce((a, x) => a + gv(x, 'products', []).length, 0)) / lim);
+      base = Math.max(base, (60 * ids.reduce((a, x) => a + unitCount(x), 0)) / lim);      // je Anfrage (Sammelabfrage = 1)
     }
     base *= capInfo(id).factor;
     if (Date.now() < (gv(id, 'slowUntil', 0) || 0)) base *= 2;      // direkt nach einem Captcha 1 Std. zusätzlich langsamer
@@ -2902,9 +2919,9 @@
     const m = autoPrioMap()[`${id}|${keyOf2(id, x.url)}`];
     return m ? m.w : 1;
   }
-  function slotOrder(list, id) {
-    const w = list.map((x) => prioWeight(id, x));
-    if (w.every((v) => v === w[0])) return list.map((_, i) => i);      // alle gleich gewichtet → normale Reihenfolge
+  function slotOrder(list, id) { return wOrder(list.map((x) => prioWeight(id, x))); }
+  function wOrder(w) {
+    if (w.every((v) => v === w[0])) return w.map((_, i) => i);      // alle gleich gewichtet → normale Reihenfolge
     const tot = w.reduce((a, b) => a + b, 0); const cur = w.map(() => 0); const out = [];
     for (let k = 0; k < tot; k++) {
       let best = 0;
@@ -2940,8 +2957,29 @@
       } catch (e) { res(null); }
     });
   }
+  // Cache-Umgehung: MediaMarkt/Saturn liefern Seiten bis zu 2 Min. (veraltet bis 10 Min.) aus dem Cloudflare-Cache (live 26.11.)
+  const bust = (u) => { const [b, h] = String(u).split('#'); return `${b}${b.includes('?') ? '&' : '?'}qbt=${Date.now().toString(36)}${h ? `#${h}` : ''}`; };
+  // Produkt → Kategorie (für die Sammelabfrage). '' = nicht sammelbar (einzeln prüfen)
+  function catLearn(id, url, html) {
+    const sh = SHOPS[id]; if (!sh.catBatch || !html) return;
+    const k = keyOf2(id, url); const cm = gv(id, 'catMap', {}) || {};
+    if (k in cm) return;
+    let c = ''; try { c = sh.catOf(html) || ''; } catch (e) {}
+    sv(id, 'catMap', { ...cm, [k]: c });
+  }
+  function catUnits(id) {
+    const list = gv(id, 'products', []); const cm = gv(id, 'catMap', {}) || {};
+    const units = []; const byCat = {};
+    list.forEach((x, i) => {
+      const c = SHOPS[id].catBatch ? cm[keyOf2(id, x.url)] : '';
+      if (c) { if (!byCat[c]) { byCat[c] = { cat: c, idx: [] }; units.push(byCat[c]); } byCat[c].idx.push(i); } else units.push({ cat: '', idx: [i] });
+    });
+    return units;
+  }
+  const unitCount = (id) => (SHOPS[id].catBatch ? catUnits(id).length : gv(id, 'products', []).length);
   async function centralStatus(id, url) {
     let anon = !!gv(id, 'cAnon', false);
+    if (SHOPS[id].catBatch) url = bust(url);
     let r = await gmFetch(url, anon);
     // HTTP 400/431: manche Shops (z. B. Otto) lehnen die Anfrage mit allen Cookies ab → ohne Cookies wiederholen und merken.
     // Für den Lagerstatus ist keine Anmeldung nötig.
@@ -2957,6 +2995,7 @@
     if (r.status < 200 || r.status >= 300) return { st: 'err', why: `HTTP ${r.status}` };
     if (r.finalUrl && keyOf2(id, r.finalUrl) !== keyOf2(id, url)) return { st: 'err', why: 'Weiterleitung' };
     let v = null; try { v = parseStock(SHOPS[id], html, (k) => gv(id, k)); } catch (e) {}
+    if (v) catLearn(id, url, html);
     return v ? { st: v, html } : { st: 'err', why: 'Lagerstatus nicht lesbar' };
   }
   // Treffer → Shop-Tab übernimmt (Bereitschafts-Tab im Hintergrund, sonst neuer Tab)
@@ -2967,17 +3006,58 @@
     pushLog(id, msg, type);
     // Treffer-Tab in den Vordergrund: Im Hintergrund baut z. B. der MediaMarkt/Saturn-Warenkorb seine Seite nicht fertig
     // (live 26.11.: „Warenkorb lädt nicht“) → Kauf scheitert. Darum standardmäßig aktiver Tab.
-    if (focus && G.get('hitFocus', true)) { openTab(it.url, true); return; }
-    const open = () => { if (!ownerFresh(id)) openTab(it.url); };
+    const tu = SHOPS[id].catBatch ? bust(it.url) : it.url;       // MediaMarkt/Saturn: frische Seite statt Cloudflare-Cache
+    if (focus && G.get('hitFocus', true)) { openTab(tu, true); return; }
+    const open = () => { if (!ownerFresh(id)) openTab(tu); };
     if (Date.now() - (gv(id, 'parkBeat', 0) || 0) < 6000) later(1500, open); else open();
   }
   const cLastMem = {}; const cLastSaved = {};
   async function centralCheck(id, i) {
     const list = gv(id, 'products', []); const it = list[i]; if (!it) return;
-    const tag = `[${i + 1}/${list.length} ${shortName(it.url)}]`;
     const t0 = Date.now();
     const r = await centralStatus(id, it.url);
     sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
+    return centralResult(id, i, r, t0, 'Prüf-Zentrum');
+  }
+  // Sammelabfrage: eine Kategorieseite → Status aller Produkte dieser Kategorie
+  async function centralCheckUnit(id, u) {
+    if (!u.cat) return centralCheck(id, u.idx[0]);
+    const t0 = Date.now();
+    const r = await gmFetch(bust(u.cat), !!gv(id, 'cAnon', false));
+    sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
+    const html = r ? String(r.responseText || '') : '';
+    const captcha = html.length < 80000 && /captcha-delivery\.com|px-captcha|cf-chl-|\/errors\/validateCaptcha/i.test(html);
+    if (!r || r.status !== 200 || captcha || !/CofrOnlineStatusFeature/.test(html)) {
+      const why = !r ? 'keine Antwort' : captcha ? 'Captcha' : r.status !== 200 ? `HTTP ${r.status}` : 'Kategorieseite ohne Lagerdaten';
+      const st = r && (r.status === 403 || r.status === 429 || captcha) ? 'block' : 'err';
+      if (st === 'err' && r && r.status === 200) {        // Seite geht, aber kein Lagerstatus → diese Produkte wieder einzeln prüfen
+        const cm = { ...(gv(id, 'catMap', {}) || {}) }; const list = gv(id, 'products', []);
+        for (const i of u.idx) if (list[i]) cm[keyOf2(id, list[i].url)] = '';
+        sv(id, 'catMap', cm); pushLog(id, `Sammelabfrage: ${why} → ${u.idx.length} Produkt(e) wieder einzeln`, 'info'); return;
+      }
+      return centralResult(id, u.idx[0], { st, why }, t0, 'Sammelabfrage');
+    }
+    const list = gv(id, 'products', []); const own = !!gv(id, 'onlyOwn', false);
+    const cm = { ...(gv(id, 'catMap', {}) || {}) }; let lost = 0;
+    for (const i of u.idx) {
+      const it = list[i]; if (!it) continue;
+      if (!gv(id, 'running', false) || handledByTab(id)) return;
+      let st = null; try { st = SHOPS[id].catStatus(html, keyOf2(id, it.url), own); } catch (e) {}
+      if (!st) { cm[keyOf2(id, it.url)] = ''; lost++; continue; }       // nicht (mehr) auf Seite 1 der Kategorie → einzeln
+      if (st === 'in') {
+        // Treffer: Produktseite frisch gegenprüfen (Preis + Bestätigung), dann wie gewohnt weiter
+        const r2 = await centralStatus(id, it.url); dayCount(id, 'c');
+        if (r2.st === 'out') { pushLog(id, `[${i + 1}/${list.length} ${shortName(it.url)}] Kategorie meldet verfügbar, Produktseite (noch) nicht → OOS`, 'oos'); continue; }
+        await centralResult(id, i, r2, t0, 'Sammelabfrage');
+        continue;
+      }
+      await centralResult(id, i, { st: 'out' }, t0, `Sammelabfrage, ${u.idx.length} Produkte`);
+    }
+    if (lost) { sv(id, 'catMap', cm); pushLog(id, `Sammelabfrage: ${lost} Produkt(e) nicht in der Kategorie gefunden → werden einzeln geprüft`, 'info'); }
+  }
+  async function centralResult(id, i, r, t0, via) {
+    const list = gv(id, 'products', []); const it = list[i]; if (!it) return;
+    const tag = `[${i + 1}/${list.length} ${shortName(it.url)}]`;
     // letzter Stand je Produkt (für !test: MediaMarkt/Saturn nicht extra abrufen → keine zusätzlichen 429)
     // im Speicher halten, nur alle 30 s je Shop speichern (häufiges Speichern kostet in allen Tabs CPU)
     { const cl = cLastMem[id] || (cLastMem[id] = { ...(gv(id, 'cStat', {}) || {}) });
@@ -2989,7 +3069,7 @@
     // Fehlerzähler je Produkt (ein einzelner Ausreißer öffnet keinen Tab)
     const ek = keyOf2(id, it.url); const pe = { ...(gv(id, 'cErrP', {}) || {}) };
     if (r.st === 'out' || r.st === 'in') { if (pe[ek]) { delete pe[ek]; sv(id, 'cErrP', pe); } }
-    if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (Prüf-Zentrum, ${Date.now() - t0} ms)`, 'oos'); return; }
+    if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (${via}, ${Date.now() - t0} ms)`, 'oos'); return; }
     if (r.st === 'in') {
       sv(id, 'cFails', 0);
       const bp = bgPrice(r.html, SHOPS[id]); const mx = Number(it.maxPrice) || 0;
@@ -3040,10 +3120,11 @@
       if (ownerFresh(id)) {      // ein Tab prüft noch selbst / hängt nach einem Treffer → abmelden, Zentrale übernimmt
         sv(id, 'owner', null); sv(id, 'kick', now);
       }
-      const step = Math.max(2000, (effRoundSec(id) * 1000) / list.length);
+      const units = SHOPS[id].catBatch ? catUnits(id) : null;
+      const step = Math.max(2000, (effRoundSec(id) * 1000) / (units ? units.length : list.length));
       { const cl = gv(id, 'cLast', 0); if (typeof cl === 'number' && now - cl < step) continue; }
       sv(id, 'cLast', now);
-      const slots = slotOrder(list, id);
+      const slots = units ? wOrder(units.map((u) => Math.max(...u.idx.map((k) => prioWeight(id, list[k]))))) : slotOrder(list, id);
       const si = (gv(id, 'cIdx', 0) || 0) % slots.length;
       const i = slots[si];
       sv(id, 'cIdx', si + 1);
@@ -3053,7 +3134,7 @@
         if (mx > 0 && r >= mx) { sv(id, 'running', false); pushLog(id, `Gestoppt: Maximale Runden (${mx}) erreicht`, 'warn'); continue; }
       }
       cBusy[id] = true;
-      centralCheck(id, i).catch((e) => console.error('[QuickBuy] Prüf-Zentrum:', e)).finally(() => { cBusy[id] = false; });
+      (units ? centralCheckUnit(id, units[i]) : centralCheck(id, i)).catch((e) => console.error('[QuickBuy] Prüf-Zentrum:', e)).finally(() => { cBusy[id] = false; });
     }
   }
   // Genau ein Tab führt das Prüf-Zentrum: das Dashboard, sonst ein Shop-Tab (Absprache über GM-Storage, 6 s gültig)
@@ -3091,7 +3172,7 @@
     if (SHOPS[id].stopAfterAdd || SHOPS[id].psFlow) sv(id, 'inCart', {});
     sv(id, 'running', true);
     pushLog(id, `Vom Dashboard gestartet${gv(id, 'autoOrder', false) ? ' – AUTO-BESTELLUNG AN' : ''}`, 'buy');
-    sv(id, 'cLast', 0); sv(id, 'cIdx', 0); sv(id, 'cFails', 0); sv(id, 'centralOff', 0); sv(id, 'cHit', null); sv(id, 'startAt', Date.now());
+    sv(id, 'catMap', {}); sv(id, 'cLast', 0); sv(id, 'cIdx', 0); sv(id, 'cFails', 0); sv(id, 'centralOff', 0); sv(id, 'cHit', null); sv(id, 'startAt', Date.now());
     if (!tabOpen(id) && !centralOK(id)) { sv(id, 'heartbeat', Date.now()); openTab(list[0].url); }   // Herzschlag vorstellen: Wächter gibt dem neuen Tab 2,5 Min.
     return true;
   }
@@ -4084,7 +4165,7 @@
       }
       const ids = [...new Set(GM_getValue('global:restocks', []).map((r) => r.shopId))].filter((id) => SHOPS[id]);
       const lines = ids.map((id) => ({ id, p: restockPattern(id) })).filter((x) => x.p.total).sort((a, b) => b.p.restockDays - a.p.restockDays)
-        .map(({ id, p }) => `**${SHOPS[id].name}** · ${p.restockDays} Tage · ${patternText(p)}`);
+        .map(({ id, p }) => `**${SHOPS[id].name}** · ${p.restockDays} ${p.restockDays === 1 ? 'Tag' : 'Tage'} · ${patternText(p)}`);
       return lines.length ? `🗓️ **Restock-Muster** (letzte ${PAT_DAYS} Tage)\n${lines.join('\n')}` : 'Noch keine Restocks aufgezeichnet.';
     }
     if (/^(test|check|prüfen|pruefen)$/.test(cmd)) {
