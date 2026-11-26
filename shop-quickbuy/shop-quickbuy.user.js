@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.20.0
+// @version      3.21.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1017,16 +1017,18 @@
   }
 
   /* ---------- Restock-Statistik ---------- */
-  function recordRestock() {
-    const k = keyOf(cur().url);
-    const seen = S.get('restockSeen') || {};
-    const now = Date.now();
-    if (now - (seen[k] || 0) < 15 * 60000) return;
-    for (const x of Object.keys(seen)) if (now - seen[x] > 86400e3) delete seen[x];
-    seen[k] = now; S.set('restockSeen', seen);
+  // Restock merken (für Statistik und „Gefunden“-Spalte). Ein Restock = erste Verfügbarkeit; weitere Funde desselben
+  // Produkts innerhalb von 15 Min. zählen nicht extra. over = verfügbar, aber über dem Höchstpreis
+  function noteRestock(id, url, price, title, over) {
+    const now = Date.now(); const k = keyOf2(id, url);
     const r = GM_getValue('global:restocks', []);
-    r.unshift({ t: now, shopId: SHOP_ID, title: S.get('curTitle') || shortName(cur().url), url: cur().url, price: Number(S.get('curPrice')) || 0 });
+    const prev = r.find((e) => e.shopId === id && keyOf2(id, e.url) === k && now - e.t < 15 * 60000);
+    if (prev) { if (prev.over && !over) { prev.over = false; prev.price = price || prev.price; GM_setValue('global:restocks', r); } return; }
+    r.unshift({ t: now, shopId: id, title: title || shortName(url), url, price: Number(price) || 0, over: !!over });
     GM_setValue('global:restocks', r.slice(0, 1500));
+  }
+  function recordRestock() {
+    noteRestock(SHOP_ID, cur().url, Number(S.get('curPrice')) || 0, S.get('curTitle') || shortName(cur().url), false);
   }
 
   /* ---------- Bestellnummer von der Bestätigungsseite ---------- */
@@ -1159,6 +1161,7 @@
             const bp = SHOP.shopify ? null : bgPrice(lastBgHtml);
             const mx = Number(list[i].maxPrice) || 0;
             if (bp && mx && bp > mx * 1.02) {      // deutlich über dem Höchstpreis → Seite gar nicht erst laden
+              noteRestock(SHOP_ID, list[i].url, bp, null, true);
               log(`${tag} Hintergrund: verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos');
               continue;
             }
@@ -2775,6 +2778,29 @@
     if (Date.now() < (gv(id, 'slowUntil', 0) || 0)) base *= 2;      // direkt nach einem Captcha 1 Std. zusätzlich langsamer
     return base;
   }
+  /* ---------- „Gefunden“: wie oft war ein Produkt verfügbar? ---------- */
+  let foundCache = { at: 0, map: null };
+  function foundStats() {
+    if (foundCache.map && Date.now() - foundCache.at < 5000) return foundCache.map;
+    const map = {};
+    for (const e of GM_getValue('global:restocks', [])) {
+      if (Date.now() - e.t > 30 * 86400e3 || !SHOPS[e.shopId]) continue;
+      const k = `${e.shopId}|${keyOf2(e.shopId, e.url)}`;
+      const m = map[k] || (map[k] = { n: 0, over: 0, last: 0, lastPrice: 0, prices: [] });
+      if (e.over) m.over++; else { m.n++; if (e.price) m.prices.push(e.price); }
+      if (e.t > m.last) { m.last = e.t; m.lastPrice = e.price || 0; }
+    }
+    foundCache = { at: Date.now(), map };
+    return map;
+  }
+  function foundCell(id, url) {
+    const m = foundStats()[`${id}|${keyOf2(id, url)}`];
+    if (!m) return '<span class="muted">–</span>';
+    const tip = [`${m.n}× verfügbar zum Höchstpreis oder günstiger`, `${m.over}× nur teurer verfügbar`,
+      `zuletzt ${new Date(m.last).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}${m.lastPrice ? ` für ${fmtEur(m.lastPrice)} €` : ''}`].join('\n');
+    return `<span title="${esc(tip)}">${m.n ? `<b>${m.n}×</b>` : '<span class="muted">0×</span>'}${m.over ? ` <span class="muted">+${m.over} teurer</span>` : ''}<div class="muted" style="font-size:11px">${esc(agoText(m.last))}</div></span>`;
+  }
+
   /* ---------- ⭐ Priorität ----------
    * Markierte Produkte kommen 3× so oft dran wie die anderen – bei gleicher Gesamtzahl an Abrufen (kein Mehr an Captcha-Risiko).
    * Reihenfolge gleichmäßig verteilt (z. B. ⭐A, B, ⭐A, C, ⭐A, D …). */
@@ -2858,12 +2884,13 @@
     if (r.st === 'in') {
       sv(id, 'cFails', 0);
       const bp = bgPrice(r.html); const mx = Number(it.maxPrice) || 0;
-      if (bp && mx && bp > mx * 1.02) { pushLog(id, `${tag} verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos'); return; }
+      if (bp && mx && bp > mx * 1.02) { noteRestock(id, it.url, bp, null, true); pushLog(id, `${tag} verfügbar, aber ${fmtEur(bp)} € > Max ${fmtEur(mx)} €`, 'oos'); return; }
       // Schon 2× „verfügbar“ gemeldet, aber die Shop-Seite sagte „nicht kaufbar“ → 10 Min. nur jede 5. Meldung nachsehen
       { const fh = (gv(id, 'falseHits', {}) || {})[keyOf2(id, it.url)];
         if (fh && fh.n >= 2 && Date.now() - fh.at < 600000 && (gv(id, 'attempts', 0) || 0) % 5) {
           pushLog(id, `${tag} Abruf meldet verfügbar, Shop-Seite zuletzt ${fh.n}× nicht kaufbar → nächste Kontrolle später`, 'oos'); return;
         } }
+      noteRestock(id, it.url, bp, null, false);
       return centralHit(id, i, `${tag} Prüf-Zentrum: verfügbar! → Shop-Tab legt in den Warenkorb`, 'ok');
     }
     // HTTP 429 = „zu viele Anfragen“: kein Tab öffnen, sondern Pause (gilt für MediaMarkt+Saturn gemeinsam) + Captcha-Bremse
@@ -4104,12 +4131,13 @@
         </div>
         <div class="hint" id="d-hint"></div>
         ${used.length ? `<h3>Shops <span class="muted">${runIds.length} von ${used.length} aktiv</span></h3><div class="shops">${shopStrip}</div>` : ''}
-        ${rows.length ? `<h3>Produkte <span class="muted">${rows.length}</span></h3><table class="pt"><thead><tr><th class="c" title="⭐ Priorität: wird 3× so oft geprüft">⭐</th><th>Shop</th><th>Produkt</th><th>Status</th><th class="r">Max. €</th><th class="c">Stück</th><th class="c">Gekauft</th><th></th></tr></thead><tbody>
+        ${rows.length ? `<h3>Produkte <span class="muted">${rows.length}</span></h3><table class="pt"><thead><tr><th class="c" title="⭐ Priorität: wird 3× so oft geprüft">⭐</th><th>Shop</th><th>Produkt</th><th>Status</th><th class="c" title="Wie oft war das Produkt in den letzten 30 Tagen verfügbar (je Restock einmal gezählt)">Gefunden</th><th class="r">Max. €</th><th class="c">Stück</th><th class="c">Gekauft</th><th></th></tr></thead><tbody>
           ${rows.map((r) => `<tr class="${r.active ? 'cur' : ''}" data-id="${r.id}" data-i="${r.i}">
             <td class="c"><button class="x2" data-p="prio" title="${r.x.prio ? 'Priorität an – wird 3× so oft geprüft (klicken zum Ausschalten)' : 'Priorität einschalten: 3× so oft prüfen'}" style="font-size:15px;opacity:${r.x.prio ? 1 : 0.3}">${r.x.prio ? '⭐' : '☆'}</button></td>
             <td><span class="tag">${esc(SHOPS[r.id].name)}</span></td>
             <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}</td>
             <td>${status(r)}</td>
+            <td class="c">${foundCell(r.id, r.x.url)}</td>
             <td class="r"><input type="text" class="cell" data-f="maxPrice" value="${r.x.maxPrice ? fmtEur(r.x.maxPrice) : ''}" placeholder="–"></td>
             <td class="c"><input type="text" class="cell c" data-f="qty" value="${Number(r.x.qty) === 0 ? '∞' : (r.x.qty === undefined ? 1 : r.x.qty)}"></td>
             <td class="c">${r.x.bought ? `<b class="green">${r.x.bought}</b>` : '<span class="muted">0</span>'}</td>
@@ -4510,6 +4538,10 @@
       const fh = { ...(S.get('falseHits') || {}) }; const k = keyOf(hit.url);
       const o = fh[k] && Date.now() - fh[k].at < 1800e3 ? fh[k] : { n: 0 };
       fh[k] = { n: o.n + 1, at: Date.now() }; S.set('falseHits', fh);
+      // war kein echter Restock → aus der Statistik nehmen
+      const r = GM_getValue('global:restocks', []);
+      const j = r.findIndex((e) => e.shopId === SHOP_ID && keyOf(e.url) === k && !e.over && Date.now() - e.t < 300000);
+      if (j >= 0) { r.splice(j, 1); GM_setValue('global:restocks', r); }
     }
     S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
     S.set('captchaSince', 0);          // Seite lud normal → kein Captcha (mehr)
