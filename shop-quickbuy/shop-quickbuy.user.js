@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.28.0
+// @version      3.29.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -155,7 +155,7 @@
        * „CofrOnlineStatusFeature:<Shop>:de:<Artikelnr>“ mit isAvailableAndBuyable + onlineStatus (AVAILABLE / MP_OFFER /
        * TEMPORARILY_NOT_AVAILABLE …). Eine Anfrage prüft so alle Produkte derselben Kategorie. Die Kategorie lernt das Tool aus
        * der Brotkrumen-Navigation der Produktseite. Seiten liegen 2 Min. im Cloudflare-Cache → Abruf mit Cache-Umgehung. */
-      catBatch: true,
+      catBatch: true, noCache: true, batchOk: (html) => /CofrOnlineStatusFeature/.test(html),
       catOf: (html) => {
         const bc = html.match(/BreadcrumbList[\s\S]{0,3000}?\]/); if (!bc) return '';
         const all = [...bc[0].matchAll(/https:\/\/www\.(?:mediamarkt|saturn)\.de\/de\/category\/[^"\\]+?\.html/g)].map((m) => m[0]);
@@ -382,6 +382,20 @@
       if (!blocks.length) return null;
       const seller = SHOPS.amazon.sellerOf({ querySelectorAll: () => [{ textContent: blocks.join(' ') }] });
       return seller && SHOPS.amazon.ownSeller.test(seller) ? 'in' : 'out';
+    },
+    /* Sammelabfrage über eine Amazon-Wunschliste (live geprüft 26.11.2026): eine Seite listet alle Artikel mit data-price
+     * (Preis im Kaufkasten, „-Infinity“ = kein Angebot). Kein Verkäufer → Preis ≤ Höchstpreis wird per Angebotsliste/Produktseite
+     * gegengeprüft; kein Angebot oder deutlich teurer = ausverkauft. Liste muss im selben Amazon-Konto liegen wie in Chrome angemeldet. */
+    catBatch: true,
+    listUrlOf: () => { const v = String(G.get('amzList', '') || '').trim(); const m = v.match(/\/ls\/([A-Z0-9]{8,16})/i) || v.match(/^([A-Z0-9]{8,16})$/i); return m ? `https://www.amazon.de/hz/wishlist/ls/${m[1].toUpperCase()}?viewType=list` : ''; },
+    batchOk: (html) => /data-itemid="ASIN-/i.test(html),
+    catStatus: (html, asin, own, it) => {
+      const m = html.match(new RegExp(`<li\\b[^>]*data-itemid="ASIN-${String(asin).toUpperCase()}[^"]*"[^>]*>`, 'i'));
+      if (!m) return null;
+      const p = (m[0].match(/data-price="([^"]*)"/i) || [])[1];
+      const price = parseFloat(p); if (!(price > 0)) return 'out';          // -Infinity = kein Angebot
+      const mx = Number(it && it.maxPrice) || 0;
+      return mx && price > mx * 1.02 ? 'out' : 'in';                        // 'in' = gegenprüfen (Verkäufer)
     },
     /* Leichter Abruf (live geprüft 26.11.2026): die Angebotsliste „aodAjaxMain“ ist 9–130 KB statt 2–2,5 MB Produktseite.
      * Maßgeblich ist das Angebot im Kaufkasten (#aod-pinned-offer): nur „Versand Amazon“ + „Verkäufer Amazon“ zählt als verfügbar
@@ -2859,7 +2873,9 @@
   // Sekunden zwischen zwei Runden (eine Runde = jedes Produkt einmal prüfen) – inkl. Gruppen-Limit und Captcha-Bremse
   function effRoundSec(id) {
     const sh = SHOPS[id];
-    let base = Math.max(sh.minInterval || 5, Number(gv(id, 'intervalSec', 15)) || 15);
+    // Amazon mit Wunschliste: 1 Abruf prüft alle → Mindestabstand 10 s statt 30 s je Runde
+    const minI = sh.listUrlOf && sh.listUrlOf() && centralOK(id) ? 10 : (sh.minInterval || 5);
+    let base = Math.max(minI, Number(gv(id, 'intervalSec', 15)) || 15);
     const g = sh.rateGroup; const lim = g ? groupLimit(g) : 0;
     if (lim > 0) {
       const ids = groupShops(g); if (!ids.includes(id)) ids.push(id);
@@ -2997,19 +3013,26 @@
   const bust = (u) => { const [b, h] = String(u).split('#'); return `${b}${b.includes('?') ? '&' : '?'}qbt=${Date.now().toString(36)}${h ? `#${h}` : ''}`; };
   // Produkt → Kategorie (für die Sammelabfrage). '' = nicht sammelbar (einzeln prüfen)
   function catLearn(id, url, html) {
-    const sh = SHOPS[id]; if (!sh.catBatch || !html) return;
+    const sh = SHOPS[id]; if (!sh.catBatch || !sh.catOf || !html) return;
     const k = keyOf2(id, url); const cm = gv(id, 'catMap', {}) || {};
     if (k in cm) return;
     let c = ''; try { c = sh.catOf(html) || ''; } catch (e) {}
     sv(id, 'catMap', { ...cm, [k]: c });
   }
+  // 'x:<Zeit>' = in der Sammelseite nicht gefunden → 1 Std. einzeln, danach neu versuchen
   function catUnits(id) {
-    const list = gv(id, 'products', []); const cm = gv(id, 'catMap', {}) || {};
-    const units = []; const byCat = {};
+    const sh = SHOPS[id]; const list = gv(id, 'products', []); let cm = gv(id, 'catMap', {}) || {};
+    const units = []; const byCat = {}; let dirty = false;
+    const lu = sh.listUrlOf ? sh.listUrlOf() : '';
     list.forEach((x, i) => {
-      const c = SHOPS[id].catBatch ? cm[keyOf2(id, x.url)] : '';
+      const k = keyOf2(id, x.url); let c = sh.catBatch ? cm[k] : '';
+      if (typeof c === 'string' && c.startsWith('x:')) {
+        if (Date.now() - Number(c.slice(2)) > 3600e3) { if (!dirty) cm = { ...cm }; delete cm[k]; dirty = true; c = undefined; } else c = '';
+      }
+      if (sh.listUrlOf) c = c === '' ? '' : lu;            // Amazon: alle Produkte über die Wunschliste
       if (c) { if (!byCat[c]) { byCat[c] = { cat: c, idx: [] }; units.push(byCat[c]); } byCat[c].idx.push(i); } else units.push({ cat: '', idx: [i] });
     });
+    if (dirty) sv(id, 'catMap', cm);
     return units;
   }
   const unitCount = (id) => (SHOPS[id].catBatch ? catUnits(id).length : gv(id, 'products', []).length);
@@ -3035,7 +3058,7 @@
         // 'in' → mit der ganzen Produktseite bestätigen (Kaufkasten, Preis); null → normaler Abruf
       }
     }
-    if (SHOPS[id].catBatch) url = bust(url);
+    if (SHOPS[id].noCache) url = bust(url);
     let r = await gmFetch(url, anon);
     // HTTP 400/431: manche Shops (z. B. Otto) lehnen die Anfrage mit allen Cookies ab → ohne Cookies wiederholen und merken.
     // Für den Lagerstatus ist keine Anmeldung nötig.
@@ -3062,7 +3085,7 @@
     pushLog(id, msg, type);
     // Treffer-Tab in den Vordergrund: Im Hintergrund baut z. B. der MediaMarkt/Saturn-Warenkorb seine Seite nicht fertig
     // (live 26.11.: „Warenkorb lädt nicht“) → Kauf scheitert. Darum standardmäßig aktiver Tab.
-    const tu = SHOPS[id].catBatch ? bust(it.url) : it.url;       // MediaMarkt/Saturn: frische Seite statt Cloudflare-Cache
+    const tu = SHOPS[id].noCache ? bust(it.url) : it.url;       // MediaMarkt/Saturn: frische Seite statt Cloudflare-Cache
     if (focus && G.get('hitFocus', true)) { openTab(tu, true); return; }
     const open = () => { if (!ownerFresh(id)) openTab(tu); };
     if (Date.now() - (gv(id, 'parkBeat', 0) || 0) < 6000) later(1500, open); else open();
@@ -3079,16 +3102,17 @@
   async function centralCheckUnit(id, u) {
     if (!u.cat) return centralCheck(id, u.idx[0]);
     const t0 = Date.now();
-    const r = await gmFetch(bust(u.cat), !!gv(id, 'cAnon', false));
+    const sh = SHOPS[id];
+    const r = await gmFetch(sh.noCache ? bust(u.cat) : u.cat, !!gv(id, 'cAnon', false));
     sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
     const html = r ? String(r.responseText || '') : '';
     const captcha = html.length < 80000 && /captcha-delivery\.com|px-captcha|cf-chl-|\/errors\/validateCaptcha/i.test(html);
-    if (!r || r.status !== 200 || captcha || !/CofrOnlineStatusFeature/.test(html)) {
-      const why = !r ? 'keine Antwort' : captcha ? 'Captcha' : r.status !== 200 ? `HTTP ${r.status}` : 'Kategorieseite ohne Lagerdaten';
+    if (!r || r.status !== 200 || captcha || !sh.batchOk(html)) {
+      const why = !r ? 'keine Antwort' : captcha ? 'Captcha' : r.status !== 200 ? `HTTP ${r.status}` : sh.listUrlOf ? 'Wunschliste nicht lesbar (anderes Amazon-Konto angemeldet?)' : 'Kategorieseite ohne Lagerdaten';
       const st = r && (r.status === 403 || r.status === 429 || captcha) ? 'block' : 'err';
       if (st === 'err' && r && r.status === 200) {        // Seite geht, aber kein Lagerstatus → diese Produkte wieder einzeln prüfen
         const cm = { ...(gv(id, 'catMap', {}) || {}) }; const list = gv(id, 'products', []);
-        for (const i of u.idx) if (list[i]) cm[keyOf2(id, list[i].url)] = '';
+        for (const i of u.idx) if (list[i]) cm[keyOf2(id, list[i].url)] = `x:${Date.now()}`;
         sv(id, 'catMap', cm); pushLog(id, `Sammelabfrage: ${why} → ${u.idx.length} Produkt(e) wieder einzeln`, 'info'); return;
       }
       return centralResult(id, u.idx[0], { st, why }, t0, 'Sammelabfrage');
@@ -3098,18 +3122,18 @@
     for (const i of u.idx) {
       const it = list[i]; if (!it) continue;
       if (!gv(id, 'running', false) || handledByTab(id)) return;
-      let st = null; try { st = SHOPS[id].catStatus(html, keyOf2(id, it.url), own); } catch (e) {}
-      if (!st) { cm[keyOf2(id, it.url)] = ''; lost++; continue; }       // nicht (mehr) auf Seite 1 der Kategorie → einzeln
+      let st = null; try { st = sh.catStatus(html, keyOf2(id, it.url), own, it); } catch (e) {}
+      if (!st) { cm[keyOf2(id, it.url)] = `x:${Date.now()}`; lost++; continue; }       // nicht auf der Sammelseite → 1 Std. einzeln
       if (st === 'in') {
         // Treffer: Produktseite frisch gegenprüfen (Preis + Bestätigung), dann wie gewohnt weiter
         const r2 = await centralStatus(id, it.url); dayCount(id, 'c');
-        if (r2.st === 'out') { pushLog(id, `[${i + 1}/${list.length} ${shortName(it.url)}] Kategorie meldet verfügbar, Produktseite (noch) nicht → OOS`, 'oos'); continue; }
+        if (r2.st === 'out') { pushLog(id, `[${i + 1}/${list.length} ${shortName(it.url)}] ${sh.listUrlOf ? 'Wunschliste zeigt einen Preis, aber kein Amazon-Angebot' : 'Kategorie meldet verfügbar, Produktseite (noch) nicht'} → OOS`, 'oos'); continue; }
         await centralResult(id, i, r2, t0, 'Sammelabfrage');
         continue;
       }
       await centralResult(id, i, { st: 'out' }, t0, `Sammelabfrage, ${u.idx.length} Produkte`);
     }
-    if (lost) { sv(id, 'catMap', cm); pushLog(id, `Sammelabfrage: ${lost} Produkt(e) nicht in der Kategorie gefunden → werden einzeln geprüft`, 'info'); }
+    if (lost) { sv(id, 'catMap', cm); pushLog(id, `Sammelabfrage: ${lost} Produkt(e) nicht ${sh.listUrlOf ? 'in der Wunschliste' : 'in der Kategorie'} gefunden → werden 1 Std. einzeln geprüft`, 'info'); }
   }
   async function centralResult(id, i, r, t0, via) {
     const list = gv(id, 'products', []); const it = list[i]; if (!it) return;
@@ -4649,6 +4673,8 @@
         <label class="ck"><input type="checkbox" data-gs="sumOn" ${G.get('sumOn', true) ? 'checked' : ''}> 📊 Tageszusammenfassung an Discord um</label>
         <input type="time" id="g-stime" value="${esc(G.get('sumTime', '23:00'))}" style="flex:none">
         <button class="sm" data-g="sumnow">📊 Jetzt senden</button>
+        <span class="muted" title="Alle Amazon-Produkte in eine Wunschliste legen und hier den Link eintragen → 1 Abruf prüft alle">📋 Amazon-Wunschliste (Sammelabfrage):</span>
+        <input type="text" id="g-amzlist" placeholder="https://www.amazon.de/hz/wishlist/ls/…" value="${esc(G.get('amzList', ''))}" style="width:300px;flex:none">
         <label class="ck"><input type="checkbox" data-gs="lightOn" ${G.get('lightOn', true) ? 'checked' : ''}> ⚡ Amazon: leichter Abruf (kleine Angebotsliste statt ganzer Produktseite)</label>
         <label class="ck"><input type="checkbox" data-gs="skOn" ${G.get('skOn', true) ? 'checked' : ''}> 🚦 Täglicher Startklar-Check (Anmeldung, Warenkorb) an Discord um</label>
         <input type="time" id="g-sktime" value="${esc(G.get('skTime', '08:00'))}" style="flex:none">
@@ -4857,6 +4883,7 @@
     const rt = d.querySelector('#g-rtime');
     if (rt) rt.onchange = () => { G.set('reportTime', rt.value || '09:00'); };
     { const st2 = d.querySelector('#g-stime'); if (st2) st2.onchange = () => { G.set('sumTime', st2.value || '23:00'); G.set('sumDay', ''); }; }
+    { const al = d.querySelector('#g-amzlist'); if (al) al.onchange = () => { G.set('amzList', al.value.trim()); sv('amazon', 'catMap', {}); dashToast(al.value.trim() ? 'Amazon-Wunschliste gespeichert – Sammelabfrage aktiv' : 'Amazon-Wunschliste entfernt'); }; }
     { const st3 = d.querySelector('#g-sktime'); if (st3) st3.onchange = () => { G.set('skTime', st3.value || '08:00'); G.set('skDay', ''); }; }
     d.querySelectorAll('[data-gs]').forEach((c) => { c.onchange = () => G.set(c.dataset.gs, c.checked); });
     d.querySelectorAll('[data-rate]').forEach((c) => { c.onchange = () => { const v = Math.max(0, Math.round(parseEur(c.value) || 0)); G.set(`rateMax:${c.dataset.rate}`, v); dashToast(v ? `${RATE_GROUPS[c.dataset.rate].name}: max. ${v} Abrufe/Min` : 'Gemeinsames Limit aus'); renderDash(true); }; });

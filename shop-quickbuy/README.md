@@ -75,6 +75,12 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.29.0 – Amazon-Sammelabfrage über eine Wunschliste
+- Einstellungen → „📋 Amazon-Wunschliste“: Link einer Liste mit allen Amazon-Produkten eintragen. Ein Abruf liefert für alle Artikel den Preis im Kaufkasten (`data-price`, „-Infinity“ = kein Angebot; live geprüft 26.11.: 21/21 Artikel, 4× gleich).
+- Kein Angebot oder deutlich über dem Höchstpreis → ausverkauft. Preis ≤ Höchstpreis → Gegenprüfung über die Angebotsliste (Versand + Verkauf durch Amazon) und Produktseite.
+- Mit Wunschliste prüft Amazon alle Produkte gemeinsam alle 10–15 s (vorher je Produkt ca. alle 85 s). Produkte, die nicht in der Liste stehen, werden einzeln geprüft (nach 1 Std. neuer Versuch).
+- Die Liste muss im selben Amazon-Konto liegen, das in Chrome angemeldet ist.
+
 ## Neu in 3.28.0 – Leichter Amazon-Abruf
 - Das Prüf-Zentrum fragt bei Amazon zuerst die kleine Angebotsliste ab („aodAjaxMain“, 9–130 KB statt 2–2,5 MB Produktseite, live geprüft 26.11.). Maßgeblich ist das Angebot im Kaufkasten: nur „Versand Amazon“ + „Verkäufer Amazon“ zählt als verfügbar.
 - Treffer werden mit der ganzen Produktseite gegengeprüft (Kaufkasten, Preis). Liefert die Angebotsliste 5× nichts Lesbares, nutzt das Tool 1 Std. wieder die ganze Produktseite.
