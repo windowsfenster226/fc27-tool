@@ -75,6 +75,10 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.29.1
+- Amazon-Produkte, die nicht in der eingetragenen Wunschliste stehen, bekommen im Dashboard den Hinweis „fehlt in Wunschliste“ (Link zur Produktseite → „Auf die Liste“ → QuickBuy).
+- PlayStation-Sammelabfrage untersucht (26.11.): Kaufbutton wird je Produktseite serverseitig gerendert, keine Übersichtsseite mit Status mehrerer Produkte → nicht umgesetzt.
+
 ## Neu in 3.29.0 – Amazon-Sammelabfrage über eine Wunschliste
 - Einstellungen → „📋 Amazon-Wunschliste“: Link einer Liste mit allen Amazon-Produkten eintragen. Ein Abruf liefert für alle Artikel den Preis im Kaufkasten (`data-price`, „-Infinity“ = kein Angebot; live geprüft 26.11.: 21/21 Artikel, 4× gleich).
 - Kein Angebot oder deutlich über dem Höchstpreis → ausverkauft. Preis ≤ Höchstpreis → Gegenprüfung über die Angebotsliste (Versand + Verkauf durch Amazon) und Produktseite.

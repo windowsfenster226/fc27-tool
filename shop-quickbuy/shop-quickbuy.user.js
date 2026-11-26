@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.29.0
+// @version      3.29.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -3035,6 +3035,12 @@
     if (dirty) sv(id, 'catMap', cm);
     return units;
   }
+  // Amazon-Produkt steht nicht in der eingetragenen Wunschliste (zuletzt nicht gefunden)
+  function wlMissing(id, url) {
+    const sh = SHOPS[id]; if (!sh || !sh.listUrlOf || !sh.listUrlOf()) return false;
+    const c = (gv(id, 'catMap', {}) || {})[keyOf2(id, url)];
+    return typeof c === 'string' && c.startsWith('x:');
+  }
   const unitCount = (id) => (SHOPS[id].catBatch ? catUnits(id).length : gv(id, 'products', []).length);
   async function centralStatus(id, url) {
     let anon = !!gv(id, 'cAnon', false);
@@ -4601,7 +4607,7 @@
           ${rows.map((r) => `<tr class="${r.active ? 'cur' : ''}" data-id="${r.id}" data-i="${r.i}">
             <td class="c">${(() => { const aw = r.x.prio ? 0 : prioWeight(r.id, r.x); return `<button class="x2" data-p="prio" title="${r.x.prio ? 'Priorität an – wird 3× so oft geprüft (klicken zum Ausschalten)' : aw > 1 ? `🔥 Auto-Priorität: war zuletzt öfter verfügbar → wird ${aw}× so oft geprüft. Klicken = fest ⭐` : 'Priorität einschalten: 3× so oft prüfen'}" style="font-size:15px;opacity:${r.x.prio || aw > 1 ? 1 : 0.3}">${r.x.prio ? '⭐' : aw > 1 ? `🔥<span style="font-size:10px">${aw}×</span>` : '☆'}</button>`; })()}</td>
             <td><span class="tag">${esc(SHOPS[r.id].name)}</span></td>
-            <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}</td>
+            <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}${wlMissing(r.id, r.x.url) ? ` <a class="tag" style="background:var(--am);color:#111" href="${esc(r.x.url)}" target="_blank" title="Steht nicht in der Amazon-Wunschliste – wird nur einzeln (langsamer) geprüft. Auf der Produktseite „Auf die Liste“ → QuickBuy wählen.">fehlt in Wunschliste</a>` : ''}</td>
             <td>${status(r)}</td>
             <td class="c">${foundCell(r.id, r.x.url)}</td>
             <td class="r"><input type="text" class="cell" data-f="maxPrice" value="${r.x.maxPrice ? fmtEur(r.x.maxPrice) : ''}" placeholder="–"></td>
