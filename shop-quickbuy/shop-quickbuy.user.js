@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.24.1
+// @version      3.24.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1139,9 +1139,9 @@
   // Lagerstatus aus dem HTML einer Produktseite: erst der Shop-eigene Parser, dann JSON-LD. null = unklar
   function parseStock(sh, html, get) {
     if (sh.bgParse) { const v = sh.bgParse(html, get); if (v) return v; if (sh === SHOPS.amazon) return null; }
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    for (const sc of doc.querySelectorAll('script[type="application/ld+json"]')) {
-      let d; try { d = JSON.parse(sc.textContent); } catch (e) { continue; }
+    // JSON-LD per Regex herausziehen statt die ganze Seite als DOM aufzubauen (spart viel CPU im Prüf-Zentrum)
+    for (const mm of html.matchAll(/<script[^>]*type=["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script>/gi)) {
+      let d; try { d = JSON.parse(mm[1]); } catch (e) { continue; }
       for (const it of [].concat(d, (d && d['@graph']) || [])) {
         if (!it || !/product/i.test([].concat(it['@type']).join())) continue;
         const offers = [].concat(it.offers || []).flatMap((o) => [o].concat((o && o.offers) || []));
@@ -2836,7 +2836,7 @@
     if (!centralCapable(id)) return { st: 'err', why: 'für diesen Shop nicht im Hintergrund prüfbar' };
     // Shops mit gemeinsamem Abruf-Limit (MediaMarkt + Saturn): frischen Stand vom Prüf-Zentrum nehmen statt neu abzurufen
     if (SHOPS[id].rateGroup) {
-      const last = (gv(id, 'cLast', {}) || {})[keyOf2(id, url)];
+      const last = ((typeof cLastMem !== 'undefined' && cLastMem[id]) || gv(id, 'cLast', {}) || {})[keyOf2(id, url)];
       const p429 = G.get(`c429:${capKey(id)}`, null);
       const fresh = last && (last.st === 'in' || last.st === 'out') && Date.now() - last.at < 5 * 60000;
       if (fresh) return { st: last.st, price: last.price, note: `Stand Prüf-Zentrum ${agoText(last.at)}` };
@@ -2970,6 +2970,7 @@
     const open = () => { if (!ownerFresh(id)) openTab(it.url); };
     if (Date.now() - (gv(id, 'parkBeat', 0) || 0) < 6000) later(1500, open); else open();
   }
+  const cLastMem = {}; const cLastSaved = {};
   async function centralCheck(id, i) {
     const list = gv(id, 'products', []); const it = list[i]; if (!it) return;
     const tag = `[${i + 1}/${list.length} ${shortName(it.url)}]`;
@@ -2977,8 +2978,10 @@
     const r = await centralStatus(id, it.url);
     sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
     // letzter Stand je Produkt (für !test: MediaMarkt/Saturn nicht extra abrufen → keine zusätzlichen 429)
-    { const cl = { ...(gv(id, 'cLast', {}) || {}) }; cl[keyOf2(id, it.url)] = { st: r.st, why: r.why || '', at: Date.now(), price: r.html ? (bgPrice(r.html, SHOPS[id]) || 0) : 0 };
-      sv(id, 'cLast', cl); }
+    // im Speicher halten, nur alle 30 s je Shop speichern (häufiges Speichern kostet in allen Tabs CPU)
+    { const cl = cLastMem[id] || (cLastMem[id] = { ...(gv(id, 'cLast', {}) || {}) });
+      cl[keyOf2(id, it.url)] = { st: r.st, why: r.why || '', at: Date.now(), price: r.html ? (bgPrice(r.html, SHOPS[id]) || 0) : 0 };
+      if (Date.now() - (cLastSaved[id] || 0) > 30000) { cLastSaved[id] = Date.now(); sv(id, 'cLast', cl); } }
     if (!gv(id, 'running', false) || handledByTab(id)) return;
     // Abruf klappt und kein Tab hängt im Captcha → alten Captcha-Merker löschen (sonst bleibt „Captcha“ stehen)
     if ((r.st === 'out' || r.st === 'in') && gv(id, 'captchaSince', 0) && !ownerFresh(id)) sv(id, 'captchaSince', 0);
