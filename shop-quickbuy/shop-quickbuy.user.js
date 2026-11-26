@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.29.1
+// @version      3.29.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -3078,7 +3078,10 @@
     const captcha = html.length < 80000 && /captcha-delivery\.com|px-captcha|cf-chl-|\/errors\/validateCaptcha/i.test(html);
     if (r.status === 403 || r.status === 429 || captcha) return { st: 'block', why: captcha ? 'Captcha' : `HTTP ${r.status}` };
     if (r.status < 200 || r.status >= 300) return { st: 'err', why: `HTTP ${r.status}` };
-    if (r.finalUrl && keyOf2(id, r.finalUrl) !== keyOf2(id, url)) return { st: 'err', why: 'Weiterleitung' };
+    if (r.finalUrl && keyOf2(id, r.finalUrl) !== keyOf2(id, url)) {
+      const to = String(r.finalUrl).replace(/[?&]qbt=[^&#]*/, '').replace(/\?$/, '');
+      return { st: 'err', why: 'Weiterleitung', to: SHOPS[id].productUrl && SHOPS[id].productUrl.test(to) ? to : '' };
+    }
     let v = null; try { v = parseStock(SHOPS[id], html, (k) => gv(id, k)); } catch (e) {}
     if (v) catLearn(id, url, html);
     return v ? { st: v, html } : { st: 'err', why: 'Lagerstatus nicht lesbar' };
@@ -3097,8 +3100,14 @@
     if (Date.now() - (gv(id, 'parkBeat', 0) || 0) < 6000) later(1500, open); else open();
   }
   const cLastMem = {}; const cLastSaved = {};
+  // Umgeleitetes Produkt: nach 2× Weiterleitung 12 Std. Pause (bis die URL ersetzt/gelöscht ist)
+  function movedPaused(id, url) {
+    const m = (gv(id, 'moved', {}) || {})[keyOf2(id, url)];
+    return !!(m && m.n >= 2 && Date.now() - m.at < 12 * 3600e3);
+  }
   async function centralCheck(id, i) {
     const list = gv(id, 'products', []); const it = list[i]; if (!it) return;
+    if (movedPaused(id, it.url)) return;
     const t0 = Date.now();
     const r = await centralStatus(id, it.url);
     sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
@@ -3154,7 +3163,7 @@
     if ((r.st === 'out' || r.st === 'in') && gv(id, 'captchaSince', 0) && !ownerFresh(id)) sv(id, 'captchaSince', 0);
     // Fehlerzähler je Produkt (ein einzelner Ausreißer öffnet keinen Tab)
     const ek = keyOf2(id, it.url); const pe = { ...(gv(id, 'cErrP', {}) || {}) };
-    if (r.st === 'out' || r.st === 'in') { if (pe[ek]) { delete pe[ek]; sv(id, 'cErrP', pe); } }
+    if (r.st === 'out' || r.st === 'in') { if (pe[ek]) { delete pe[ek]; sv(id, 'cErrP', pe); } const mv = gv(id, 'moved', {}) || {}; if (mv[ek]) { const m2 = { ...mv }; delete m2[ek]; sv(id, 'moved', m2); } }
     if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (${r.light ? `${via}, leicht` : via}, ${Date.now() - t0} ms)`, 'oos'); return; }
     if (r.st === 'in') {
       sv(id, 'cFails', 0);
@@ -3176,6 +3185,18 @@
       G.set(`c429:${k}`, { n, at: Date.now(), until: Date.now() + mins * 60000 });
       if (n === 1 || n % 3 === 0) capRecord(id);
       pushLog(id, `${tag} ${SHOPS[id].rateGroup ? RATE_GROUPS[SHOPS[id].rateGroup].name : SHOPS[id].name} bremst (HTTP 429, zu viele Abrufe) → ${mins} Min. Pause, danach langsamer`, 'warn');
+      return;
+    }
+    // Produktseite leitet dauerhaft auf ein ANDERES Produkt um (Nachfolger-Artikel) → kein Kontroll-Tab, 12 Std. pausieren,
+    // im Dashboard „umgeleitet“ mit Knopf „neue URL übernehmen“ (live 26.11.: MediaMarkt PS5 Slim Digital → neue Artikelnummer)
+    if (r.why === 'Weiterleitung' && r.to) {
+      const mv = { ...(gv(id, 'moved', {}) || {}) };
+      const o = mv[ek] && mv[ek].to === r.to ? mv[ek] : { to: r.to, n: 0 };
+      o.n++; o.at = Date.now(); mv[ek] = o; sv(id, 'moved', mv);
+      if (o.n === 2) {
+        pushLog(id, `${tag} Produktseite leitet dauerhaft auf ein anderes Produkt um (${shortName(r.to)}) → 12 Std. pausiert. Im Dashboard „neue URL übernehmen“ oder Produkt löschen`, 'warn');
+        discord('error', `**${SHOPS[id].name}**: „${shortName(it.url)}“ leitet auf ein anderes Produkt um (${r.to}). Bitte im Dashboard prüfen: neue URL übernehmen oder löschen.`, { title: shortName(it.url), url: it.url });
+      } else if (o.n < 2) pushLog(id, `${tag} Prüf-Zentrum: Weiterleitung auf ${shortName(r.to)} – nächste Runde erneut`, 'info');
       return;
     }
     pe[ek] = (pe[ek] || 0) + 1; sv(id, 'cErrP', pe);
@@ -4607,7 +4628,7 @@
           ${rows.map((r) => `<tr class="${r.active ? 'cur' : ''}" data-id="${r.id}" data-i="${r.i}">
             <td class="c">${(() => { const aw = r.x.prio ? 0 : prioWeight(r.id, r.x); return `<button class="x2" data-p="prio" title="${r.x.prio ? 'Priorität an – wird 3× so oft geprüft (klicken zum Ausschalten)' : aw > 1 ? `🔥 Auto-Priorität: war zuletzt öfter verfügbar → wird ${aw}× so oft geprüft. Klicken = fest ⭐` : 'Priorität einschalten: 3× so oft prüfen'}" style="font-size:15px;opacity:${r.x.prio || aw > 1 ? 1 : 0.3}">${r.x.prio ? '⭐' : aw > 1 ? `🔥<span style="font-size:10px">${aw}×</span>` : '☆'}</button>`; })()}</td>
             <td><span class="tag">${esc(SHOPS[r.id].name)}</span></td>
-            <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}${wlMissing(r.id, r.x.url) ? ` <a class="tag" style="background:var(--am);color:#111" href="${esc(r.x.url)}" target="_blank" title="Steht nicht in der Amazon-Wunschliste – wird nur einzeln (langsamer) geprüft. Auf der Produktseite „Auf die Liste“ → QuickBuy wählen.">fehlt in Wunschliste</a>` : ''}</td>
+            <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}${(() => { const m = (gv(r.id, 'moved', {}) || {})[keyOf2(r.id, r.x.url)]; return m && m.n >= 2 ? `<div style="white-space:normal;margin-top:4px"><span class="tag" style="background:var(--am);color:#111" title="Die Seite leitet auf ein anderes Produkt um: ${esc(m.to)}">umgeleitet</span> <a href="${esc(m.to)}" target="_blank" class="muted">neues Produkt ansehen</a> <button class="sm" data-p="moveurl" title="URL durch ${esc(m.to)} ersetzen">neue URL übernehmen</button></div>` : ''; })()}${wlMissing(r.id, r.x.url) ? ` <a class="tag" style="background:var(--am);color:#111" href="${esc(r.x.url)}" target="_blank" title="Steht nicht in der Amazon-Wunschliste – wird nur einzeln (langsamer) geprüft. Auf der Produktseite „Auf die Liste“ → QuickBuy wählen.">fehlt in Wunschliste</a>` : ''}</td>
             <td>${status(r)}</td>
             <td class="c">${foundCell(r.id, r.x.url)}</td>
             <td class="r"><input type="text" class="cell" data-f="maxPrice" value="${r.x.maxPrice ? fmtEur(r.x.maxPrice) : ''}" placeholder="–"></td>
@@ -4841,6 +4862,16 @@
       }));
       const pr = tr.querySelector('[data-p="prio"]');
       if (pr) pr.onclick = () => { let on = false; upd((l, x) => { x.prio = !x.prio; on = x.prio; }); sv(id, 'slot', 0); sv(id, 'cIdx', 0); dashToast(on ? '⭐ Priorität an – wird 3× so oft geprüft' : 'Priorität aus'); renderDash(true); };
+      const mvb = tr.querySelector('[data-p="moveurl"]');
+      if (mvb) mvb.onclick = () => {
+        const l = gv(id, 'products', []); const x = l[i]; if (!x) return;
+        const k0 = keyOf2(id, x.url); const m = (gv(id, 'moved', {}) || {})[k0]; if (!m || !m.to) return;
+        if (!confirm(`Neue URL übernehmen?\n\n${m.to}\n\nBitte vorher prüfen, ob es dasselbe Produkt ist (Höchstpreis bleibt).`)) return;
+        x.url = m.to; sv(id, 'products', l);
+        const mv = { ...(gv(id, 'moved', {}) || {}) }; delete mv[k0]; sv(id, 'moved', mv);
+        const cm = { ...(gv(id, 'catMap', {}) || {}) }; delete cm[k0]; sv(id, 'catMap', cm);
+        pushLog(id, `URL ersetzt: ${shortName(m.to)} (Dashboard)`, 'info'); dashToast('Neue URL übernommen'); renderDash(true); renderPanel();
+      };
       const del = tr.querySelector('[data-p="del"]');
       if (del) del.onclick = () => { if (!confirm(`„${shortName(gv(id, 'products', [])[i].url)}“ entfernen?`)) return; upd((l) => l.splice(i, 1)); renderDash(true); };
     });

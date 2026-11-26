@@ -75,6 +75,10 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.29.2 – Umgeleitete Produkte
+- Leitet eine Produktseite dauerhaft auf ein anderes Produkt um (z. B. MediaMarkt ersetzt die PS5 Slim Digital durch eine neue Artikelnummer), öffnet das Prüf-Zentrum keinen Kontroll-Tab mehr im Wechsel, sondern pausiert das Produkt nach 2 Weiterleitungen 12 Std., meldet es per Discord und zeigt im Dashboard „umgeleitet“ mit „neues Produkt ansehen“ / „neue URL übernehmen“.
+- Die Weiterleitungen zählen nicht mehr als Fehler des Shops (verhindert, dass MediaMarkt fälschlich 6 Std. in den Tab-Modus wechselt).
+
 ## Neu in 3.29.1
 - Amazon-Produkte, die nicht in der eingetragenen Wunschliste stehen, bekommen im Dashboard den Hinweis „fehlt in Wunschliste“ (Link zur Produktseite → „Auf die Liste“ → QuickBuy).
 - PlayStation-Sammelabfrage untersucht (26.11.): Kaufbutton wird je Produktseite serverseitig gerendert, keine Übersichtsseite mit Status mehrerer Produkte → nicht umgesetzt.
