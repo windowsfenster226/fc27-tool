@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.26.0
+// @version      3.27.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1269,7 +1269,25 @@
   }
 
   // Nach erfolgreichem Kauf: gleiches Produkt erneut (bis Stückzahl), dann nächstes Produkt, sonst stoppen
+  /* ⏱ Zeitmessung Treffer → Bestellung: Zwischenzeiten je Kaufschritt, am Ende eine Zeile im Log */
+  function tMark(label) {
+    const now = Date.now(); let t = S.get('tBuy');
+    if (!t || now - t.t0 > 10 * 60000) {
+      const hit = S.get('cHit');
+      t = { t0: hit && hit.at && now - hit.at < 60000 ? hit.at : now, m: [] };
+      if (t.t0 !== now) t.m.push(['Treffer (Prüf-Zentrum)', 0]);
+    }
+    if (!t.m.some((x) => x[0] === label)) t.m.push([label, now - t.t0]);
+    S.set('tBuy', t);
+  }
+  function tDone(label) {
+    tMark(label);
+    const t = S.get('tBuy'); S.set('tBuy', null);
+    if (!t || t.m.length < 2) return;
+    log(`⏱ ${t.m.map(([l, ms]) => `${l}${ms ? ` ${(ms / 1000).toFixed(1).replace('.', ',')} s` : ''}`).join(' → ')}`, 'info');
+  }
   function finishSuccess(msg) {
+    try { tDone('bestellt'); } catch (e) {}
     setInCart(false);
     let txt = ''; try { txt = SHOP.psFlow ? psText() : (document.body.innerText || ''); } catch (e) {}
     const orderNo = findOrderNo(txt);
@@ -1549,6 +1567,7 @@
     S.set('curPrice', gp ? gp.price : 0);
     { const h1 = document.querySelector('h1, #productTitle'); S.set('curTitle', h1 ? norm(h1.innerText).slice(0, 60) : ''); }
     recordRestock();
+    tMark('Produktseite verfügbar');
 
     if (SHOP.alertOnly) {
       notify(`QuickBuy ${SHOP.name}`, 'Verfügbar – jetzt selbst kaufen!');
@@ -1633,7 +1652,7 @@
           }, 12000, 300);
         }
       }
-      if (ok2) log(`Hinzufügen bestätigt (${ok2})`, 'ok');
+      if (ok2) { log(`Hinzufügen bestätigt (${ok2})`, 'ok'); tMark('im Warenkorb'); }
       else { log('Keine Bestätigung vom Shop gesehen – warte zur Sicherheit noch 3 s', 'warn'); await sleep(3000); }
     }
     if (SHOP.dismiss) {
@@ -1896,7 +1915,7 @@
       const o = cartOosText();
       return restartLoop(o ? `Warenkorb meldet „${o}“` : '„Zur Kasse“ nicht verfügbar', false);
     }
-    S.set('stage', 'checkout'); S.set('payOk', false);
+    S.set('stage', 'checkout'); S.set('payOk', false); tMark('zur Kasse');
     // Direkt zur Übersicht springen (Versand-Schritt überspringen) – Lieferadresse/Zahlung sind im Konto gespeichert.
     // Fehlt etwas, leitet der Shop selbst auf den passenden Schritt um und der normale Ablauf übernimmt.
     if (SHOP.directSummary && !S.get('skipDirect') && SHOP.host.test(location.hostname)) {
@@ -2030,6 +2049,7 @@
       btn.style.outline = '4px solid #e60000'; btn.scrollIntoView({ block: 'center' });
       notify(`QuickBuy ${SHOP.name}`, 'Kasse erreicht – jetzt nur noch "Zahlungspflichtig bestellen" klicken!');
       discord('checkout', 'Artikel liegt bereit – jetzt nur noch **„Zahlungspflichtig bestellen“** klicken!');
+      tDone('Kasse bereit');
       return stop('Kasse erreicht – Bestellung bitte selbst bestätigen');
     }
 
@@ -2052,7 +2072,7 @@
       if (bb) return budgetStop(bb, btn);
       S.set('curTotal', amount);
     }
-    log(`Auto-Bestellung: klicke „${elText(btn)}“`, 'buy');
+    log(`Auto-Bestellung: klicke „${elText(btn)}“`, 'buy'); tMark('Bestellen geklickt');
     S.set('stage', 'done');
     clickEl(btn);
     setTimeout(() => {
@@ -2259,6 +2279,7 @@
             b2.style.outline = '4px solid #e60000'; b2.scrollIntoView({ block: 'center' });
             notify(`QuickBuy ${SHOP.name}`, 'Kasse erreicht – jetzt nur noch „Bestellen und bezahlen“ klicken!');
             await discord('checkout', `Gesamt **${i.total ? fmtEur(i.total) + ' €' : '?'}** – jetzt nur noch **„Bestellen und bezahlen“** klicken!`);
+            tDone('Kasse bereit');
             return stop('Kasse erreicht – bitte selbst „Bestellen und bezahlen“ klicken');
           }
           {
@@ -3534,6 +3555,7 @@
   function reportTick() {
     try { summaryTick(); } catch (e) { console.error('[QuickBuy] Zusammenfassung:', e); }
     try { patternWarnTick(); } catch (e) { console.error('[QuickBuy] Restock-Fenster:', e); }
+    startklarDaily().catch((e) => { skRunning = false; console.error('[QuickBuy] Startklar täglich:', e); });
     if (!G.get('reportOn', true)) return;
     const now = new Date();
     const key = now.toDateString();
@@ -4321,9 +4343,11 @@
 
   /* ---------- Startklar-Check (Dashboard) ---------- */
   let skRunning = false; let skAt = 0;
-  async function startklar() {
-    if (skRunning) return; skRunning = true; skAt = Date.now();
-    const ids = SHOP_IDS().filter((id) => gv(id, 'products', []).length && !SHOPS[id].internal);
+  async function startklar(auto) {
+    if (skRunning) return null; skRunning = true; skAt = Date.now();
+    // automatisch (morgens): nur gestartete Shops, die gerade nicht kaufen
+    const ids = SHOP_IDS().filter((id) => gv(id, 'products', []).length && !SHOPS[id].internal
+      && (!auto || (gv(id, 'running', false) && !handledByTab(id) && String(gv(id, 'stage', 'product')) === 'product')));
     const out = {};
     for (const id of ids) {
       out[id] = { central: null, why: '' };
@@ -4338,6 +4362,31 @@
     const t0 = Date.now();
     while (Date.now() - t0 < 70000 && ids.some((id) => SHOPS[id].basketUrl && !((gv(id, 'preflightRes', null) || {}).at > skAt))) { await sleep(1500); renderDash(true); }
     skRunning = false; renderDash(true);
+    return { ids, out, at: skAt };
+  }
+  // 🚦 Täglicher Startklar-Check (Anmeldung, Warenkorb, Abruf) → Ergebnis an Discord
+  async function startklarDaily() {
+    if (!G.get('skOn', true)) return;
+    const now = new Date(); const key = now.toDateString();
+    if (G.get('skDay', '') === key) return;
+    const [hh, mm] = String(G.get('skTime', '08:00')).split(':').map(Number);
+    const cur = now.getHours() * 60 + now.getMinutes(); const at = (hh || 0) * 60 + (mm || 0);
+    if (cur < at || cur > at + 120) return;                 // nur im Zeitfenster (nicht nachholen, wenn der PC erst mittags angeht)
+    G.set('skDay', key);
+    const r = await startklar(true);
+    if (!r || !r.ids.length) return;
+    const bad = []; const good = [];
+    for (const id of r.ids) {
+      const o = r.out[id] || {}; const pf = gv(id, 'preflightRes', null); const pfOk = pf && pf.at > r.at; const p = [];
+      if (SHOPS[id].basketUrl) {
+        if (!pfOk) p.push('Warenkorb-Tab hat nicht geantwortet');
+        else { if (pf.login === false) p.push('**nicht angemeldet**'); if (pf.foreign && pf.foreign.length) p.push(`fremde Artikel im Warenkorb: ${pf.foreign.join(', ')}`); }
+      }
+      if (centralCapable(id) && o.central && o.central !== 'in' && o.central !== 'out') p.push(`Abruf: ${o.why || 'klappt nicht'}`);
+      (p.length ? bad : good).push(p.length ? `❌ **${SHOPS[id].name}**: ${p.join(' · ')}` : SHOPS[id].name);
+    }
+    if (bad.length) discord('login', `${bad.join('\n')}${good.length ? `\n✅ ok: ${good.join(', ')}` : ''}\n\nBitte vor dem nächsten Restock beheben – sonst scheitert der Kauf an der Kasse.`, { title: '', shop: 'Startklar-Check', embedTitle: '🚦 Startklar-Check: Handlungsbedarf' });
+    else discord('report', `✅ Alle ${good.length} Shops startklar: ${good.join(', ')} – angemeldet, Warenkorb sauber, Abruf klappt.`, { title: '', shop: 'Startklar-Check', embedTitle: '🚦 Startklar-Check' });
   }
   function startklarBlock() {
     const sk = G.get('startklar', null);
@@ -4565,6 +4614,8 @@
         <label class="ck"><input type="checkbox" data-gs="sumOn" ${G.get('sumOn', true) ? 'checked' : ''}> 📊 Tageszusammenfassung an Discord um</label>
         <input type="time" id="g-stime" value="${esc(G.get('sumTime', '23:00'))}" style="flex:none">
         <button class="sm" data-g="sumnow">📊 Jetzt senden</button>
+        <label class="ck"><input type="checkbox" data-gs="skOn" ${G.get('skOn', true) ? 'checked' : ''}> 🚦 Täglicher Startklar-Check (Anmeldung, Warenkorb) an Discord um</label>
+        <input type="time" id="g-sktime" value="${esc(G.get('skTime', '08:00'))}" style="flex:none">
         <label class="ck"><input type="checkbox" data-gs="patWarn" ${G.get('patWarn', true) ? 'checked' : ''}> ⏰ 15 Min. vor einem typischen Restock-Fenster an Discord melden</label>
       </div>
       ${startklarBlock()}
@@ -4770,6 +4821,7 @@
     const rt = d.querySelector('#g-rtime');
     if (rt) rt.onchange = () => { G.set('reportTime', rt.value || '09:00'); };
     { const st2 = d.querySelector('#g-stime'); if (st2) st2.onchange = () => { G.set('sumTime', st2.value || '23:00'); G.set('sumDay', ''); }; }
+    { const st3 = d.querySelector('#g-sktime'); if (st3) st3.onchange = () => { G.set('skTime', st3.value || '08:00'); G.set('skDay', ''); }; }
     d.querySelectorAll('[data-gs]').forEach((c) => { c.onchange = () => G.set(c.dataset.gs, c.checked); });
     d.querySelectorAll('[data-rate]').forEach((c) => { c.onchange = () => { const v = Math.max(0, Math.round(parseEur(c.value) || 0)); G.set(`rateMax:${c.dataset.rate}`, v); dashToast(v ? `${RATE_GROUPS[c.dataset.rate].name}: max. ${v} Abrufe/Min` : 'Gemeinsames Limit aus'); renderDash(true); }; });
     { const b = d.querySelector('#d-sk'); if (b) b.onclick = () => { startklar().catch((e) => { skRunning = false; console.error('[QuickBuy] Startklar:', e); }); }; }
