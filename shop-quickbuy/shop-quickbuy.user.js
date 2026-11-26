@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.9
+// @version      3.19.10
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1511,6 +1511,7 @@
     }
     if (isInCart()) {
       log('Produkt liegt schon im Warenkorb – prüfe dort statt erneut hinzuzufügen', 'buy');
+      S.set('availSeenAt', Date.now());      // Produktseite ist gerade kaufbar
       S.set('justAdded', false); S.set('stage', 'basket');
       location.href = SHOP.basketUrl;
       return;
@@ -1780,6 +1781,15 @@
       // Nur den Eintrag des Zielprodukts auf "nicht verfügbar" prüfen
       const hit = oosIn(item.box.innerText);
       if (hit) {
+        // Produktseite war eben kaufbar, der alte Warenkorb-Eintrag sagt aber „nicht verfügbar“ (MediaMarkt: „Bitte entferne das
+        // Produkt …“) → veralteter Eintrag: entfernen und sofort neu hinzufügen (einmal je 10 Min.)
+        if (Date.now() - (S.get('availSeenAt') || 0) < 180000 && Date.now() - (S.get('staleFixAt') || 0) > 600000 && item.remove) {
+          S.set('staleFixAt', Date.now()); S.set('availSeenAt', 0);
+          log(`Warenkorb-Eintrag ist veraltet („${hit}“), Produktseite aber kaufbar → entferne ihn und lege neu hinein`, 'buy');
+          clickEl(item.remove);
+          await sleep(3500);
+          return readdNow('Veralteter Warenkorb-Eintrag entfernt');
+        }
         // Artikel bleibt im Warenkorb (wird NICHT entfernt und NICHT erneut hinzugefügt) – weiter beobachten
         return restartLoop(`Im Warenkorb noch „${hit}“`, false);
       }
