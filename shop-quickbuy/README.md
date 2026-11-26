@@ -62,3 +62,7 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - 3.19.8: Klarere Meldung, wenn bei Prüf-Zentrum-Shops ein Treffer-/Kontroll-Tab hängt (statt „schlafen gelegt“).
 - 3.19.9: Wächter erkennt Tabs, die leben, aber nicht prüfen (z. B. alter Amazon-Tab) → nach 5 Min. Neustart, danach Ersatz-Tab (der Vorrang hat; alter Tab beendet sich).
 - 3.19.10: Ist die Produktseite kaufbar, der alte Warenkorb-Eintrag aber „nicht verfügbar“ (MediaMarkt: „Bitte entferne das Produkt …“), wird der Eintrag entfernt und sofort neu hinzugefügt.
+
+## Neu in 3.20.0 – ⭐ Priorität
+- In der Produkttabelle (Übersicht) per Klick auf ☆ markieren: ⭐-Produkte werden 3× so oft geprüft wie die anderen – bei gleicher Gesamtzahl an Abrufen (kein zusätzliches Captcha-Risiko). Gilt fürs Prüf-Zentrum und für Shops mit eigenem Tab (z. B. Amazon).
+- „📋 Mehrere“: `⭐` oder `prio` in der Zeile setzt die Priorität direkt.

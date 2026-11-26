@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.10
+// @version      3.20.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1146,9 +1146,9 @@
         if (max > 0 && r >= max) { bgActive = false; return stop(`Maximale Runden (${max}) erreicht`); }
         if (rounds % 10 === 0) { log('Kontroll-Neuladen (Login & Status) …', 'info'); S.set('navAt', Date.now()); location.href = cur().url; return; }
         const list = S.get('products');
-        // Abrufe gleichmäßig über die Runde verteilen (kein Schwall direkt hintereinander → weniger Captchas)
+        // Abrufe gleichmäßig über die Runde verteilen (kein Schwall direkt hintereinander → weniger Captchas); ⭐ öfter
         const step = Math.max(2000, Math.round(currentIntervalMs() / Math.max(1, list.length)));
-        for (let i = 0; i < list.length; i++) {
+        for (const i of slotOrder(list)) {
           if (!S.get('running')) break;
           countdown(step);
           await wait(step);
@@ -1184,10 +1184,13 @@
     if (SHOP.bgCheck) return bgLoop();          // Sony/Microsoft: im Hintergrund weiterprüfen, nicht neu laden
     if (dropActive() && !S.get('dropReloaded')) { S.set('dropReloaded', true); log('Drop-Modus aktiv – prüfe ab jetzt schneller', 'buy'); }
 
-    const next = (S.get('idx') + 1) % n;
+    const slots = slotOrder(list);
+    const sl = ((S.get('slot') || 0) + 1) % slots.length;
+    S.set('slot', sl);
+    const next = slots[sl];               // ⭐ Produkte kommen öfter dran
     S.set('idx', next);
     let wait;
-    if (next === 0) {                       // Runde durch alle Produkte fertig
+    if (sl === 0) {                       // Runde durch alle Produkte fertig
       const rounds = S.get('attempts') + 1; S.set('attempts', rounds);
       const max = S.get('maxAttempts');
       if (max > 0 && rounds >= max) return stop(`Maximale Runden (${max}) erreicht`);
@@ -2468,7 +2471,7 @@
       const qv = norm(r.querySelector('.qb-qty').value);
       const qty = qv === '' ? 1 : /^(∞|0|unendlich|max)$/i.test(qv) ? 0 : Math.max(0, parseInt(qv, 10) || 1);
       const prev = old.find((o) => o.url === url);
-      return { url, variant: norm(r.querySelector('.qb-var').value), maxPrice: parseEur(r.querySelector('.qb-pr').value), qty, bought: prev ? prev.bought || 0 : 0 };
+      return { url, variant: norm(r.querySelector('.qb-var').value), maxPrice: parseEur(r.querySelector('.qb-pr').value), qty, bought: prev ? prev.bought || 0 : 0, prio: !!(prev && prev.prio) };
     });
     S.set('products', list);
     return list;
@@ -2772,6 +2775,22 @@
     if (Date.now() < (gv(id, 'slowUntil', 0) || 0)) base *= 2;      // direkt nach einem Captcha 1 Std. zusätzlich langsamer
     return base;
   }
+  /* ---------- ⭐ Priorität ----------
+   * Markierte Produkte kommen 3× so oft dran wie die anderen – bei gleicher Gesamtzahl an Abrufen (kein Mehr an Captcha-Risiko).
+   * Reihenfolge gleichmäßig verteilt (z. B. ⭐A, B, ⭐A, C, ⭐A, D …). */
+  const PRIO_W = 3;
+  function slotOrder(list) {
+    const w = list.map((x) => (x && x.prio ? PRIO_W : 1));
+    if (!w.some((v) => v > 1) || w.every((v) => v > 1)) return list.map((_, i) => i);
+    const tot = w.reduce((a, b) => a + b, 0); const cur = w.map(() => 0); const out = [];
+    for (let k = 0; k < tot; k++) {
+      let best = 0;
+      for (let i = 0; i < w.length; i++) { cur[i] += w[i]; if (cur[i] > cur[best]) best = i; }
+      cur[best] -= tot; out.push(best);
+    }
+    return out;
+  }
+
   /* ---------- Prüf-Zentrum ----------
    * Ein einziger Tab (das Dashboard, sonst ein Shop-Tab) prüft alle Shops im Hintergrund. Shop-Tabs öffnen sich erst bei einem
    * Treffer, legen in den Warenkorb, gehen zur Kasse und schließen sich danach wieder. Bei Problemen (Captcha, Seite nicht
@@ -2885,9 +2904,11 @@
       const step = Math.max(2000, (effRoundSec(id) * 1000) / list.length);
       if (now - (gv(id, 'cLast', 0) || 0) < step) continue;
       sv(id, 'cLast', now);
-      const i = (gv(id, 'cIdx', 0) || 0) % list.length;
-      sv(id, 'cIdx', i + 1);
-      if (i === list.length - 1) {
+      const slots = slotOrder(list);
+      const si = (gv(id, 'cIdx', 0) || 0) % slots.length;
+      const i = slots[si];
+      sv(id, 'cIdx', si + 1);
+      if (si === slots.length - 1) {
         const r = (gv(id, 'attempts', 0) || 0) + 1; sv(id, 'attempts', r);
         const mx = Number(gv(id, 'maxAttempts', 0)) || 0;
         if (mx > 0 && r >= mx) { sv(id, 'running', false); pushLog(id, `Gestoppt: Maximale Runden (${mx}) erreicht`, 'warn'); continue; }
@@ -3835,11 +3856,12 @@
       const urls = line.match(/https?:\/\/[^\s;"'<>|]+/gi);
       if (!urls) continue;
       const rest = line.replace(/https?:\/\/[^\s;"'<>|]+/gi, ' ');
-      let max = null; let qty = null;
+      let max = null; let qty = null; let prio = false;
       for (const tok of rest.split(/[\s;\t|]+/).map((t) => t.trim()).filter(Boolean)) {
         let m;
         if ((m = tok.match(/^(?:x|×)(\d+)$/i) || tok.match(/^(\d+)(?:x|×|stk\.?|stück)$/i))) { qty = parseInt(m[1], 10); continue; }
         if (/^(∞|alle)$/i.test(tok)) { qty = 0; continue; }
+        if (/^(⭐|\*|prio|priorität|!)$/i.test(tok)) { prio = true; continue; }
         if (/^(€|eur|euro|max\.?|preis:?|stk\.?|stück)$/i.test(tok)) continue;
         const v = parseEur(tok.replace(/€|eur$/i, ''));
         if (!(v > 0)) continue;
@@ -3849,7 +3871,7 @@
       for (const raw of urls) {
         let u = stripUrl(raw.replace(/[),.]+$/, '')); let conv = false;
         const de = amazonToDe(u); if (de) { u = de; conv = true; }
-        out.push({ url: u, id: shopOfUrl(u), maxPrice: max !== null ? max : defMax, qty: qty !== null ? qty : defQty, conv });
+        out.push({ url: u, id: shopOfUrl(u), maxPrice: max !== null ? max : defMax, qty: qty !== null ? qty : defQty, conv, prio });
       }
     }
     return out;
@@ -3857,7 +3879,7 @@
   function bulkAddDialog(d) {
     const box = document.createElement('div'); box.className = 'toast'; box.style.width = 'min(760px,94vw)'; box.style.maxHeight = '86vh'; box.style.overflow = 'auto';
     box.innerHTML = `<div style="margin-bottom:6px;font-weight:700">📋 Mehrere Produkte einfügen</div>
-      <div class="muted" style="margin-bottom:6px">Je Zeile ein Link, dahinter optional Höchstpreis und Stückzahl, z. B. <code>https://…/ps5 449,99 2</code> – auch direkt aus Excel kopierbar.</div>
+      <div class="muted" style="margin-bottom:6px">Je Zeile ein Link, dahinter optional Höchstpreis und Stückzahl, z. B. <code>https://…/ps5 449,99 2</code> – auch direkt aus Excel kopierbar. Mit <code>⭐</code> oder <code>prio</code> in der Zeile wird das Produkt 3× so oft geprüft.</div>
       <textarea id="bk-t" style="min-height:160px" placeholder="https://www.mediamarkt.de/de/product/_…  449,99  1&#10;https://www.saturn.de/de/product/_…  449,99&#10;https://www.fnacpro.com/…/a20901133/…  ; 420 € ; x2"></textarea>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0">
         <span class="muted">Ohne Angabe:</span>
@@ -3886,7 +3908,7 @@
       });
       const nNew = items.filter((x) => x.st === 'new').length; const nUpd = items.filter((x) => x.st === 'upd').length;
       prev.innerHTML = items.length ? `<div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th>Produkt</th><th class="r">Max. €</th><th class="c">Stück</th><th></th></tr></thead><tbody>${items.map((x) => `<tr>
-          <td>${x.id ? esc(SHOPS[x.id].name) : '<span class="red">?</span>'}</td><td>${esc(shortName(x.url))}</td>
+          <td>${x.id ? esc(SHOPS[x.id].name) : '<span class="red">?</span>'}</td><td>${x.prio ? '⭐ ' : ''}${esc(shortName(x.url))}</td>
           <td class="r">${x.maxPrice ? fmtEur(x.maxPrice) : '<span class="muted">egal</span>'}</td><td class="c">${x.qty === 0 ? '∞' : x.qty}</td>
           <td class="${x.st === 'bad' ? 'red' : x.st === 'skip' ? 'muted' : 'green'}">${esc(x.note)}</td></tr>`).join('')}</tbody></table></div>
         ${items.some((x) => x.st === 'new' && !x.maxPrice) ? '<div class="hint bad">Mindestens ein Produkt hat keinen Höchstpreis – es würde zu jedem Preis gekauft.</div>' : ''}` : '';
@@ -3901,7 +3923,7 @@
         if (it.st !== 'new' && it.st !== 'upd') continue;
         const l = gv(it.id, 'products', []);
         const ex = l.find((x) => keyOf2(it.id, x.url) === keyOf2(it.id, it.url));
-        if (ex) { ex.maxPrice = it.maxPrice; ex.qty = it.qty; u++; } else { l.push({ url: it.url, variant: '', maxPrice: it.maxPrice, qty: it.qty, bought: 0 }); a++; }
+        if (ex) { ex.maxPrice = it.maxPrice; ex.qty = it.qty; if (it.prio) ex.prio = true; u++; } else { l.push({ url: it.url, variant: '', maxPrice: it.maxPrice, qty: it.qty, bought: 0, prio: !!it.prio }); a++; }
         sv(it.id, 'products', l); shops.add(it.id);
       }
       shops.forEach((id) => pushLog(id, 'Produkte per Liste eingefügt/aktualisiert (Dashboard)', 'info'));
@@ -4082,8 +4104,9 @@
         </div>
         <div class="hint" id="d-hint"></div>
         ${used.length ? `<h3>Shops <span class="muted">${runIds.length} von ${used.length} aktiv</span></h3><div class="shops">${shopStrip}</div>` : ''}
-        ${rows.length ? `<h3>Produkte <span class="muted">${rows.length}</span></h3><table class="pt"><thead><tr><th>Shop</th><th>Produkt</th><th>Status</th><th class="r">Max. €</th><th class="c">Stück</th><th class="c">Gekauft</th><th></th></tr></thead><tbody>
+        ${rows.length ? `<h3>Produkte <span class="muted">${rows.length}</span></h3><table class="pt"><thead><tr><th class="c" title="⭐ Priorität: wird 3× so oft geprüft">⭐</th><th>Shop</th><th>Produkt</th><th>Status</th><th class="r">Max. €</th><th class="c">Stück</th><th class="c">Gekauft</th><th></th></tr></thead><tbody>
           ${rows.map((r) => `<tr class="${r.active ? 'cur' : ''}" data-id="${r.id}" data-i="${r.i}">
+            <td class="c"><button class="x2" data-p="prio" title="${r.x.prio ? 'Priorität an – wird 3× so oft geprüft (klicken zum Ausschalten)' : 'Priorität einschalten: 3× so oft prüfen'}" style="font-size:15px;opacity:${r.x.prio ? 1 : 0.3}">${r.x.prio ? '⭐' : '☆'}</button></td>
             <td><span class="tag">${esc(SHOPS[r.id].name)}</span></td>
             <td class="pn"><a href="${esc(r.x.url)}" target="_blank" title="${esc(r.x.url)}">${esc(shortName(r.x.url))}</a>${r.x.variant ? ` <span class="muted">· ${esc(r.x.variant)}</span>` : ''}</td>
             <td>${status(r)}</td>
@@ -4303,6 +4326,8 @@
         if (inp.dataset.f === 'maxPrice') x.maxPrice = parseEur(inp.value);
         else { const q = norm(inp.value); x.qty = /^(∞|0)$/.test(q) ? 0 : Math.max(1, parseInt(q, 10) || 1); }
       }));
+      const pr = tr.querySelector('[data-p="prio"]');
+      if (pr) pr.onclick = () => { let on = false; upd((l, x) => { x.prio = !x.prio; on = x.prio; }); sv(id, 'slot', 0); sv(id, 'cIdx', 0); dashToast(on ? '⭐ Priorität an – wird 3× so oft geprüft' : 'Priorität aus'); renderDash(true); };
       const del = tr.querySelector('[data-p="del"]');
       if (del) del.onclick = () => { if (!confirm(`„${shortName(gv(id, 'products', [])[i].url)}“ entfernen?`)) return; upd((l) => l.splice(i, 1)); renderDash(true); };
     });
