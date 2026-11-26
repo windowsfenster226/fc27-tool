@@ -60,3 +60,4 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - 3.19.6: HTTP 429 (zu viele Abrufe) im Prüf-Zentrum → kein Kontroll-Tab mehr, sondern 2–15 Min. Pause für MediaMarkt+Saturn und Captcha-Bremse.
 - 3.19.7: FNAC Pro – Lagerstatus aus „availabilityType“ der Seite (JSON-LD meldete bei „Bientôt en stock“ fälschlich verfügbar → Tab ging alle paar Minuten auf).
 - 3.19.8: Klarere Meldung, wenn bei Prüf-Zentrum-Shops ein Treffer-/Kontroll-Tab hängt (statt „schlafen gelegt“).
+- 3.19.9: Wächter erkennt Tabs, die leben, aber nicht prüfen (z. B. alter Amazon-Tab) → nach 5 Min. Neustart, danach Ersatz-Tab (der Vorrang hat; alter Tab beendet sich).

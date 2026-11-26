@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.19.8
+// @version      3.19.9
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2270,7 +2270,7 @@
     renderPanel();
     if (!S.get('running')) return;
     busy = true;
-    if (otherOwner()) return retireTab('Shop läuft schon in einem anderen Tab');
+    if (otherOwner() && !freshReplacement()) return retireTab('Shop läuft schon in einem anderen Tab');
     if (centralOK(SHOP_ID) && S.get('stage') === 'product' && !S.get('loginWait')) {
       const hit = S.get('cHit');
       if (!(hit && Date.now() - hit.at < 60000)) return park('Prüf-Zentrum prüft im Hintergrund – dieser Tab wartet auf einen Treffer');
@@ -2920,7 +2920,7 @@
     if (SHOPS[id].stopAfterAdd || SHOPS[id].psFlow) sv(id, 'inCart', {});
     sv(id, 'running', true);
     pushLog(id, `Vom Dashboard gestartet${gv(id, 'autoOrder', false) ? ' – AUTO-BESTELLUNG AN' : ''}`, 'buy');
-    sv(id, 'cLast', 0); sv(id, 'cIdx', 0); sv(id, 'cFails', 0); sv(id, 'centralOff', 0); sv(id, 'cHit', null);
+    sv(id, 'cLast', 0); sv(id, 'cIdx', 0); sv(id, 'cFails', 0); sv(id, 'centralOff', 0); sv(id, 'cHit', null); sv(id, 'startAt', Date.now());
     if (!tabOpen(id) && !centralOK(id)) { sv(id, 'heartbeat', Date.now()); openTab(list[0].url); }   // Herzschlag vorstellen: Wächter gibt dem neuen Tab 2,5 Min.
     return true;
   }
@@ -3249,6 +3249,26 @@
       if (!gv(id, 'running', false)) continue;
       const list = gv(id, 'products', []); if (!list.length) continue;
       if (centralOK(id) && !handledByTab(id)) continue;          // Prüf-Zentrum prüft – kein Tab nötig
+      // Tab lebt, prüft aber nicht (z. B. alter Tab einer früheren Version, hängende Seite): 5 Min. keine Prüfung → Neustart
+      if (!centralOK(id) && Date.now() - (gv(id, 'heartbeat', 0) || 0) < 150000) {
+        const st = String(gv(id, 'stage', 'product'));
+        const busyOk = st !== 'product' || gv(id, 'captchaSince', 0) || gv(id, 'queueSince', 0) || gv(id, 'loginWait', 0) || dropOn(id);
+        const prog = Math.max((gv(id, 'diag', null) || {}).t || 0, gv(id, 'navAt', 0) || 0, gv(id, 'startAt', 0) || 0);
+        const limit = Math.max(300000, effRoundSec(id) * 2000);
+        if (!busyOk && now - prog > limit) {
+          const k = gv(id, 'stallKick', 0) || 0;
+          if (now - k > limit) {
+            sv(id, 'stallKick', now); sv(id, 'kick', now);
+            pushLog(id, `Tab lebt, prüft aber seit ${Math.round((now - prog) / 60000)} Min. nicht – starte ihn neu`, 'warn');
+          } else if (now - k > 120000 && now - (gv(id, 'reopenAt', 0) || 0) > 600000) {
+            sv(id, 'reopenAt', now); sv(id, 'owner', null); sv(id, 'startAt', now);
+            openTab(list[gv(id, 'idx', 0) % list.length].url);
+            pushLog(id, 'Tab prüfte auch nach dem Neustart nicht – neuer Tab geöffnet', 'warn');
+            discord('error', `**${SHOPS[id].name}** hat ${Math.round((now - prog) / 60000)} Min. nicht geprüft (Tab hing) – neuer Tab wurde geöffnet. Alte ${SHOPS[id].name}-Tabs bitte schließen.`, { title: '', shop: SHOPS[id].name });
+          }
+        }
+        continue;
+      }
       if (Date.now() - (gv(id, 'heartbeat', 0) || 0) < 150000) continue;      // 2,5 Min. kein Lebenszeichen (Herzschlag läuft im Worker, wird nicht gedrosselt)
       if (Date.now() - (gv(id, 'reopenAt', 0) || 0) < 600000) continue;       // höchstens alle 10 Min.
       sv(id, 'reopenAt', Date.now()); sv(id, 'stage', 'product');
@@ -4490,8 +4510,13 @@
     if (parked) { S.set('heartbeat', now); return; }
     // Prüf-Zentrum hat diesen Tab abgemeldet (prüfte noch selbst oder hing nach einem Treffer)
     { const k = S.get('kick') || 0;
-      if (k > kickSeen && k > TAB_START && S.get('running') && S.get('stage') === 'product') { kickSeen = k; return park('Prüf-Zentrum übernimmt die Prüfung'); } }
-    if (S.get('running') && otherOwner()) {
+      if (k > kickSeen && k > TAB_START && S.get('running') && S.get('stage') === 'product') {
+        kickSeen = k;
+        if (!centralOK(SHOP_ID)) { log('Dashboard: Tab prüfte nicht – starte neu', 'warn'); S.set('owner', null); S.set('navAt', Date.now()); location.href = cur().url; return; }
+        return park('Prüf-Zentrum übernimmt die Prüfung');
+      } }
+    if (S.get('running') && otherOwner() && freshReplacement()) claimOwner();
+    else if (S.get('running') && otherOwner()) {
       // Zwei Tabs prüfen denselben Shop (z. B. alter Tab ist nach dem Schlafen wieder aufgewacht) → dieser tritt zurück.
       // Mitten im Bezahlen nie abbrechen.
       if (/^(product|basket)$/.test(S.get('stage'))) return retireTab('Shop läuft schon in einem anderen Tab');
@@ -4502,6 +4527,8 @@
   }
   // Läuft der Shop schon in einem anderen Tab? Dann wartet dieser hier, statt doppelt zu prüfen
   function otherOwner() { const o = S.get('owner'); return !!(o && o.id !== TAB_ID && Date.now() - o.at < 15000); }
+  // Dieser Tab wurde gerade vom Dashboard als Ersatz geöffnet → er hat Vorrang (der alte Tab beendet sich über „reopenAt“)
+  const freshReplacement = () => { const r = S.get('reopenAt') || 0; return isWorkerTab() && TAB_START >= r && TAB_START - r < 30000; };
   function yieldTab() {
     yielded = true; busy = true;
     const worker = isWorkerTab();
