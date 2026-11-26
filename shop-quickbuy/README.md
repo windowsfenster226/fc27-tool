@@ -75,6 +75,11 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.25.0 – Restock-Muster
+- Statistik-Tab: Tabelle „Restock-Muster je Shop“ (letzte 60 Tage, gezählt nach Tagen) mit typischen Wochentagen und Uhrzeit, z. B. „meist Do 09–11 Uhr“. Fehlalarme zählen nicht.
+- ⏰ Vorwarnung: 15 Min. vor einem typischen Restock-Fenster (an mind. 2 verschiedenen Tagen gleiche Wochentag+Stunde) kommt eine Discord-Nachricht – je Fenster 1× am Tag, nur für gestartete Shops. Abschaltbar in den Einstellungen.
+- Discord: `!muster` (alle Shops) bzw. `!muster saturn`.
+
 ## Neu in 3.24.3 – Fix
 - Behoben (seit 3.24.1): der neue Prüfstand für `!test` nutzte denselben Speicher-Schlüssel wie der Takt des Prüf-Zentrums → gelegentlich ein Abruf zu früh. Jetzt eigener Schlüssel.
 - Treffer-Tab schließt sich wieder: Im Log steht jetzt, warum (z. B. „Shop-Seite: nicht kaufbar – …“).

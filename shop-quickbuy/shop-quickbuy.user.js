@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.24.3
+// @version      3.25.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -845,6 +845,7 @@
     queue:     { flag: 'dcCheckout',  color: 0x9b59b6, title: '⏳ Warteschlange' },
     listing:   { flag: 'dcListing',   color: 0x1abc9c, title: '🆕 Neu gelistet' },
     report:    { flag: 'dcReport',    color: 0x95a5a6, title: '🩺 QuickBuy Selbsttest' },
+    pattern:   { flag: null,          color: 0x5b8cff, title: '⏰ Restock-Fenster gleich' },
     login:     { flag: 'dcError',     color: 0xe67e22, title: '🔑 Nicht angemeldet?' },
   };
 
@@ -3451,6 +3452,7 @@
   }
   function reportTick() {
     try { summaryTick(); } catch (e) { console.error('[QuickBuy] Zusammenfassung:', e); }
+    try { patternWarnTick(); } catch (e) { console.error('[QuickBuy] Restock-Fenster:', e); }
     if (!G.get('reportOn', true)) return;
     const now = new Date();
     const key = now.toDateString();
@@ -3617,6 +3619,65 @@
   /* ---------- Statistik ---------- */
   let statShop = 'all';
   const DOW = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+  /* 🗓️ Restock-Muster: wann füllt ein Shop typischerweise auf?
+   * Zählt je Wochentag × Stunde, an wie vielen VERSCHIEDENEN Tagen dort ein Restock war (mehrere Produkte am selben Tag = 1).
+   * Fehlalarme sind schon aus global:restocks entfernt (handBack). Zeitraum: 60 Tage. */
+  const PAT_DAYS = 60;
+  function restockPattern(id) {
+    const rs = GM_getValue('global:restocks', []).filter((r) => SHOPS[r.shopId] && (!id || r.shopId === id) && Date.now() - r.t < PAT_DAYS * 86400e3);
+    const cell = DOW.map(() => Array.from({ length: 24 }, () => new Set()));
+    const dayN = DOW.map(() => new Set()); const hourN = Array.from({ length: 24 }, () => new Set());
+    for (const r of rs) {
+      const d = new Date(r.t); const di = (d.getDay() + 6) % 7; const h = d.getHours(); const dk = d.toDateString();
+      cell[di][h].add(dk); dayN[di].add(dk); hourN[h].add(dk);
+    }
+    const days = DOW.map((name, di) => ({ name, di, n: dayN[di].size })).filter((x) => x.n).sort((a, b) => b.n - a.n);
+    // bestes 2-Stunden-Fenster über alle Tage
+    let win = null;
+    for (let h = 0; h < 24; h++) { const n = new Set([...hourN[h], ...hourN[(h + 1) % 24]]).size; if (n && (!win || n > win.n)) win = { h, n }; }
+    // Wochentag+Stunde mit ≥ 2 verschiedenen Tagen = echtes Muster
+    const spots = cell.flatMap((row, di) => row.map((st, h) => ({ di, h, n: st.size }))).filter((x) => x.n >= 2).sort((a, b) => b.n - a.n);
+    const restockDays = new Set(rs.map((r) => new Date(r.t).toDateString())).size;
+    return { total: rs.length, restockDays, days, win, spots, last: rs.length ? Math.max(...rs.map((r) => r.t)) : 0 };
+  }
+  const hh2 = (h) => String(h).padStart(2, '0');
+  function patternText(p) {
+    if (!p.total) return 'noch keine Restocks';
+    if (p.restockDays < 3) return `erst an ${p.restockDays} Tag${p.restockDays === 1 ? '' : 'en'} Restocks – noch kein Muster`;
+    const parts = [];
+    if (p.days.length) parts.push(`meist ${p.days.slice(0, 2).filter((x, i) => i === 0 || x.n >= 2).map((x) => x.name).join('/')}`);
+    if (p.win && p.win.n >= 2) parts.push(`${hh2(p.win.h)}–${hh2((p.win.h + 2) % 24)} Uhr`);
+    if (p.spots.length) parts.push(`(am häufigsten ${DOW[p.spots[0].di]} ${hh2(p.spots[0].h)}–${hh2(p.spots[0].h + 1)} Uhr, ${p.spots[0].n}×)`);
+    return parts.join(' ') || 'kein klares Muster';
+  }
+  function patternTableHtml() {
+    const ids = [...new Set(GM_getValue('global:restocks', []).map((r) => r.shopId))].filter((id) => SHOPS[id]);
+    if (!ids.length) return '';
+    const rows = ids.map((id) => ({ id, p: restockPattern(id) })).filter((x) => x.p.total).sort((a, b) => b.p.restockDays - a.p.restockDays);
+    return `<h3>Restock-Muster je Shop <span class="muted">letzte ${PAT_DAYS} Tage · gezählt nach Tagen</span></h3>
+      <table class="pt"><thead><tr><th>Shop</th><th class="r">Tage mit Restock</th><th>Typisch</th><th>Zuletzt</th></tr></thead><tbody>
+      ${rows.map(({ id, p }) => `<tr><td><span class="tag">${esc(SHOPS[id].name)}</span></td><td class="r">${p.restockDays}</td><td>${esc(patternText(p))}</td><td class="muted">${esc(agoText(p.last))}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+  // ⏰ Vorwarnung: 15 Min. vor einem typischen Restock-Fenster (≥ 2 verschiedene Tage) eine Discord-Nachricht – je Fenster 1× am Tag
+  function patternWarnTick() {
+    if (!G.get('patWarn', true)) return;
+    const soon = new Date(Date.now() + 15 * 60000);
+    if (soon.getMinutes() > 4) return;                     // nur kurz vor der vollen Stunde (xx:45–xx:49)
+    const di = (soon.getDay() + 6) % 7; const h = soon.getHours();
+    const sent = { ...(G.get('patSent', {}) || {}) }; const today = new Date().toDateString();
+    const hits = [];
+    for (const id of SHOP_IDS()) {
+      if (!gv(id, 'running', false)) continue;
+      const k = `${id}|${di}|${h}`; if (sent[k] === today) continue;
+      const p = restockPattern(id); const sp = p.spots.find((x) => x.di === di && x.h === h);
+      if (!sp) continue;
+      sent[k] = today; hits.push(`**${SHOPS[id].name}**: ${DOW[di]} ${hh2(h)}–${hh2(h + 1)} Uhr schon ${sp.n}× aufgefüllt`);
+    }
+    for (const k of Object.keys(sent)) if (sent[k] !== today) delete sent[k];
+    G.set('patSent', sent);
+    if (hits.length) discord('pattern', `${hits.join('\n')}\n\nIn 15 Min. beginnt ein typisches Restock-Fenster – PC und Chrome anlassen, angemeldet bleiben.`, { title: '', shop: hits.length > 1 ? 'Mehrere Shops' : hits[0].replace(/\*\*(.+?)\*\*.*/, '$1'), embedTitle: '⏰ Restock-Fenster gleich' });
+  }
   function statsHtml() {
     const all = GM_getValue('global:restocks', []);
     const shopsWith = [...new Set(all.map((r) => r.shopId))].filter((id) => SHOPS[id]);
@@ -3628,7 +3689,8 @@
     const top = grid.flatMap((row, di) => row.map((n, h) => ({ n, di, h }))).filter((x) => x.n).sort((a, b) => b.n - a.n).slice(0, 5);
     const sel = `<select id="st-shop"><option value="all">Alle Shops (${all.length})</option>${shopsWith.map((id) => `<option value="${id}" ${statShop === id ? 'selected' : ''}>${esc(SHOPS[id].name)} (${all.filter((r) => r.shopId === id).length})</option>`).join('')}</select>`;
     if (!rs.length) return `<div class="bar">${sel}</div><div class="empty big">Noch keine Restocks aufgezeichnet. Sobald ein überwachter Artikel verfügbar wird, erscheint er hier – mit Wochentag und Uhrzeit.</div>`;
-    return `<div class="bar">${sel}<span class="chip">Restocks: <b>${rs.length}</b></span><span class="chip">seit <b>${new Date(rs[rs.length - 1].t).toLocaleDateString('de-DE')}</b></span></div>
+    const patHtml = statShop === 'all' ? patternTableHtml() : `<div class="bar"><span class="muted">Typisch:</span><span class="chip"><b>${esc(patternText(restockPattern(statShop)))}</b></span></div>`;
+    return `${patHtml}<div class="bar">${sel}<span class="chip">Restocks: <b>${rs.length}</b></span><span class="chip">seit <b>${new Date(rs[rs.length - 1].t).toLocaleDateString('de-DE')}</b></span></div>
       ${top.length ? `<div class="bar"><span class="muted">Häufigste Zeitfenster:</span>${top.map((x) => `<span class="chip"><b>${DOW[x.di]} ${String(x.h).padStart(2, '0')}–${String(x.h + 1).padStart(2, '0')} Uhr</b> · ${x.n}×</span>`).join('')}</div>` : ''}
       <div class="hm"><table><thead><tr><th></th>${Array.from({ length: 24 }, (_, h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>
         ${grid.map((row, di) => `<tr><th>${DOW[di]}</th>${row.map((n, h) => `<td title="${DOW[di]} ${h}–${h + 1} Uhr: ${n} Restock(s)" style="background:${n ? `rgba(91,140,255,${(0.18 + 0.82 * n / max).toFixed(2)})` : '#1b1d23'}">${n || ''}</td>`).join('')}</tr>`).join('')}
@@ -3872,6 +3934,7 @@
     '`!heute` – heutige Käufe · `!log [shop]` – letzte Meldungen',
     '`!test <shop|alle>` – alle Produkte jetzt prüfen · `!zusammenfassung` – Tagesbilanz',
     '`!radar` · `!radar add <such-link> [stichwörter]`',
+    '`!muster [shop]` – wann füllt der Shop typischerweise auf?',
     '`!selbsttest` · `!hilfe`',
   ].join('\n');
 
@@ -4012,6 +4075,18 @@
     }
 
     if (/^(zusammenfassung|summary|tag)$/.test(cmd)) return daySummary();
+    if (/^(muster|pattern|zeiten)$/.test(cmd)) {
+      if (arg && !/^(alle|all|\*)$/i.test(arg)) {
+        const id = botShop(arg); if (!id) return 'Welcher Shop? z. B. `!muster saturn`';
+        const p = restockPattern(id);
+        const top = p.spots.slice(0, 5).map((x) => `• ${DOW[x.di]} ${hh2(x.h)}–${hh2(x.h + 1)} Uhr · ${x.n}×`).join('\n');
+        return `🗓️ **${SHOPS[id].name}** (letzte ${PAT_DAYS} Tage, ${p.restockDays} Tage mit Restock)\n${patternText(p)}${top ? `\n${top}` : ''}`;
+      }
+      const ids = [...new Set(GM_getValue('global:restocks', []).map((r) => r.shopId))].filter((id) => SHOPS[id]);
+      const lines = ids.map((id) => ({ id, p: restockPattern(id) })).filter((x) => x.p.total).sort((a, b) => b.p.restockDays - a.p.restockDays)
+        .map(({ id, p }) => `**${SHOPS[id].name}** · ${p.restockDays} Tage · ${patternText(p)}`);
+      return lines.length ? `🗓️ **Restock-Muster** (letzte ${PAT_DAYS} Tage)\n${lines.join('\n')}` : 'Noch keine Restocks aufgezeichnet.';
+    }
     if (/^(test|check|prüfen|pruefen)$/.test(cmd)) {
       let ids = arg ? botShops(arg) : usedShops();
       if (!ids.length) return 'Welchen Shop? z. B. `!test saturn` oder `!test alle`';
@@ -4409,6 +4484,7 @@
         <label class="ck"><input type="checkbox" data-gs="sumOn" ${G.get('sumOn', true) ? 'checked' : ''}> 📊 Tageszusammenfassung an Discord um</label>
         <input type="time" id="g-stime" value="${esc(G.get('sumTime', '23:00'))}" style="flex:none">
         <button class="sm" data-g="sumnow">📊 Jetzt senden</button>
+        <label class="ck"><input type="checkbox" data-gs="patWarn" ${G.get('patWarn', true) ? 'checked' : ''}> ⏰ 15 Min. vor einem typischen Restock-Fenster an Discord melden</label>
       </div>
       ${startklarBlock()}
       ${protectBlock()}
