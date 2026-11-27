@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.30.2
+// @version      3.31.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1810,6 +1810,47 @@
       if (!old || old.url !== u || old.ver !== ver) { S.set('cartQ', { url: u, ver, at: Date.now() }); log('Warenkorb-Abfrage gelernt (für die Warenkorb-Wache)', 'info'); }
     } catch (e) {}
   }
+  /* 🛒 Warenkorb vorab befüllen (MediaMarkt/Saturn, live geprüft 27.11.): Über die Shop-eigene Schnittstelle „AddProduct“ lassen sich
+   * auch AUSVERKAUFTE Produkte in den Warenkorb legen (Status dort: DELIVERY „NO_AVAILABLE_SOURCE“). Die Warenkorb-Wache sieht dann
+   * den Restock direkt im Warenkorb – ohne Produktseite und ohne auf den Warenkorb-Knopf zu warten. Läuft im (Hintergrund-)Warenkorb-Tab. */
+  async function pqHash(name) {
+    const ver = (document.querySelector('meta[name="version"]') || {}).content || '';
+    const c = S.get('pq') || {};
+    if (c.ver === ver && c[name]) return c[name];
+    const urls = [...new Set(performance.getEntriesByType('resource').map((r) => r.name).concat([...document.scripts].map((x) => x.src))
+      .filter((u) => u && /\/assets\/webmobile-pwa\/.+\.js(\?|$)/.test(u)))];
+    const re = new RegExp(`"id":"([0-9a-f]{64})","name":"${name}"`);
+    for (const u of urls) {
+      try { const t = await (await fetch(u)).text(); const m = t.match(re); if (m) { S.set('pq', { ...(c.ver === ver ? c : {}), ver, [name]: m[1] }); return m[1]; } } catch (e) {}
+    }
+    return '';
+  }
+  async function mmGql(op, hash, variables) {
+    const ver = (document.querySelector('meta[name="version"]') || {}).content || '';
+    const pwa = { captureChannel: 'DESKTOP', country: 'DE', globalLoyaltyProgram: true, isCheckoutPhoneCompareActive: true, isMarketplaceServicesActive: true,
+      isOneAccountProgramActive: true, isUsingXccCustomerComponent: true, language: 'de', salesLine: SHOP.salesLine || 'Media', shouldInactiveContractsBeHidden: true };
+    const r = await fetch('/api/v1/graphql', { method: 'POST', credentials: 'include',
+      headers: { accept: '*/*', 'content-type': 'application/json', 'apollographql-client-name': 'pwa-client-pqm', 'apollographql-client-version': ver, 'x-cacheable': 'false',
+        'x-flow-id': (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), 'x-mms-country': 'DE', 'x-mms-language': 'de', 'x-mms-salesline': SHOP.salesLine || 'Media', 'x-operation': op },
+      body: JSON.stringify({ operationName: op, variables, extensions: { persistedQuery: { version: 1, sha256Hash: hash }, pwa } }) });
+    let j = null; try { j = await r.json(); } catch (e) {}
+    return { status: r.status, j };
+  }
+  async function cartFillDo() {
+    const f = S.get('cartFill'); if (!SHOP.cartApi || !f || Date.now() - f.at > 180000 || !(f.pids || []).length) return;
+    S.set('cartFill', null);
+    const hash = await pqHash('AddProduct');
+    if (!hash) { log('Warenkorb befüllen: Schnittstelle nicht gefunden – Produkte kommen erst beim Restock in den Warenkorb', 'warn'); S.set('cartFillRes', { at: Date.now(), ok: 0, fail: f.pids.length, why: 'nohash' }); return; }
+    let ok = 0; const bad = [];
+    for (const pid of f.pids) {
+      const r = await mmGql('AddProduct', hash, { items: [{ outletId: null, productId: String(pid), quantity: 1, serviceIds: null, warrantyIds: null }] });
+      const li = r.j && r.j.data && r.j.data.addProduct && r.j.data.addProduct.lineItems;
+      if (r.status === 200 && li && li.some((x) => String(x.productId) === String(pid))) ok++; else bad.push(`${pid}${r.status !== 200 ? ` (HTTP ${r.status})` : ''}`);
+      await sleep(900);
+    }
+    log(`Warenkorb vorab befüllt: ${ok} Produkt(e) hineingelegt${bad.length ? `, nicht möglich: ${bad.join(', ')}` : ''} – die Warenkorb-Wache übernimmt`, bad.length ? 'warn' : 'ok');
+    S.set('cartFillRes', { at: Date.now(), ok, fail: bad.length, bad });
+  }
   async function runBasket() {
     if (SHOP.basketRedirect && SHOP.basketRedirect(location.pathname)) {
       log('Zwischenseite nach dem Hinzufügen → öffne Einkaufswagen', 'info');
@@ -3162,6 +3203,16 @@
     walk(b.content);
     sv(id, 'cartPids', { at: Date.now(), m: Object.fromEntries(items.map((x) => [x.pid, { ok: x.ok, why: x.why, price: x.price }])) });
     const list = gv(id, 'products', []);
+    // Beobachtete Produkte, die (noch) nicht im Warenkorb liegen → vorab hineinlegen (auch ausverkauft), höchstens alle 10 Min.
+    if (G.get('cartFillOn', true)) {
+      const miss = list.filter((it) => !movedPaused(id, it.url)).map((it) => keyOf2(id, it.url)).filter((k) => /^\d{5,10}$/.test(k) && !items.some((y) => y.pid === k));
+      if (miss.length && Date.now() - (gv(id, 'cartFillAt', 0) || 0) > 10 * 60000 && !handledByTab(id)) {
+        sv(id, 'cartFillAt', Date.now()); sv(id, 'cartFill', { at: Date.now(), pids: miss });
+        sv(id, 'preflightRes', null); sv(id, 'preflight', { at: Date.now() });
+        pushLog(id, `Warenkorb-Wache: ${miss.length} Produkt(e) noch nicht im Warenkorb → lege sie vorab hinein (Warenkorb-Tab kurz im Hintergrund)`, 'info');
+        openTab(sh.basketUrl);
+      }
+    }
     for (let i = 0; i < list.length; i++) {
       const it = list[i]; const k = keyOf2(id, it.url); const x = items.find((y) => y.pid === k); if (!x) continue;
       if (!x.ok) { pushLog(id, `[${i + 1}/${list.length} ${shortName(it.url)}] im Warenkorb, noch nicht lieferbar (${x.why || '?'}, Warenkorb-Wache, ${Date.now() - t0} ms)`, 'oos'); continue; }
@@ -5198,6 +5249,7 @@
     const res = { at: Date.now(), login: null, n: null, foreign: [], note: '' };
     try { res.login = !loggedOutHint(); } catch (e) {}
     learnBasketQuery();
+    try { await cartFillDo(); } catch (e) { log(`Warenkorb befüllen: Fehler (${e && e.message})`, 'warn'); }
     try {
       if (SHOP.cartItems) {
         const items = SHOP.cartItems();

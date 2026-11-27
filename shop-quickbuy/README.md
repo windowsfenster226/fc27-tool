@@ -75,6 +75,11 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.31.0 – Warenkorb vorab befüllen (MediaMarkt/Saturn)
+- Live geprüft 27.11.: Über die Shop-Schnittstelle „AddProduct“ lassen sich auch **ausverkaufte** Produkte in den Warenkorb legen (Status dort „NO_AVAILABLE_SOURCE“; lieferbar → kein Grund).
+- Mit aktiver Warenkorb-Wache legt das Tool alle beobachteten Produkte vorab in den Warenkorb (Hintergrund-Tab, höchstens alle 10 Min.). Beim Restock springt der Warenkorb-Eintrag auf lieferbar → direkt zur Kasse, ohne Produktseite und ohne auf den „In den Warenkorb“-Knopf zu warten.
+- Die Schnittstellen-Kennung wird aus den Shop-Skripten gelesen und je Shop-Version gemerkt.
+
 ## Neu in 3.30.2 – Warenkorb-Wache: wirklich nichts mehr entfernen
 - Behoben: Mit „Fremde Artikel entfernen“ wurden beim Hinzufügen eines neuen Produkts die anderen (nicht lieferbaren) beobachteten Produkte entfernt – das Aufräumen lief, bevor geprüft wurde, ob das Zielprodukt überhaupt lieferbar ist.
 - Jetzt: Ist das Zielprodukt im Warenkorb nicht lieferbar, bleibt alles liegen. Erst wenn es lieferbar ist (direkt vor der Kasse), werden die anderen beobachteten Produkte entfernt.
