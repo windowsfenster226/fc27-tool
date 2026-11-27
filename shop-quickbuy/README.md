@@ -75,6 +75,12 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.30.0 – 🛒 Warenkorb-Wache (MediaMarkt/Saturn)
+- Einstellungen → Shops → „🛒 Im Warenkorb lassen“: Produkte bleiben im Warenkorb, auch wenn er sie als „nicht verfügbar“ zeigt (statt sie zu entfernen).
+- Das Prüf-Zentrum fragt den Warenkorb ohne sichtbaren Tab ab (GraphQL „GetBasket“ mit deiner Anmeldung, live geprüft 27.11.: Lieferstatus je Artikel unter `fulfillments[DELIVERY].unavailableReason`). Sobald ein beobachtetes Produkt dort lieferbar ist (und ≤ Höchstpreis): Warenkorb öffnen, die anderen beobachteten Produkte entfernen (eigene Artikel bleiben), zur Kasse.
+- Meldet die Produktseite „kaufbar“, der Warenkorb aber „nicht lieferbar“, gilt der Warenkorb (kein Treffer-Tab mehr).
+- Die Abfrage-Adresse lernt das Tool beim Öffnen des Warenkorbs (beim Einschalten automatisch im Hintergrund, täglich beim Startklar-Check, nach Shop-Updates neu). Klappt sie 3× nicht, 1 Std. Pause.
+
 ## Neu in 3.29.4 – Fehlgeschlagener Warenkorb stoppt den Shop nicht mehr
 - Landet das Produkt auch beim 2. Versuch nicht im Warenkorb (meist: Restock nach Sekunden wieder weg – live 26.11. 22:38 Amazon Xbox 829,98 €), wird der Shop nicht mehr gestoppt, sondern überwacht weiter. Vorher stand Amazon dadurch die ganze Nacht still.
 - Sicherheitsnetz: Der Warenkorb gilt dann als „unsicher“ – der nächste Kauf hält vor dem letzten Klick an, auch mit Auto-Bestellung (Discord-Hinweis).

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.29.4
+// @version      3.30.0
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -156,6 +156,7 @@
        * TEMPORARILY_NOT_AVAILABLE …). Eine Anfrage prüft so alle Produkte derselben Kategorie. Die Kategorie lernt das Tool aus
        * der Brotkrumen-Navigation der Produktseite. Seiten liegen 2 Min. im Cloudflare-Cache → Abruf mit Cache-Umgehung. */
       catBatch: true, noCache: true, batchOk: (html) => /CofrOnlineStatusFeature/.test(html),
+      cartApi: true, salesLine: 'Media',     // Warenkorb-Wache (GetBasket, live geprüft 27.11.)
       catOf: (html) => {
         const bc = html.match(/BreadcrumbList[\s\S]{0,3000}?\]/); if (!bc) return '';
         const all = [...bc[0].matchAll(/https:\/\/www\.(?:mediamarkt|saturn)\.de\/de\/category\/[^"\\]+?\.html/g)].map((m) => m[0]);
@@ -288,7 +289,7 @@
   // Saturn = gleiche Technik wie MediaMarkt
   SHOPS.saturn = {
     ...SHOPS.mediamarkt,
-    name: 'Saturn',
+    name: 'Saturn', salesLine: 'Saturn',
     host: /(^|\.)saturn\.de$/,
     productUrl: /^https:\/\/www\.saturn\.de\/de\/product\//,
     productHint: 'https://www.saturn.de/de/product/…',
@@ -1796,6 +1797,18 @@
     return scheduleReload('Kauf nicht geklappt – überwache weiter');
   }
 
+  /* 🛒 Warenkorb-Wache: Die Warenkorb-Seite lädt ihre Daten per GraphQL „GetBasket“ (persistierte Abfrage, Hash je Shop-Version).
+   * Der Tab merkt sich die Abfrage-URL + Version, damit das Prüf-Zentrum den Warenkorb ohne sichtbaren Tab abfragen kann. */
+  function learnBasketQuery() {
+    if (!SHOP.cartApi) return;
+    try {
+      const e = performance.getEntriesByType('resource').map((x) => x.name).filter((u) => /\/api\/v1\/graphql\?operationName=GetBasket&/.test(u));
+      const ver = (document.querySelector('meta[name="version"]') || {}).content || '';
+      if (!e.length || !ver) return;
+      const u = e[e.length - 1]; const old = S.get('cartQ');
+      if (!old || old.url !== u || old.ver !== ver) { S.set('cartQ', { url: u, ver, at: Date.now() }); log('Warenkorb-Abfrage gelernt (für die Warenkorb-Wache)', 'info'); }
+    } catch (e) {}
+  }
   async function runBasket() {
     if (SHOP.basketRedirect && SHOP.basketRedirect(location.pathname)) {
       log('Zwischenseite nach dem Hinzufügen → öffne Einkaufswagen', 'info');
@@ -1811,6 +1824,7 @@
       const ready = await waitFor(() => SHOP.cartReady(), 60000, 300);   // MediaMarkt-Warenkorb brauchte live bis zu 30 s
       if (!ready) return restartLoop(document.hidden ? 'Warenkorb lädt nicht (Tab lag im Hintergrund – dort baut der Shop die Seite nicht fertig)' : 'Warenkorb lädt nicht', false);
       await sleep(800);
+      learnBasketQuery();
     } else {
       await sleep(2500);
     }
@@ -1824,6 +1838,24 @@
         return readdNow('Produkt nicht mehr im Warenkorb');   // wurde extern entfernt / Merker war veraltet
       }
       setInCart(true); S.set('addRetry', 0);
+
+      // Warenkorb-Wache meldete „lieferbar“ → die anderen beobachteten Produkte (nicht lieferbar) entfernen. Eigene Artikel bleiben.
+      const ch = S.get('cartHit');
+      if (ch && Date.now() - ch.at < 180000) {
+        S.set('cartHit', null);
+        const keys = (S.get('products') || []).map((x) => keyOf(x.url)).filter((k) => k && k.length >= 5 && k !== keyOf(cur().url));
+        for (let round = 0; round < 8; round++) {
+          const o = SHOP.cartItems().find((it) => it.box !== item.box && it.remove && keys.some((k) => (it.href || it.box.innerHTML || '').toLowerCase().includes(k)));
+          if (!o) break;
+          log(`Warenkorb-Wache: entferne anderes beobachtetes Produkt: ${o.title.slice(0, 50)}`, 'buy');
+          clickEl(o.remove); await sleep(1500);
+          const c = findClickable(COMMON.confirmRemove);
+          if (c && c !== o.remove && !item.box.contains(c)) { clickEl(c); await sleep(1500); }
+          await sleep(800);
+          item = findCartItem(SHOP.cartItems());
+          if (!item) return restartLoop('Zielprodukt nach dem Aufräumen nicht mehr im Warenkorb', false);
+        }
+      }
 
       // Bezahlte Zusatzleistungen (PlusGarantie, Einrichtung …) abwählen
       await uncheckAddons('Warenkorb');
@@ -1893,6 +1925,13 @@
       if (hit) {
         // Produktseite war eben kaufbar, der alte Warenkorb-Eintrag sagt aber „nicht verfügbar“ (MediaMarkt: „Bitte entferne das
         // Produkt …“) → veralteter Eintrag: entfernen und sofort neu hinzufügen (einmal je 10 Min.)
+        // Warenkorb-Wache an: Eintrag drin lassen – das Prüf-Zentrum fragt den Warenkorb ab und kauft, sobald er lieferbar wird
+        if (S.get('keepCart') && SHOP.cartApi) {
+          log(`Liegt im Warenkorb, aber noch „${hit}“ → bleibt drin, die Warenkorb-Wache meldet sich, sobald er lieferbar ist`, 'info');
+          S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
+          if (centralOK(SHOP_ID)) return park('Warenkorb-Wache übernimmt');
+          return restartLoop(`Im Warenkorb noch „${hit}“`, false);
+        }
         if (Date.now() - (S.get('availSeenAt') || 0) < 180000 && Date.now() - (S.get('staleFixAt') || 0) > 600000 && item.remove) {
           S.set('staleFixAt', Date.now()); S.set('availSeenAt', 0);
           log(`Warenkorb-Eintrag ist veraltet („${hit}“), Produktseite aber kaufbar → entferne ihn und lege neu hinein`, 'buy');
@@ -3044,7 +3083,78 @@
       if (c) { if (!byCat[c]) { byCat[c] = { cat: c, idx: [] }; units.push(byCat[c]); } byCat[c].idx.push(i); } else units.push({ cat: '', idx: [i] });
     });
     if (dirty) sv(id, 'catMap', cm);
+    if (cartWatchOn(id)) units.push({ cart: true, cat: '', idx: [] });
     return units;
+  }
+  // 🛒 Warenkorb-Wache aktiv? (MediaMarkt/Saturn, Einstellung an, Abfrage gelernt, nicht pausiert)
+  function cartWatchOn(id) {
+    const sh = SHOPS[id];
+    return !!(sh && sh.cartApi && gv(id, 'keepCart', false) && (gv(id, 'cartQ', null) || {}).url && Date.now() > (gv(id, 'cartOff', 0) || 0));
+  }
+  function cartRelearn(id) {
+    if (Date.now() - (gv(id, 'cartLearnAt', 0) || 0) < 3 * 3600e3 || !SHOPS[id].basketUrl) return;
+    sv(id, 'cartLearnAt', Date.now()); sv(id, 'preflightRes', null); sv(id, 'preflight', { at: Date.now() });
+    openTab(SHOPS[id].basketUrl);              // Hintergrund-Tab lernt die Abfrage und schließt sich wieder
+  }
+  function cartFail(id, why) {
+    const n = (gv(id, 'cartFails', 0) || 0) + 1; sv(id, 'cartFails', n);
+    if (n >= 3) {
+      sv(id, 'cartFails', 0); sv(id, 'cartOff', Date.now() + 3600e3);
+      pushLog(id, `Warenkorb-Wache: Abfrage klappt nicht (${why}) → 1 Std. Pause, danach neuer Versuch`, 'warn');
+      cartRelearn(id);
+    } else pushLog(id, `Warenkorb-Wache: ${why} – nächste Runde erneut`, 'info');
+  }
+  async function centralCheckCart(id) {
+    const sh = SHOPS[id]; const q = gv(id, 'cartQ', null); if (!q || !q.url) return;
+    const t0 = Date.now();
+    const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`);
+    const r = await new Promise((res) => {
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET', url: q.url, timeout: 15000, anonymous: false,
+          headers: { accept: '*/*', 'content-type': 'application/json', 'apollographql-client-name': 'pwa-client-pqm', 'apollographql-client-version': q.ver,
+            'x-cacheable': 'false', 'cache-control': 'no-cache', 'x-flow-id': uuid(), 'x-mms-country': 'DE', 'x-mms-language': 'de', 'x-mms-salesline': sh.salesLine || 'Media', 'x-operation': 'GetBasket' },
+          onload: res, onerror: () => res(null), ontimeout: () => res(null),
+        });
+      } catch (e) { res(null); }
+    });
+    sv(id, 'cBeat', Date.now()); dayCount(id, 'c');
+    if (!r) return cartFail(id, 'keine Antwort');
+    if (r.status === 429) return centralResult(id, 0, { st: 'block', why: 'HTTP 429' }, t0, 'Warenkorb-Wache');
+    if (r.status !== 200) return cartFail(id, `HTTP ${r.status}`);
+    let j = null; try { j = JSON.parse(r.responseText); } catch (e) {}
+    if (!j) return cartFail(id, 'keine lesbaren Daten');
+    if (j.errors && /PERSISTED_QUERY|PersistedQueryNotFound/i.test(JSON.stringify(j.errors))) {
+      sv(id, 'cartQ', null); pushLog(id, `Warenkorb-Wache: ${sh.name} hat seine Seite aktualisiert → Abfrage wird neu gelernt (Warenkorb-Tab öffnet kurz im Hintergrund)`, 'info');
+      return cartRelearn(id);
+    }
+    const b = j.data && j.data.basket; if (!b) return cartFail(id, 'kein Warenkorb (abgemeldet?)');
+    sv(id, 'cartFails', 0);
+    const items = [];
+    const walk = (o) => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) return o.forEach(walk);
+      if (Array.isArray(o.lineItems)) o.lineItems.forEach((li) => {
+        const pid = String(li.productId || (JSON.stringify(li).match(/"id":"[A-Za-z]+:de:(\d+)"/) || [])[1] || '');
+        const d = (li.fulfillments || []).find((f) => f && f.method === 'DELIVERY');
+        const price = Number((li.itemPrice && li.itemPrice.price) || (li.productPrice && li.productPrice.price) || 0);
+        if (pid) items.push({ pid, ok: !!d && !d.unavailableReason, why: d ? (d.unavailableReason || '') : 'keine Lieferung', price });
+      });
+      for (const k of Object.keys(o)) if (k !== 'lineItems') walk(o[k]); };
+    walk(b.content);
+    sv(id, 'cartPids', { at: Date.now(), m: Object.fromEntries(items.map((x) => [x.pid, { ok: x.ok, why: x.why, price: x.price }])) });
+    const list = gv(id, 'products', []);
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i]; const k = keyOf2(id, it.url); const x = items.find((y) => y.pid === k); if (!x) continue;
+      if (!x.ok) { pushLog(id, `[${i + 1}/${list.length} ${shortName(it.url)}] im Warenkorb, noch nicht lieferbar (${x.why || '?'}, Warenkorb-Wache, ${Date.now() - t0} ms)`, 'oos'); continue; }
+      const mx = Number(it.maxPrice) || 0;
+      if (mx && x.price && x.price > mx) { pushLog(id, `[${i + 1}/${list.length} ${shortName(it.url)}] im Warenkorb lieferbar, aber ${fmtEur(x.price)} € > Max ${fmtEur(mx)} €`, 'warn'); continue; }
+      if (handledByTab(id)) return;
+      noteRestock(id, it.url, x.price || 0, '', false);
+      sv(id, 'idx', i); sv(id, 'stage', 'basket'); sv(id, 'navAt', Date.now()); sv(id, 'owner', null);
+      sv(id, 'cHit', { at: Date.now(), url: it.url }); sv(id, 'cartHit', { at: Date.now(), pid: k }); sv(id, 'preflight', null);
+      pushLog(id, `✅ [${i + 1}/${list.length} ${shortName(it.url)}] Warenkorb-Wache: im Warenkorb jetzt lieferbar${x.price ? ` (${fmtEur(x.price)} €)` : ''} → öffne Warenkorb, entferne die anderen, zur Kasse`, 'ok');
+      openTab(sh.basketUrl, G.get('hitFocus', true));
+      return;
+    }
   }
   // Amazon-Produkt steht nicht in der eingetragenen Wunschliste (zuletzt nicht gefunden)
   function wlMissing(id, url) {
@@ -3126,6 +3236,7 @@
   }
   // Sammelabfrage: eine Kategorieseite → Status aller Produkte dieser Kategorie
   async function centralCheckUnit(id, u) {
+    if (u.cart) return centralCheckCart(id);
     if (!u.cat) return centralCheck(id, u.idx[0]);
     const t0 = Date.now();
     const sh = SHOPS[id];
@@ -3176,6 +3287,10 @@
     const ek = keyOf2(id, it.url); const pe = { ...(gv(id, 'cErrP', {}) || {}) };
     if (r.st === 'out' || r.st === 'in') { if (pe[ek]) { delete pe[ek]; sv(id, 'cErrP', pe); } const mv = gv(id, 'moved', {}) || {}; if (mv[ek]) { const m2 = { ...mv }; delete m2[ek]; sv(id, 'moved', m2); } }
     if (r.st === 'out') { sv(id, 'cFails', 0); pushLog(id, `${tag} OOS (${r.light ? `${via}, leicht` : via}, ${Date.now() - t0} ms)`, 'oos'); return; }
+    if (r.st === 'in' && cartWatchOn(id)) {
+      const cp = gv(id, 'cartPids', null); const x = cp && Date.now() - cp.at < 5 * 60000 && cp.m[ek];
+      if (x && !x.ok) { pushLog(id, `${tag} Produktseite meldet kaufbar, im Warenkorb aber noch nicht lieferbar → Warenkorb-Wache wartet`, 'oos'); return; }
+    }
     if (r.st === 'in') {
       sv(id, 'cFails', 0);
       const bp = bgPrice(r.html, SHOPS[id]); const mx = Number(it.maxPrice) || 0;
@@ -3242,7 +3357,7 @@
       const step = Math.max(2000, (effRoundSec(id) * 1000) / (units ? units.length : list.length));
       { const cl = gv(id, 'cLast', 0); if (typeof cl === 'number' && now - cl < step) continue; }
       sv(id, 'cLast', now);
-      const slots = units ? wOrder(units.map((u) => Math.max(...u.idx.map((k) => prioWeight(id, list[k]))))) : slotOrder(list, id);
+      const slots = units ? wOrder(units.map((u) => (u.cart ? 2 : Math.max(...u.idx.map((k) => prioWeight(id, list[k])))))) : slotOrder(list, id);
       const si = (gv(id, 'cIdx', 0) || 0) % slots.length;
       const i = slots[si];
       sv(id, 'cIdx', si + 1);
@@ -4702,11 +4817,12 @@
         <td class="c"><input type="checkbox" data-s="continueAfterBuy" ${gv(id, 'continueAfterBuy', true) ? 'checked' : ''}></td>
         <td class="c">${!sh.alertOnly && !sh.needLogin && !sh.shopify ? `<input type="checkbox" data-s="loginCheck" ${gv(id, 'loginCheck', true) ? 'checked' : ''}>` : '<span class="muted">–</span>'}</td>
         <td class="c">${sh.cartItems ? `<input type="checkbox" data-s="removeOthers" ${gv(id, 'removeOthers', false) ? 'checked' : ''}>` : '<span class="muted">–</span>'}</td>
+        <td class="c">${sh.cartApi ? `<input type="checkbox" data-s="keepCart" ${gv(id, 'keepCart', false) ? 'checked' : ''}>${gv(id, 'keepCart', false) ? `<div class="muted" style="font-size:11px">${(gv(id, 'cartQ', null) || {}).url ? (Date.now() < (gv(id, 'cartOff', 0) || 0) ? 'pausiert' : 'aktiv') : 'lernt …'}</div>` : ''}` : '<span class="muted">–</span>'}</td>
       </tr>`;
     }).join('');
     const setTab = `
       <h3>Shops <span class="muted" style="font-weight:400;font-size:12px">– weitere Shops erscheinen hier, sobald du dort ein Produkt einträgst</span></h3>
-      <div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th>Auto-Bestellung</th><th>Zahlungsart</th><th class="c">Pause (s)</th><th>⏰ Drop-Zeit</th><th class="c">Nur Shop selbst</th><th class="c">Nach Kauf weiter</th><th class="c" title="Warnt, wenn du im Shop abgemeldet bist">Login prüfen</th><th class="c" title="Entfernt andere Artikel aus dem Warenkorb, bevor zur Kasse gegangen wird">Fremde Artikel entfernen</th></tr></thead><tbody>${setRows}</tbody></table></div>
+      <div class="scroll"><table class="pt set"><thead><tr><th>Shop</th><th>Auto-Bestellung</th><th>Zahlungsart</th><th class="c">Pause (s)</th><th>⏰ Drop-Zeit</th><th class="c">Nur Shop selbst</th><th class="c">Nach Kauf weiter</th><th class="c" title="Warnt, wenn du im Shop abgemeldet bist">Login prüfen</th><th class="c" title="Entfernt andere Artikel aus dem Warenkorb, bevor zur Kasse gegangen wird">Fremde Artikel entfernen</th><th class="c" title="🛒 Warenkorb-Wache (MediaMarkt/Saturn): Produkte bleiben im Warenkorb, auch wenn sie dort „nicht verfügbar“ sind. Das Prüf-Zentrum fragt den Warenkorb ab; sobald eines lieferbar ist, werden die anderen beobachteten Produkte entfernt und es geht direkt zur Kasse.">🛒 Im Warenkorb lassen</th></tr></thead><tbody>${setRows}</tbody></table></div>
       <h3>🛡️ Sicherheit & Überwachung</h3>
       <div class="dcg">
         <label class="ck">Tagesbudget (alle Shops zusammen): <input type="text" id="g-budget" style="width:90px;flex:none" value="${Number(G.get('budgetDay', 0)) ? fmtEur(G.get('budgetDay', 0)) : ''}" placeholder="aus"> €</label>
@@ -4910,6 +5026,11 @@
         if (k === 'intervalSec') v = Math.max(SHOPS[id].minInterval || 5, parseEur(v) || 15);
         if (k === 'dropAt') sv(id, 'dropReloaded', false);
         sv(id, k, v); renderPanel();
+        if (k === 'keepCart') {
+          if (v && !(gv(id, 'cartQ', null) || {}).url) { sv(id, 'cartLearnAt', 0); cartRelearn(id); dashToast('Warenkorb-Wache an – der Warenkorb öffnet sich kurz im Hintergrund, um die Abfrage zu lernen'); }
+          else dashToast(v ? 'Warenkorb-Wache an' : 'Warenkorb-Wache aus');
+          pushLog(id, `Warenkorb-Wache ${v ? 'AN' : 'aus'} (Dashboard)`, 'info'); renderDash(true);
+        }
         if (k === 'intervalSec') el.value = v;
       };
     });
@@ -5056,6 +5177,7 @@
     await sleep(1500);
     const res = { at: Date.now(), login: null, n: null, foreign: [], note: '' };
     try { res.login = !loggedOutHint(); } catch (e) {}
+    learnBasketQuery();
     try {
       if (SHOP.cartItems) {
         const items = SHOP.cartItems();
