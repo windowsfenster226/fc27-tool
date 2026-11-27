@@ -75,6 +75,10 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.30.1 – MediaMarkt/Saturn schneller
+- Gemeinsames Abruf-Limit MediaMarkt + Saturn: Standard 10/Min. statt 4 (live 27.11.: 12 zusätzliche frische Abrufe/Min. ohne HTTP 429). Wer 4 eingestellt hatte, wird einmalig auf 10 gesetzt; Captcha-Bremse bleibt aktiv.
+- Warenkorb-Wache: Produkte, die schon im Warenkorb liegen, werden nur noch über den Warenkorb geprüft (1 Abruf für alle) → deutlich kürzere Runden.
+
 ## Neu in 3.30.0 – 🛒 Warenkorb-Wache (MediaMarkt/Saturn)
 - Einstellungen → Shops → „🛒 Im Warenkorb lassen“: Produkte bleiben im Warenkorb, auch wenn er sie als „nicht verfügbar“ zeigt (statt sie zu entfernen).
 - Das Prüf-Zentrum fragt den Warenkorb ohne sichtbaren Tab ab (GraphQL „GetBasket“ mit deiner Anmeldung, live geprüft 27.11.: Lieferstatus je Artikel unter `fulfillments[DELIVERY].unavailableReason`). Sobald ein beobachtetes Produkt dort lieferbar ist (und ≤ Höchstpreis): Warenkorb öffnen, die anderen beobachteten Produkte entfernen (eigene Artikel bleiben), zur Kasse.

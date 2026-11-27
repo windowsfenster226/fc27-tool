@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.30.0
+// @version      3.30.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2898,7 +2898,9 @@
   const tabOpen = (id) => Date.now() - (gv(id, 'heartbeat', 0) || 0) < 12000;
 
   /* ---------- Captcha-Schutz: gemeinsames Abruf-Limit + dauerhafte Bremse nach Captchas ---------- */
-  const RATE_GROUPS = { mms: { name: 'MediaMarkt + Saturn', def: 4 }, amz: { name: 'Amazon', def: 15 } };
+  // MediaMarkt+Saturn: live 27.11. 12 zusätzliche Abrufe/Min. (frisch, Cache umgangen) ohne HTTP 429 neben dem laufenden Tool → Standard 10
+  const RATE_GROUPS = { mms: { name: 'MediaMarkt + Saturn', def: 10 }, amz: { name: 'Amazon', def: 15 } };
+  try { if (!G.get('rateMig10', false)) { G.set('rateMig10', true); if (Number(G.get('rateMax:mms', null)) === 4) G.set('rateMax:mms', 10); } } catch (e) {}
   const BOOST_STEPS = [1, 1.5, 2, 3];
   const capKey = (id) => (SHOPS[id] && SHOPS[id].rateGroup) || id;
   function capInfo(id) {
@@ -3074,8 +3076,12 @@
     const sh = SHOPS[id]; const list = gv(id, 'products', []); let cm = gv(id, 'catMap', {}) || {};
     const units = []; const byCat = {}; let dirty = false;
     const lu = sh.listUrlOf ? sh.listUrlOf() : '';
+    // Warenkorb-Wache: Produkte, die schon im Warenkorb liegen, prüft allein der Warenkorb (spart Abrufe → schnellere Runden)
+    const cw = cartWatchOn(id) ? gv(id, 'cartPids', null) : null; const inCartM = cw && Date.now() - cw.at < 5 * 60000 ? cw.m : null;
     list.forEach((x, i) => {
-      const k = keyOf2(id, x.url); let c = sh.catBatch ? cm[k] : '';
+      const k = keyOf2(id, x.url);
+      if (inCartM && inCartM[k]) return;
+      let c = sh.catBatch ? cm[k] : '';
       if (typeof c === 'string' && c.startsWith('x:')) {
         if (Date.now() - Number(c.slice(2)) > 3600e3) { if (!dirty) cm = { ...cm }; delete cm[k]; dirty = true; c = undefined; } else c = '';
       }
