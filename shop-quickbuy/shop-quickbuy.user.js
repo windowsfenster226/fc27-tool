@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.31.1
+// @version      3.31.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -2126,7 +2126,7 @@
         const pb = document.querySelector('[data-testid="summaryPaymentBtn"]');
         if (pb) { pb.style.outline = '4px solid #e60000'; pb.scrollIntoView({ block: 'center' }); }
         const total = getTotalPrice();
-        if (S.get('dryRun')) return stop('🧪 Probelauf erfolgreich – bis zur Zahlungsseite ✔ (Artikel bitte wieder aus dem Warenkorb nehmen)');
+        if (S.get('dryRun')) { try { tDone('Probelauf: Zahlungsseite'); } catch (e) {} return stop('🧪 Probelauf erfolgreich – bis zur Zahlungsseite ✔ (Artikel bitte wieder aus dem Warenkorb nehmen)'); }
         notify(`QuickBuy ${SHOP.name}`, `Zahlungsseite erreicht – ${SHOP.manualPay.msg}!`);
         discord('checkout', `Artikel liegt bereit${total ? ` (Gesamt ${fmtEur(total)} €)` : ''} – jetzt nur noch **${SHOP.manualPay.msg}**!`);
         return stop(`Zahlungsseite erreicht – ${SHOP.manualPay.msg}`);
@@ -2187,6 +2187,7 @@
     }
     if (S.get('dryRun')) {
       btn.style.outline = '4px solid #e60000'; btn.scrollIntoView({ block: 'center' });
+      try { tDone('Probelauf: Kasse bereit'); } catch (e) {}
       return stop('🧪 Probelauf erfolgreich – bis vor den letzten Klick ✔ (Artikel bitte wieder aus dem Warenkorb nehmen)');
     }
     if (!S.get('autoOrder') || S.get('cartSuspect')) {
@@ -2418,6 +2419,7 @@
 
           if (S.get('dryRun')) {
             b2.style.outline = '4px solid #e60000'; b2.scrollIntoView({ block: 'center' });
+            try { tDone('Probelauf: Kasse bereit'); } catch (e) {}
             return stop('🧪 Probelauf erfolgreich – bis vor „Bestellen und bezahlen“ ✔ (Artikel bitte wieder aus dem Einkaufswagen nehmen)');
           }
           if (!S.get('autoOrder') || S.get('cartSuspect')) {
@@ -2924,7 +2926,7 @@
     if (dryBtn) dryBtn.onclick = () => {
       if (!confirm('🧪 Probelauf starten?\n\nDas Script legt DIESEN Artikel in den Warenkorb und geht durch die Kasse bis vor den letzten Klick. Es wird NIE bestellt.\n\nTipp: Nimm einen günstigen, lieferbaren Artikel und entferne ihn danach wieder.')) return;
       S.set('dryProduct', { url: stripUrl(location.href), variant: '', maxPrice: 0, qty: 1 });
-      S.set('dryRun', true); S.set('stage', 'product'); S.set('running', true); S.set('payOk', false);
+      S.set('dryRun', true); S.set('stage', 'product'); S.set('running', true); S.set('payOk', false); S.set('tBuy', null); S.set('cHit', null);   // ⏱ Zeitmessung ab Probelauf-Start
       if (SHOP.stopAfterAdd || SHOP.psFlow) S.set('inCart', {});
       busy = true;
       log('🧪 Probelauf gestartet – es wird nicht bestellt', 'buy');
