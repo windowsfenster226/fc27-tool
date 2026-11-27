@@ -75,6 +75,10 @@ Amazon bestellt jetzt wie die anderen Shops (live geprüft bis vor „Jetzt kauf
 - **`!test <shop|alle>`** in Discord: prüft alle Produkte sofort (Prüf-Zentrum-Shops und Amazon inkl. Verkäufer) und antwortet mit dem Ergebnis.
 - **Warenkorb aufräumen:** Liegt das Zielprodukt nicht kaufbar im Warenkorb (z. B. nach einem verpassten Restock), wird der Eintrag entfernt; beim nächsten Restock legt das Tool es frisch hinein. Abschaltbar.
 
+## Neu in 3.29.4 – Fehlgeschlagener Warenkorb stoppt den Shop nicht mehr
+- Landet das Produkt auch beim 2. Versuch nicht im Warenkorb (meist: Restock nach Sekunden wieder weg – live 26.11. 22:38 Amazon Xbox 829,98 €), wird der Shop nicht mehr gestoppt, sondern überwacht weiter. Vorher stand Amazon dadurch die ganze Nacht still.
+- Sicherheitsnetz: Der Warenkorb gilt dann als „unsicher“ – der nächste Kauf hält vor dem letzten Klick an, auch mit Auto-Bestellung (Discord-Hinweis).
+
 ## Neu in 3.29.3 – Statistik & Captcha-Anzeige
 - „Verfügbar, aber zu teuer“ (z. B. Galaxus-Händlerpreis, dauerhaft verfügbar) zählt höchstens 1× je 6 Std. – vorher alle 15 Min. → 69 „Restocks“ in 24 Std. Alte Einträge werden einmalig ausgedünnt.
 - KPI „Restocks (24 Std.)“, Statistik und Restock-Muster zählen nur noch Restocks zum Höchstpreis oder günstiger.

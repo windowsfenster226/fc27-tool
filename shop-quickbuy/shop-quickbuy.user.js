@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.29.3
+// @version      3.29.4
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1784,10 +1784,16 @@
       later(2500, () => { if (S.get('running')) { S.set('navAt', Date.now()); location.href = cur().url; } });
       return;
     }
-    S.set('addRetry', 0);
-    notify(`QuickBuy ${SHOP.name}`, 'Gesuchtes Produkt NICHT im Warenkorb – gestoppt, bitte prüfen');
-    discord('error', 'Gesuchtes Produkt ist **nicht im Warenkorb** – Script gestoppt. Bitte Warenkorb prüfen.');
-    return stop('Zielprodukt nicht im Warenkorb gefunden (evtl. falscher Artikel hinzugefügt) – bitte Warenkorb prüfen');
+    // Zweiter Fehlversuch: meist war der Restock schon wieder weg (live 26.11. Amazon Xbox: nach Sekunden ausverkauft).
+    // NICHT mehr den ganzen Shop stoppen (sonst prüft er die ganze Nacht nicht) – weiter überwachen, Warenkorb als „unsicher“ merken:
+    // der nächste Kauf hält dann vor dem letzten Klick an, auch mit Auto-Bestellung.
+    S.set('addRetry', 0); S.set('cartSuspect', true); setInCart(false);
+    notify(`QuickBuy ${SHOP.name}`, 'Kauf hat nicht geklappt – Produkt nicht im Warenkorb. Überwachung läuft weiter.');
+    discord('error', `**${SHOP.name}**: Produkt ließ sich nicht in den Warenkorb legen (vermutlich sofort wieder ausverkauft). Überwachung läuft weiter. Bitte bei Gelegenheit den Warenkorb prüfen – der nächste Kauf hält zur Sicherheit vor dem letzten Klick an.`);
+    log('Produkt 2× nicht im Warenkorb – vermutlich schon wieder ausverkauft. Überwache weiter; nächster Kauf hält vor dem letzten Klick an', 'warn');
+    S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
+    if (centralOK(SHOP_ID)) return park('Kauf nicht geklappt → zurück an das Prüf-Zentrum');
+    return scheduleReload('Kauf nicht geklappt – überwache weiter');
   }
 
   async function runBasket() {
@@ -2075,7 +2081,8 @@
       btn.style.outline = '4px solid #e60000'; btn.scrollIntoView({ block: 'center' });
       return stop('🧪 Probelauf erfolgreich – bis vor den letzten Klick ✔ (Artikel bitte wieder aus dem Warenkorb nehmen)');
     }
-    if (!S.get('autoOrder')) {
+    if (!S.get('autoOrder') || S.get('cartSuspect')) {
+      if (S.get('cartSuspect')) { S.set('cartSuspect', false); log('Warenkorb war beim letzten Versuch unsicher → bitte selbst prüfen und bestellen', 'warn'); }
       btn.style.outline = '4px solid #e60000'; btn.scrollIntoView({ block: 'center' });
       notify(`QuickBuy ${SHOP.name}`, 'Kasse erreicht – jetzt nur noch "Zahlungspflichtig bestellen" klicken!');
       discord('checkout', 'Artikel liegt bereit – jetzt nur noch **„Zahlungspflichtig bestellen“** klicken!');
@@ -2305,7 +2312,8 @@
             b2.style.outline = '4px solid #e60000'; b2.scrollIntoView({ block: 'center' });
             return stop('🧪 Probelauf erfolgreich – bis vor „Bestellen und bezahlen“ ✔ (Artikel bitte wieder aus dem Einkaufswagen nehmen)');
           }
-          if (!S.get('autoOrder')) {
+          if (!S.get('autoOrder') || S.get('cartSuspect')) {
+            if (S.get('cartSuspect')) { S.set('cartSuspect', false); log('Warenkorb war beim letzten Versuch unsicher → bitte selbst prüfen und bestellen', 'warn'); }
             b2.style.outline = '4px solid #e60000'; b2.scrollIntoView({ block: 'center' });
             notify(`QuickBuy ${SHOP.name}`, 'Kasse erreicht – jetzt nur noch „Bestellen und bezahlen“ klicken!');
             await discord('checkout', `Gesamt **${i.total ? fmtEur(i.total) + ' €' : '?'}** – jetzt nur noch **„Bestellen und bezahlen“** klicken!`);
