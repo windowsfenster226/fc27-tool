@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.30.1
+// @version      3.30.2
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1723,6 +1723,7 @@
 
   async function restartLoop(reason, tryRemove, item) {
     log(`${reason} → starte Loop neu`);
+    if (tryRemove && S.get('keepCart') && SHOP.cartApi) { tryRemove = false; log('Warenkorb-Wache an → Artikel bleibt im Warenkorb', 'info'); }
     if (tryRemove) {
       const many = (cartCountAny() || 0) > 1;
       const rm = item ? item.remove : (many ? null : findClickable(COMMON.remove));
@@ -1839,9 +1840,22 @@
       }
       setInCart(true); S.set('addRetry', 0);
 
-      // Warenkorb-Wache meldete „lieferbar“ → die anderen beobachteten Produkte (nicht lieferbar) entfernen. Eigene Artikel bleiben.
+      // Warenkorb-Wache an und Zielprodukt (noch) nicht lieferbar → NICHTS entfernen, alles bleibt liegen (vor jedem Aufräumen prüfen!)
+      const keep = S.get('keepCart') && SHOP.cartApi;
+      if (keep) {
+        const hit0 = oosIn(item.box.innerText);
+        if (hit0) {
+          S.set('cartHit', null);
+          log(`Liegt im Warenkorb, aber noch „${hit0}“ → bleibt drin, die Warenkorb-Wache meldet sich, sobald er lieferbar ist`, 'info');
+          S.set('stage', 'product'); S.set('cHit', null); S.set('cLast', Date.now());
+          if (centralOK(SHOP_ID)) return park('Warenkorb-Wache übernimmt');
+          return restartLoop(`Im Warenkorb noch „${hit0}“`, false);
+        }
+      }
+      // Zielprodukt lieferbar → vor der Kasse die ANDEREN beobachteten Produkte entfernen (sonst blockieren/landen sie in der Bestellung).
+      // Eigene Artikel (nicht in der Produktliste) bleiben – die schützt die bisherige Prüfung unten.
       const ch = S.get('cartHit');
-      if (ch && Date.now() - ch.at < 180000) {
+      if (keep || (ch && Date.now() - ch.at < 180000)) {
         S.set('cartHit', null);
         const keys = (S.get('products') || []).map((x) => keyOf(x.url)).filter((k) => k && k.length >= 5 && k !== keyOf(cur().url));
         for (let round = 0; round < 8; round++) {
