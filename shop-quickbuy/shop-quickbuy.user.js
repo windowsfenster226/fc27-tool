@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shop QuickBuy
 // @namespace    snkrsxlove.shop.quickbuy
-// @version      3.31.0
+// @version      3.31.1
 // @description  Otto, MediaMarkt, Saturn, Microsoft, PlayStation, Amazon, FNAC Pro, Alternate, Cyberport, NBB, Galaxus, Proshop, Euronics, expert, Müller, Smyths, Kaufland, Lidl, GameStop, Zalando, Nike, Snipes, Solebox & Shopify – überwacht Artikel, lädt bei "ausverkauft" neu, legt bei Verfügbarkeit in den Warenkorb, geht zur Kasse und startet bei OOS im Warenkorb/an der Kasse neu.
 // @match        https://www.otto.de/*
 // @match        https://www.mediamarkt.de/*
@@ -1841,15 +1841,29 @@
     S.set('cartFill', null);
     const hash = await pqHash('AddProduct');
     if (!hash) { log('Warenkorb befüllen: Schnittstelle nicht gefunden – Produkte kommen erst beim Restock in den Warenkorb', 'warn'); S.set('cartFillRes', { at: Date.now(), ok: 0, fail: f.pids.length, why: 'nohash' }); return; }
-    let ok = 0; const bad = [];
+    let ok = 0; const bad = []; let rl = false;
+    const skip = { ...(S.get('cartFillSkip') || {}) };
     for (const pid of f.pids) {
       const r = await mmGql('AddProduct', hash, { items: [{ outletId: null, productId: String(pid), quantity: 1, serviceIds: null, warrantyIds: null }] });
       const li = r.j && r.j.data && r.j.data.addProduct && r.j.data.addProduct.lineItems;
-      if (r.status === 200 && li && li.some((x) => String(x.productId) === String(pid))) ok++; else bad.push(`${pid}${r.status !== 200 ? ` (HTTP ${r.status})` : ''}`);
+      if (r.status === 200 && li && li.some((x) => String(x.productId) === String(pid))) { ok++; delete skip[pid]; }
+      else if (r.status === 429) { rl = true; bad.push(`${pid} (HTTP 429)`); break; }   // Shop bremst → sofort aufhören, nicht weiter anfragen
+      else {
+        // Fehlergrund aus der Antwort (live 27.11.: „Not all items have is_in_assortment“ = Produkt derzeit nicht im Sortiment)
+        const es = JSON.stringify((r.j && r.j.errors) || ''); const assort = /is_in_assortment|INVALID_PRODUCT/i.test(es);
+        bad.push(`${pid} (${r.status !== 200 ? `HTTP ${r.status}` : assort ? 'derzeit nicht im Sortiment' : 'abgelehnt'})`);
+        // gleiche Ablehnung nicht alle 10 Min. wiederholen: nicht im Sortiment → 3 Std., sonst 1 Std. Ruhe
+        skip[pid] = Date.now() + (assort ? 3 : 1) * 3600e3;
+      }
       await sleep(900);
     }
-    log(`Warenkorb vorab befüllt: ${ok} Produkt(e) hineingelegt${bad.length ? `, nicht möglich: ${bad.join(', ')}` : ''} – die Warenkorb-Wache übernimmt`, bad.length ? 'warn' : 'ok');
-    S.set('cartFillRes', { at: Date.now(), ok, fail: bad.length, bad });
+    S.set('cartFillSkip', skip);
+    if (rl) {   // gleiche 15-Min.-Pause wie bei einem 429 im Prüf-Zentrum (gilt für MediaMarkt + Saturn gemeinsam)
+      try { const k = capKey(SHOP_ID); const prev = G.get(`c429:${k}`, null); const n = prev && Date.now() - prev.at < 3600e3 ? prev.n + 1 : 1;
+        G.set(`c429:${k}`, { n, at: Date.now(), until: Date.now() + Math.min(15, 2 * n) * 60000 }); } catch (e) {}
+    }
+    log(`Warenkorb vorab befüllt: ${ok} Produkt(e) hineingelegt${bad.length ? `, nicht möglich: ${bad.join(', ')}` : ''}${rl ? ' – Shop bremst, Rest später' : bad.length ? ' – nächster Versuch frühestens in 1–3 Std., bis dahin prüft das Prüf-Zentrum diese Produkte normal' : ''}`, bad.length ? 'warn' : 'ok');
+    S.set('cartFillRes', { at: Date.now(), ok, fail: bad.length, bad, rl });
   }
   async function runBasket() {
     if (SHOP.basketRedirect && SHOP.basketRedirect(location.pathname)) {
@@ -3205,8 +3219,11 @@
     const list = gv(id, 'products', []);
     // Beobachtete Produkte, die (noch) nicht im Warenkorb liegen → vorab hineinlegen (auch ausverkauft), höchstens alle 10 Min.
     if (G.get('cartFillOn', true)) {
-      const miss = list.filter((it) => !movedPaused(id, it.url)).map((it) => keyOf2(id, it.url)).filter((k) => /^\d{5,10}$/.test(k) && !items.some((y) => y.pid === k));
-      if (miss.length && Date.now() - (gv(id, 'cartFillAt', 0) || 0) > 10 * 60000 && !handledByTab(id)) {
+      const skip = gv(id, 'cartFillSkip', {}) || {}; const p429 = G.get(`c429:${capKey(id)}`, null);
+      const miss = list.filter((it) => !movedPaused(id, it.url)).map((it) => keyOf2(id, it.url))
+        .filter((k) => /^\d{5,10}$/.test(k) && !items.some((y) => y.pid === k) && !(skip[k] > Date.now()));   // zuletzt abgelehnt → Ruhe
+      // höchstens alle 30 Min. (der Warenkorb-Tab lädt viele Shop-Dateien) und nicht in der ersten halben Stunde nach einem 429
+      if (miss.length && Date.now() - (gv(id, 'cartFillAt', 0) || 0) > 30 * 60000 && !(p429 && Date.now() - p429.at < 30 * 60000) && !handledByTab(id)) {
         sv(id, 'cartFillAt', Date.now()); sv(id, 'cartFill', { at: Date.now(), pids: miss });
         sv(id, 'preflightRes', null); sv(id, 'preflight', { at: Date.now() });
         pushLog(id, `Warenkorb-Wache: ${miss.length} Produkt(e) noch nicht im Warenkorb → lege sie vorab hinein (Warenkorb-Tab kurz im Hintergrund)`, 'info');
@@ -5260,7 +5277,22 @@
         const c = cartCountAny(); res.n = c === null || c === undefined ? null : c;
       }
     } catch (e) { res.note = 'Warenkorb nicht lesbar'; }
-    if (!ready()) res.note = 'Warenkorb lud nicht vollständig';
+    // MediaMarkt/Saturn: Artikelzahl lieber aus der Shop-Schnittstelle (die Seite im Hintergrund-Tab zeigt die Artikel oft noch nicht
+    // → „0 Artikel“, obwohl welche drin liegen; live 27.11.: Startklar-Check „0“, Warenkorb hatte 2 Artikel)
+    if (SHOP.cartApi) {
+      try {
+        const q = S.get('cartQ');
+        if (q && q.url) {
+          const r = await fetch(q.url, { credentials: 'include', headers: { accept: '*/*', 'content-type': 'application/json', 'apollographql-client-name': 'pwa-client-pqm',
+            'apollographql-client-version': q.ver, 'x-cacheable': 'false', 'x-mms-country': 'DE', 'x-mms-language': 'de', 'x-mms-salesline': SHOP.salesLine || 'Media', 'x-operation': 'GetBasket' } });
+          const j = r.status === 200 ? await r.json() : null; const b = j && j.data && j.data.basket;
+          if (b) { let n = 0; const walk = (o) => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) return o.forEach(walk);
+            if (Array.isArray(o.lineItems)) n += o.lineItems.length; for (const k of Object.keys(o)) if (k !== 'lineItems') walk(o[k]); };
+            walk(b.content); res.n = n; if (res.note === 'Warenkorb lud nicht vollständig') res.note = ''; }
+        }
+      } catch (e) {}
+    }
+    if (!ready() && res.n === null) res.note = 'Warenkorb lud nicht vollständig';
     S.set('preflightRes', res); S.set('preflight', null);
     log(`Startklar-Check: ${res.login === false ? 'NICHT angemeldet' : 'angemeldet'}, Warenkorb ${res.n === null ? '?' : res.n} Artikel${res.foreign.length ? ` (fremd: ${res.foreign.join(', ')})` : ''}`, res.login === false || res.foreign.length ? 'warn' : 'ok');
     setTimeout(() => { try { window.close(); } catch (e) {} setTimeout(() => { if (document.hidden) location.replace('about:blank'); }, 1500); }, 300);
